@@ -731,6 +731,7 @@ let batchBusy = false;
 let batchStop = false;
 let bookList = [];
 let pickedBooks = new Set();
+const reviewParagraphCache = new Map();
 
 const PAGE_SIZE = 60;
 
@@ -983,12 +984,14 @@ function renderList() {
           ${x.level === 'high' ? '<span class="badge high">高风险 ' + x.score + '</span>' : ''}
           ${x.level === 'mid' ? '<span class="badge mid">中风险 ' + x.score + '</span>' : ''}
           ${x.handled ? '<span class="badge">已处理</span>' : ''}
+          <button class="link-btn review-paragraph-btn" type="button" data-paragraph-id="${id}">查看原段</button>
           <button class="link-btn review-act" type="button" data-act-id="${id}">${x.handled ? '再看一眼' : '处理'}</button>
           <button class="link-btn review-dismiss" type="button" data-dismiss-id="${id}">剔除</button>
         </div>
         <div class="review-body ${short ? 'is-short' : ''}">${escapeHtml(x.content || '（空）')}</div>
         ${hits}
         <div class="review-meta-line">${escapeHtml(x.bookName || '')} · ${escapeHtml(x.chapterName || '')} · ${escapeHtml(x.paraPos || '')}</div>
+        <div class="review-paragraph" data-paragraph-box="${id}" hidden></div>
       </div>
     `;
   }).join('');
@@ -1218,13 +1221,68 @@ $('#btnLoadMore').addEventListener('click', () => {
   renderList();
 });
 
-// 列表内的三个动作：勾选 / 处理 / 剔除
+async function toggleReviewParagraph(button) {
+  const id = String(button.dataset.paragraphId || '');
+  const box = $('#reviewList').querySelector(`[data-paragraph-box="${id}"]`);
+  if (!box) return;
+
+  if (!box.hidden) {
+    box.hidden = true;
+    button.textContent = '查看原段';
+    return;
+  }
+
+  const hit = (reviewResult && reviewResult.items || []).find((x) => String(x.id) === id);
+  if (!hit) return;
+  const key = [hit.bookId, hit.chapterId, hit.paraPos].map((x) => String(x || '')).join(':');
+  box.hidden = false;
+  button.textContent = '收起原段';
+
+  const cached = reviewParagraphCache.get(key);
+  if (cached) {
+    box.classList.remove('is-error', 'is-loading');
+    box.innerHTML = `<div class="review-paragraph-label">${escapeHtml(cached.title || hit.chapterName || '对应原文')} · 第 ${cached.index} 段</div>`
+      + `<div class="review-paragraph-text">${escapeHtml(cached.text)}</div>`;
+    return;
+  }
+
+  box.classList.remove('is-error');
+  box.classList.add('is-loading');
+  box.textContent = '正在只读获取对应段落…';
+  button.disabled = true;
+  try {
+    const paragraph = await window.Exporter.readParagraph(
+      hit.bookId,
+      hit.chapterId,
+      hit.paraPos,
+      hit.chapterName
+    );
+    reviewParagraphCache.set(key, paragraph);
+    box.classList.remove('is-loading');
+    box.innerHTML = `<div class="review-paragraph-label">${escapeHtml(paragraph.title || hit.chapterName || '对应原文')} · 第 ${paragraph.index} 段</div>`
+      + `<div class="review-paragraph-text">${escapeHtml(paragraph.text)}</div>`;
+  } catch (err) {
+    box.classList.remove('is-loading');
+    box.classList.add('is-error');
+    box.textContent = '读取原段失败：' + String((err && err.message) || err);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+// 列表内的四个动作：勾选 / 查看原段 / 处理 / 剔除
 $('#reviewList').addEventListener('click', (e) => {
   const chk = e.target.closest('[data-check-id]');
   if (chk) {
     const id = String(chk.dataset.checkId);
     if (chk.checked) picked.add(id); else picked.delete(id);
     renderBatchBar();
+    return;
+  }
+
+  const paragraph = e.target.closest('[data-paragraph-id]');
+  if (paragraph) {
+    toggleReviewParagraph(paragraph);
     return;
   }
 

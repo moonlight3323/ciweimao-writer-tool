@@ -158,6 +158,63 @@
     return `${ORIGIN}/book_manage/draft?book_id=${encodeURIComponent(book.bookId)}&chapter_id=${encodeURIComponent(ch.chapterId)}`;
   }
 
+  /** 从「第 42 段」一类位置说明里取出 1 起始的段落序号。 */
+  function parseParagraphNumber(paraPos) {
+    const m = String(paraPos || '').match(/第\s*(\d{1,6})\s*段/);
+    return m ? Math.max(1, parseInt(m[1], 10)) : 0;
+  }
+
+  /**
+   * 平台正文转为段落数组。后台正文通常一段一行；连续空行仅作为分隔，
+   * 不应被算成可评论的段落。
+   */
+  function splitParagraphs(content) {
+    return String(content || '')
+      .replace(/\r\n?/g, '\n')
+      .split(/\n+/)
+      .map((line) => line.replace(/[ \t]+/g, ' ').trim())
+      .filter(Boolean);
+  }
+
+  /**
+   * 读取一条间贴所对应的正文段落。优先使用平台只读详情接口，
+   * 详情接口没有正文时再读取章节编辑页，但不会提交或修改任何内容。
+   */
+  async function readParagraph(bookId, chapterId, paraPos, fallbackTitle) {
+    const bid = String(bookId || '').trim();
+    const cid = String(chapterId || '').trim();
+    const index = parseParagraphNumber(paraPos);
+    if (!bid || !cid) throw new Error('这条间贴缺少作品或章节编号，请重新抓取间贴');
+    if (!index) throw new Error('无法识别对应的段落序号');
+
+    await ensurePlatform();
+    let parsed = null;
+    try {
+      const detail = await fetchChapterDetail(bid, cid);
+      parsed = adapter().parseChapterContent(detail.html, { fallbackTitle });
+    } catch (_) { parsed = null; }
+
+    if (!parsed || !String(parsed.content || '').trim()) {
+      const draft = await fetchHtml(chapterUrl({ bookId: bid }, { chapterId: cid }));
+      parsed = adapter().parseChapterContent(draft.html, { fallbackTitle });
+    }
+    if (parsed && parsed.needLogin) {
+      throw new Error('登录态已失效，请点右上角「打开作者后台」重新登录');
+    }
+
+    const paragraphs = splitParagraphs(parsed && parsed.content);
+    if (!paragraphs.length) throw new Error('没有读取到这一章的正文');
+    if (index > paragraphs.length) {
+      throw new Error(`后台标记为第 ${index} 段，但本章当前只解析到 ${paragraphs.length} 段；章节可能已修改`);
+    }
+    return {
+      title: (parsed && parsed.title) || fallbackTitle || '',
+      index,
+      total: paragraphs.length,
+      text: paragraphs[index - 1],
+    };
+  }
+
   /**
    * 判定「取到的文本像不像这一章的正文」。
    *
@@ -388,6 +445,9 @@
     safeName,
     stamp,
     chapterUrl,
+    parseParagraphNumber,
+    splitParagraphs,
+    readParagraph,
   };
 
   if (typeof module === 'object' && module.exports) module.exports = api;

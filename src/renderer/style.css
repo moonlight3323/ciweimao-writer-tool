@@ -857,6 +857,34 @@ input[type="checkbox"] { accent-color: var(--accent-line); cursor: pointer; }
 
 .review-meta-line { font-size: 11px; color: var(--text-3); margin-top: 5px; }
 
+.review-paragraph-btn { color: var(--accent-ink); }
+
+.review-paragraph {
+  margin-top: 9px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent-line);
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.review-paragraph.is-loading { color: var(--text-3); }
+.review-paragraph.is-error { border-left-color: var(--danger-line); color: var(--danger-ink); }
+
+.review-paragraph-label {
+  margin-bottom: 5px;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.review-paragraph-text {
+  font-size: 13px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .more-wrap { text-align: center; margin-top: 14px; }
 
 .book-picker { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
