@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; font-src 'self';" />
+  <title>敏感词侧栏</title>
+  <link rel="stylesheet" href="side.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header class="ps-head" id="sideHead">
+      <div class="ps-head-text">
+        <div class="ps-title" id="bwTitle">已填入后台</div>
+        <div class="ps-sub" id="psSub">在左边页面上确认后再发布</div>
+      </div>
+      <button class="icon-btn no-drag" id="btnSideClose" type="button" title="收起侧栏（页面宽度不受影响）">×</button>
+    </header>
+
+    <div class="ps-notice" id="sideNotice" hidden data-kind="info">
+      <span class="ps-notice-text" id="sideNoticeText"></span>
+      <button class="ps-notice-x no-drag" id="btnNoticeClose" type="button" title="知道了">×</button>
+    </div>
+
+    <div class="ps-body">
+      <!-- 状态一：内容已填好，等你确认 -->
+      <div class="ps-state" id="psReady" hidden>
+        <div class="ps-ready-card">
+          <div class="ps-ready-row"><span>作品</span><b id="psBookName">—</b></div>
+          <div class="ps-ready-row"><span>章节</span><b id="psChapterTitle">—</b></div>
+          <div class="ps-ready-row"><span>分卷</span><b id="psVol">—</b></div>
+          <div class="ps-ready-row"><span>正文</span><b id="psWords">0 字</b></div>
+          <div class="ps-ready-row" id="psScheduleRow" hidden><span>定时</span><b id="psSchedule">—</b></div>
+        </div>
+        <p class="ps-lead">
+          内容已经填进后台页面了。要插图片就用页面工具栏的「图片」，想改字直接在页面上改。
+          <b>确认没问题后点下面「发布这一章」</b>，或者点页面自己的「发布章节」也行，都会先过一遍敏感词检查。
+        </p>
+        <p class="ps-lead ps-done-note" id="psReadyNote" hidden></p>
+      </div>
+
+      <!-- 状态二：触发审核，处理敏感词 -->
+      <div class="ps-state" id="psBadword" hidden>
+        <p class="ps-lead" id="bwLead"></p>
+        <div class="bw-list" id="bwList"></div>
+      </div>
+    </div>
+
+    <footer class="ps-foot">
+      <div id="psActionsReady" hidden>
+        <button class="btn primary block" id="btnPsPublish" type="button">发布这一章</button>
+      </div>
+
+      <div id="psActionsBad" hidden>
+        <div class="segmented" id="bwMode" title="点一下套用到所有「正文里出现过」的词">
+          <button type="button" data-mode="dot">插「.」</button>
+          <button type="button" data-mode="synonym">近义</button>
+          <button type="button" data-mode="del">删除</button>
+        </div>
+        <div class="ps-actions">
+          <button class="btn ghost" id="btnBwForce" type="button" title="不修改正文，直接提交">直接提交</button>
+          <button class="btn primary" id="btnBwApply" type="button">一键处理</button>
+        </div>
+        <div class="ps-note">
+          改的是<b>页面正文本身</b>，本地稿一起同步；没有预览，改完直接生效。
+          <b>标「正文里没有」的是站点误报</b>，不用改。
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <script src="side.js"></script>
+</body>
+</html>

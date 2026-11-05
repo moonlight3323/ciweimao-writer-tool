@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'nonce-ciweimao-plugin'; img-src 'self' data:; frame-src data:;" />
+  <title>刺猬猫作家助手</title>
+  <!-- 先定主题再上色，避免深色模式下闪一下白底 -->
+  <script src="theme-init.js"></script>
+  <link rel="stylesheet" href="style.css?v=20261105-3" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <img class="brand-mark" src="logo.png" alt="刺猬猫" width="34" height="34" />
+        <div class="brand-text">
+          <div class="brand-title">作家助手</div>
+          <div class="brand-sub">Ciweimao Author Tool</div>
+        </div>
+      </div>
+
+      <nav class="nav" id="nav">
+        <button class="nav-item is-active" data-view="overview">概览</button>
+        <button class="nav-item" data-view="writer">创作中心</button>
+        <button class="nav-item" data-view="writing-stats">码字统计</button>
+        <button class="nav-item" data-view="reviews">评论审查</button>
+        <button class="nav-item" data-view="books">数据看板</button>
+        <button class="nav-item" data-view="export">章节导出</button>
+        <button class="nav-item" data-view="rank">平台榜单</button>
+        <button class="nav-item" data-view="miaoyu">喵语数据</button>
+        <button class="nav-item" data-view="sync">抓取与同步</button>
+        <button class="nav-item" data-view="plugins">插件中心</button>
+        <button class="nav-item" data-view="settings">设置</button>
+      </nav>
+
+      <div class="sidebar-foot">
+        <button class="theme-switch" id="btnTheme" type="button" title="切换深浅色">
+          <span class="theme-switch-icon">☾</span>
+          <span class="theme-switch-text">深色模式</span>
+        </button>
+        <div class="conn" id="connBadge" data-state="idle">
+          <span class="conn-dot"></span>
+          <span class="conn-text">后台未打开</span>
+        </div>
+        <div class="version">v0.10.1</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 id="pageTitle">概览</h1>
+          <span class="crumb" id="pageCrumb"></span>
+        </div>
+        <div class="topbar-right">
+          <button class="btn icon" id="btnBack" hidden title="后退">←</button>
+          <button class="btn icon" id="btnForward" hidden title="前进">→</button>
+          <button class="btn ghost" id="btnReload" hidden>刷新</button>
+          <button class="btn ghost" id="btnHome" hidden>后台首页</button>
+          <button class="btn ghost" id="btnClearInboxTop" hidden title="把作者信箱里的未读小红点一次清掉">清小红点</button>
+          <button class="btn ghost" id="btnCloseBrowser" hidden>退出后台</button>
+          <button class="btn ghost" id="btnPubSide" hidden title="打开或收起敏感词处理侧栏">敏感词侧栏</button>
+          <button class="btn primary" id="btnOpenBrowser">打开作者后台</button>
+        </div>
+      </header>
+
+      <div class="content" id="content">
+        <!-- 登录页专用：密码本工具条。平台页面视图会整体下移，给它让出高度 -->
+        <div class="vault-bar" id="vaultBar" hidden>
+          <span class="vault-label">密码本</span>
+          <select class="select select-sm" id="vaultPick"></select>
+          <button class="btn primary btn-sm" id="btnVaultFill">填入</button>
+          <button class="btn ghost btn-sm" id="btnVaultCapture" title="把页面里已经填好的账号密码存进密码本">记住这次输入</button>
+          <button class="btn ghost btn-sm" id="btnVaultDelete" title="删除选中的记录">删除</button>
+          <span class="vault-hint" id="vaultHint"></span>
+        </div>
+
+        <section class="view is-active" data-view="overview">
+          <div class="hero">
+            <h2>把后台的数据，收进你自己的工具里</h2>
+            <p>
+              本工具以内嵌浏览器方式接入刺猬猫作者后台。登录由你亲自完成一次，
+              凭据保存在浏览器会话中，应用本身不接触账号密码。
+            </p>
+          </div>
+
+          <div class="grid grid-3">
+            <div class="card">
+              <div class="card-label">平台连接</div>
+              <div class="card-value" id="statConn">未连接</div>
+              <div class="card-hint" id="statConnHint">点击右上角「打开作者后台」</div>
+            </div>
+            <div class="card">
+              <div class="card-label">登录状态</div>
+              <div class="card-value" id="statLogin">未知</div>
+              <div class="card-hint" id="statLoginHint">尚未访问作者后台</div>
+            </div>
+            <div class="card">
+              <div class="card-label">本地数据</div>
+              <div class="card-value" id="statData">0 条</div>
+              <div class="card-hint" id="statDataHint">尚未抓取</div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h3>运行环境</h3>
+              <span class="tag">只读为主</span>
+            </div>
+            <dl class="kv">
+              <dt>数据目录</dt>
+              <dd id="kvUserData" class="mono">读取中…</dd>
+              <dt>接入站点</dt>
+              <dd class="mono">author.ciweimao.com</dd>
+              <dt>当前权限</dt>
+              <dd>读取不限；删除 / 禁言只在「评论审查」里逐条或批量确认后发出，每次动作都留日志</dd>
+            </dl>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h3>作者信箱小红点</h3>
+              <span class="tag">一键清</span>
+            </div>
+            <p class="muted">
+              后台「公告 / 作者信箱」里每条消息都要点一次「展开」才会消掉红点。
+              这里替你逐条点一遍——用的是站点自己的已读逻辑，不额外改动任何状态。
+            </p>
+            <div class="actions">
+              <button class="btn primary" id="btnClearInbox">一键清除小红点</button>
+              <label class="check-line"><input type="checkbox" id="inboxAllPages" checked /> 连同其他分页一起清</label>
+              <span class="hint-line" id="inboxStatus"></span>
+            </div>
+            <div class="progress" id="inboxProgress" hidden>
+              <div class="progress-bar"><span id="inboxBar"></span></div>
+              <div class="progress-text" id="inboxText"></div>
+            </div>
+            <div class="notice" id="inboxNotice" hidden></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head"><h3>当前进度</h3></div>
+            <ul class="steps">
+              <li class="step done"><span class="step-no">1</span><div><strong>登录通道</strong><p>内嵌浏览器接入作者后台，登录态由 Chromium 持久化，应用不接触密码。</p></div></li>
+              <li class="step done"><span class="step-no">2</span><div><strong>评论归档</strong><p>按作品逐页读取间贴，落地本地，字段完整率 100%。</p></div></li>
+              <li class="step done"><span class="step-no">3</span><div><strong>违规审查</strong><p>内容规则 + 行为特征（刷屏、复读），输出带证据的风险评分。</p></div></li>
+              <li class="step done"><span class="step-no">4</span><div><strong>读者反馈</strong><p>自动挑出章节被屏蔽、错字指正、断更质疑等值得你亲自看的评论。</p></div></li>
+              <li class="step done"><span class="step-no">5</span><div><strong>数据看板</strong><p>字数、收藏、新增订阅、均订、总订阅，按每日 06:00 结算口径做日间对比。</p></div></li>
+              <li class="step done"><span class="step-no">6</span><div><strong>平台榜单</strong><p>点击榜与收藏榜的周榜、月榜前 10，含排名升降对比，无需登录即可抓取。</p></div></li>
+              <li class="step done"><span class="step-no">7</span><div><strong>章节导出</strong><p>整本或勾选若干章导出为 TXT，带 UTF-8 BOM，记事本直接打开不乱码。</p></div></li>
+              <li class="step done"><span class="step-no">8</span><div><strong>执行动作</strong><p>删除、禁言、拉黑：随机抽样 → 审查 → 执行单 → 由你决定手动还是自动，逐个确认后发出。</p></div></li>
+            </ul>
+          </div>
+        </section>
+
+        <section class="view writing-stats-view" data-view="writing-stats">
+          <div class="writing-today-card">
+            <div class="writing-today-date">
+              <span>今日码字</span>
+              <strong id="writingTodayDate">--/--</strong>
+            </div>
+            <div class="writing-today-main">
+              <span>本机已保存</span>
+              <div><b id="writingTodayCount">0</b><small>字</small></div>
+              <div class="writing-today-art" aria-hidden="true">✍</div>
+              <p id="writingTodayMessage">每一次落笔，都会让故事向前一步</p>
+            </div>
+          </div>
+
+          <div class="writing-history-card">
+            <div class="writing-history-head">
+              <div class="segmented" id="writingRange">
+                <button type="button" data-writing-days="7" class="is-active">7天</button>
+                <button type="button" data-writing-days="15">15天</button>
+                <button type="button" data-writing-days="30">30天</button>
+              </div>
+              <div class="writing-summary">
+                <div><span id="writingAverageLabel">7日平均</span><b id="writingAverage">0</b><small>字</small></div>
+                <div><span id="writingMaxLabel">7日最高</span><b id="writingMaximum">0</b><small>字</small></div>
+                <div><span id="writingTotalLabel">7日累计</span><b id="writingTotal">0</b><small>字</small></div>
+              </div>
+            </div>
+            <div class="writing-chart" id="writingChart"></div>
+            <p class="writing-rule">仅统计成功保存的键盘新增文字；删除、复制粘贴、拖入、查找替换及一键排版产生的文字均不计入。</p>
+          </div>
+        </section>
+
+        <section class="view writer-view" data-view="writer">
+          <div id="writerLibrary">
+            <div class="writer-library-head">
+              <div>
+                <h2>我的作品</h2>
+                <p>从作者库继续创作，或新建、导入一本书。</p>
+              </div>
+              <div class="writer-actions">
+                <button class="btn primary" id="btnWriterCreate" type="button">＋ 新建书籍</button>
+                <button class="btn ghost" id="btnWriterImport" type="button">⇩ 导入书籍</button>
+                <button class="btn ghost" id="btnWriterSync" type="button">同步作者库</button>
+                <button class="btn ghost" id="btnWriterRefresh" type="button">刷新</button>
+              </div>
+            </div>
+            <div class="writer-notice" id="writerNotice" hidden></div>
+            <div class="writer-book-grid" id="writerBookGrid"></div>
+            <div class="writer-empty" id="writerEmpty" hidden>
+              <div class="writer-empty-icon">✎</div>
+              <h3>还没有作品</h3>
+              <p>新建一本书，或导入 TXT / JSON 开始创作。</p>
+            </div>
+          </div>
+
+          <div class="writer-editor" id="writerEditor" hidden>
+            <div class="writer-toolbar">
+              <button class="writer-tool" id="btnWriterBack" type="button">← 作品库</button>
+              <span class="writer-divider"></span>
+              <button class="writer-tool is-active" id="btnWriterChapters" type="button">隐藏目录</button>
+              <button class="writer-tool" id="btnWriterSave" type="button">保存</button>
+              <span class="writer-save-state" id="writerSaveState">已保存</span>
+              <span class="writer-toolbar-space"></span>
+              <button class="writer-tool" id="btnWriterFormat" type="button">一键排版</button>
+              <button class="writer-tool" id="btnWriterFind" type="button">查找替换</button>
+              <button class="writer-tool is-active" id="btnWriterStats" type="button">码字统计</button>
+              <button class="writer-tool" id="btnWriterSchedule" type="button" title="设置立即发布或定时发布时间">立即发布</button>
+              <button class="btn primary btn-sm" id="btnWriterPublish" type="button">投到后台</button>
+            </div>
+
+            <div class="writer-findbar" id="writerFindbar" hidden>
+              <input class="input" id="writerFindText" placeholder="查找内容" />
+              <input class="input" id="writerReplaceText" placeholder="替换为" />
+              <button class="btn ghost btn-sm" id="btnWriterFindNext" type="button">查找下一个</button>
+              <button class="btn ghost btn-sm" id="btnWriterReplaceOne" type="button">替换</button>
+              <button class="btn ghost btn-sm" id="btnWriterReplaceAll" type="button">全部替换</button>
+              <span class="writer-find-result" id="writerFindResult"></span>
+              <button class="writer-tool" id="btnWriterFindClose" type="button">×</button>
+            </div>
+
+            <div class="writer-workspace" id="writerWorkspace">
+              <aside class="writer-chapters">
+                <div class="writer-book-name" id="writerBookName"></div>
+                <input class="writer-chapter-search" id="writerChapterSearch" placeholder="搜索章节" />
+                <div class="writer-chapter-buttons">
+                  <button class="btn primary btn-sm" id="btnWriterNewChapter" type="button">新建章节</button>
+                  <button class="btn ghost btn-sm" id="btnWriterNewVolume" type="button">新建卷</button>
+                </div>
+                <div class="writer-chapter-list" id="writerChapterList"></div>
+              </aside>
+
+              <main class="writer-paper-wrap">
+                <div class="writer-paper">
+                  <input class="writer-title-input" id="writerChapterTitle" placeholder="章节标题" maxlength="100" />
+                  <textarea class="writer-textarea" id="writerContent" placeholder="从这里开始写正文……" spellcheck="false"></textarea>
+                </div>
+                <div class="writer-statusbar">
+                  <span id="writerBottomState">本地自动保存</span>
+                  <span class="writer-status-space"></span>
+                  <span>本章 <b id="writerBottomWords">0</b> 字</span>
+                </div>
+              </main>
+
+              <aside class="writer-stats" id="writerStatsPanel">
+                <div class="writer-stats-mascot">✍</div>
+                <h3>本次码字</h3>
+                <dl>
+                  <dt>本次码字</dt><dd><b id="writerTyped">0</b> 字</dd>
+                  <dt>码字速率</dt><dd><b id="writerSpeed">0</b> 字/时</dd>
+                  <dt>码字时间</dt><dd id="writerActiveTime">00:00:00</dd>
+                  <dt>空闲时间</dt><dd id="writerIdleTime">00:00:00</dd>
+                </dl>
+                <div class="plugin-editor-stats" id="pluginEditorStats" hidden></div>
+                <p>粘贴内容不计入本次码字与速率。</p>
+                <button class="btn ghost btn-sm" id="btnWriterResetStats" type="button">重新计时</button>
+              </aside>
+            </div>
+
+            <div class="publish-toast" id="publishToast" hidden>
+              <div class="publish-toast-head">
+                <span class="publish-toast-title" id="publishToastTitle">正在投递…</span>
+                <button class="icon-btn publish-toast-close" id="btnPublishToastClose" type="button" title="收起">×</button>
+              </div>
+              <div class="publish-toast-body" id="publishToastBody"></div>
+              <div class="publish-toast-foot">
+                <button class="link-btn" id="btnPublishReopen" type="button">回到后台页面</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" data-view="reviews">
+          <div class="stat-row" id="reviewStats"></div>
+
+          <div class="toolbar">
+            <div class="segmented" id="reviewMode">
+              <button data-mode="review" class="is-active">违规审查</button>
+              <button data-mode="signals">读者反馈</button>
+            </div>
+            <div class="toolbar-right" id="reviewTools">
+              <select class="input select-sm" id="reviewBook"><option value="all">全部作品</option></select>
+              <div class="segmented is-lg" id="reviewFilter">
+                <button data-filter="all" class="is-active">全部</button>
+                <button data-filter="high">高风险</button>
+                <button data-filter="mid">中风险</button>
+                <button data-filter="clean">无标记</button>
+              </div>
+              <input class="input" id="reviewSearch" type="search" placeholder="搜索内容或昵称" />
+              <button class="btn ghost" id="btnToggleReaderView">按读者看</button>
+            </div>
+          </div>
+
+          <!-- 批量条：勾选了才会出现 -->
+          <div class="batch-bar" id="batchBar">
+            <span class="batch-count" id="batchCount">已选 0 条</span>
+            <div class="segmented" id="batchAction">
+              <button type="button" data-act="delete" class="is-active">删除</button>
+              <button type="button" data-act="mute">禁言</button>
+              <button type="button" data-act="block">拉黑（删除 + 禁言）</button>
+            </div>
+            <label class="check-line" style="margin:0">
+              <input type="checkbox" id="batchDryRun" checked /> 演练
+            </label>
+            <button class="btn primary" id="btnBatchRun">执行选中</button>
+            <button class="btn ghost" id="btnBatchSelectHigh">全选高风险</button>
+            <button class="btn ghost" id="btnBatchSelectMid">全选中风险</button>
+            <button class="btn ghost" id="btnBatchClear">取消选择</button>
+            <span class="hint-line" id="batchProgress"></span>
+          </div>
+
+          <!-- 单项处置：点「处理」后出现 -->
+          <div id="execPanel" hidden>
+            <div class="panel" id="execSlipPanel">
+              <div class="panel-head">
+                <h3>当前处置</h3>
+                <span class="tag" id="execSampleTag">—</span>
+                <button class="link-btn" id="btnExecClose" type="button">收起</button>
+              </div>
+              <div id="execSample"></div>
+              <div id="execSlip" style="margin-top:10px"></div>
+            </div>
+
+            <div class="panel" id="execChoicePanel">
+              <div class="panel-head">
+                <h3>谁来动手</h3>
+                <span class="tag">默认交给工具</span>
+              </div>
+              <div class="segmented" id="execMode">
+                <button type="button" data-mode="auto" class="is-active">交给工具</button>
+                <button type="button" data-mode="manual">我自己来</button>
+              </div>
+
+              <div class="exec-pane" id="execAuto">
+                <p class="muted">
+                  工具会替你向平台发出下面这些请求。<strong>删除不可撤销</strong>；
+                  禁言是跨作品生效的（站点原话是「禁止此读者在你所有作品的间贴言论」），可以在「禁言回收站」解除。
+                </p>
+                <label class="check-line">
+                  <input type="checkbox" id="execDryRun" checked />
+                  演练模式：只生成请求清单，不真的发出（第一次建议先看一遍）
+                </label>
+                <div class="actions">
+                  <button class="btn danger" data-exec="delete">删除这条</button>
+                  <button class="btn ghost" data-exec="mute">禁言这位读者</button>
+                  <button class="btn ghost" data-exec="block">拉黑（删除 + 禁言）</button>
+                </div>
+                <div class="exec-confirm" id="execConfirm" hidden></div>
+                <div class="notice" id="execResult" hidden></div>
+              </div>
+
+              <div class="exec-pane" id="execManual" hidden>
+                <p class="muted">
+                  工具只负责把你送到正确的位置：对应作品、对应章节的间贴列表。
+                  删除和禁言你自己在平台页面上点，点完回到这里继续。
+                </p>
+                <div class="actions">
+                  <button class="btn primary" id="btnExecOpenPage">在后台打开这一章</button>
+                  <button class="btn ghost" id="btnExecCopy">复制执行单</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head">
+                <h3>动作请求预览</h3>
+                <span class="tag" id="execPreviewTag">尚未生成</span>
+              </div>
+              <pre class="exec-code" id="execPreview">点某条评论的「处理」，这里会显示将要发出的确切请求。</pre>
+            </div>
+          </div>
+
+          <div class="notice" id="execPoolNotice" hidden></div>
+
+          <div id="reviewList" class="review-list"></div>
+          <div id="signalList" class="signal-list" hidden></div>
+          <div id="reviewEmpty" class="empty" hidden>
+            <div class="empty-title">还没有评论数据</div>
+            <p>先到「抓取与同步」完成一次抓取，这里就会出现评论与审查结果。</p>
+            <button class="btn primary" data-jump="sync">前往抓取</button>
+          </div>
+          <div id="reviewMore" class="more-wrap" hidden>
+            <button class="btn ghost" id="btnLoadMore">加载更多</button>
+          </div>
+
+          <div class="panel" style="margin-top:16px">
+            <div class="panel-head">
+              <h3>执行记录</h3>
+              <button class="link-btn" id="btnExecLogRefresh" type="button">刷新</button>
+            </div>
+            <div class="exec-log" id="execLog"><div class="hint-line">还没有执行过任何动作</div></div>
+          </div>
+
+          <div class="credit credit-right">审查功能　二组作者：MINI 喵~</div>
+
+        </section>
+
+
+        <section class="view" data-view="books">
+          <div class="board-head">
+            <div>
+              <div class="board-day" id="boardDay">尚无数据</div>
+              <div class="hint-line" id="boardSub">抓取一次后即可建立基准</div>
+            </div>
+            <div class="actions">
+              <button class="btn ghost" id="btnPrevDay" hidden>看前一天</button>
+              <button class="btn primary" id="btnRefreshStats">刷新数据</button>
+            </div>
+          </div>
+
+          <div class="scope-bar">
+            <span class="scope-label">查看范围</span>
+            <select class="select" id="boardBook" disabled>
+              <option value="">全部作品（合计）</option>
+            </select>
+            <span class="scope-hint" id="boardScopeHint"></span>
+          </div>
+
+          <div class="stat-row" id="boardTotals"></div>
+          <div id="boardBooks" class="board-books"></div>
+          <div id="boardExtra" class="single-extra" hidden></div>
+
+          <div id="boardChart" class="chart-panel" hidden>
+            <div class="chart-head">
+              <div>
+                <div class="chart-title">每日趋势</div>
+                <div class="chart-sub" id="chartSub">单本作品的历史走势</div>
+              </div>
+              <div class="segmented" id="chartMetrics"></div>
+            </div>
+            <div class="chart-canvas" id="chartCanvas"></div>
+            <div class="chart-foot" id="chartFoot"></div>
+          </div>
+
+          <div id="boardEmpty" class="empty">
+            <div class="empty-title">还没有统计数据</div>
+            <p>点「刷新数据」立即采集一次。字数与收藏的日间变化需要至少两天的快照才能对比，
+              订阅类指标平台自带前一日对比，首次即可显示。</p>
+            <button class="btn primary" data-jump="sync">前往抓取</button>
+          </div>
+
+          <div class="notice" id="boardNotice" hidden></div>
+        </section>
+
+        <section class="view" data-view="export">
+          <div class="panel">
+            <div class="panel-head">
+              <h3>第一步 · 选择作品</h3>
+              <span class="tag">只读</span>
+            </div>
+            <p class="muted">
+              把后台的章节正文导出成 TXT。全程只读：不上传、不修改、不发布，导出的文件保存在你指定的位置。
+            </p>
+
+            <div class="scope-bar">
+              <span class="scope-label">作品</span>
+              <select class="select" id="exportBook" disabled>
+                <option value="">尚未读取作品</option>
+              </select>
+              <button class="btn ghost" id="btnExportBooks">读取作品列表</button>
+              <button class="btn primary" id="btnExportChapters" disabled>读取章节</button>
+            </div>
+
+            <div class="progress" id="exportProgress" hidden>
+              <div class="progress-bar"><span id="exportBar"></span></div>
+              <div class="progress-text" id="exportText"></div>
+            </div>
+            <div class="notice" id="exportNotice" hidden></div>
+          </div>
+
+          <div class="panel chapter-panel" id="chapterPanel" hidden>
+            <div class="chapter-head">
+              <h3>章节</h3>
+              <span class="chapter-count" id="chapterCount">共 0 章</span>
+              <div class="chapter-tools">
+                <label><input type="checkbox" id="chapterAll" /> 全选</label>
+                <button class="link-btn" id="btnChapterInvert" type="button">反选</button>
+                <button class="link-btn" id="btnChapterNone" type="button">清空</button>
+              </div>
+            </div>
+
+            <div class="chapter-list" id="chapterList"></div>
+
+            <div class="export-bar">
+              <div class="export-hint" id="exportHint">已选 <strong>0</strong> 章</div>
+              <div class="actions">
+                <button class="btn ghost" id="btnExportSelected" disabled>导出所选</button>
+                <button class="btn primary" id="btnExportAll">一键全部导出</button>
+              </div>
+            </div>
+
+            <div class="export-result" id="exportResult" hidden></div>
+            <div class="hint-line" id="archiveHint" hidden></div>
+          </div>
+
+          <div class="panel details" id="exportHelp">
+            <details>
+              <summary>导出说明</summary>
+              <p class="muted">
+                导出的 TXT 采用 UTF-8 带 BOM 编码，Windows 记事本、WPS、Typora 都能直接打开不乱码；
+                换行用 CRLF，粘到别的编辑器里也是一段一行。
+              </p>
+              <p class="muted">
+                章节顺序按后台列表的顺序还原：如果后台是倒序排列（最新在前），工具会自动翻转成从第一章开始。
+                正文里的空行、分段会原样保留；「作者的话」如有会附在每章末尾。
+              </p>
+              <p class="muted">
+                如果某一章读不到正文（例如编辑器是前端渲染、或该章还是空白草稿），会在导出结果里单独列出来，
+                其余章节照常导出。
+              </p>
+            </details>
+          </div>
+        </section>
+
+        <section class="view" data-view="miaoyu">
+          <div class="ext-bar">
+            <div class="segmented is-lg" id="miaoyuTabs">
+              <button type="button" data-route="firstRecommend" class="is-active">试水推榜</button>
+              <button type="button" data-route="sd">万收首订</button>
+            </div>
+            <div class="ext-bar-right">
+              <button class="btn icon" id="btnMiaoyuBack" title="后退">←</button>
+              <button class="btn icon" id="btnMiaoyuForward" title="前进">→</button>
+              <button class="btn ghost" id="btnMiaoyuReload">刷新</button>
+              <button class="btn ghost" id="btnMiaoyuExternal">在浏览器打开</button>
+              <span class="hint-line" id="miaoyuStatus">正在连接…</span>
+            </div>
+          </div>
+
+          <div class="ext-host" id="miaoyuHost">
+            <div class="ext-fallback" id="miaoyuFallback" hidden>
+              <div class="empty-title">站点没能加载</div>
+              <p id="miaoyuFallbackMsg">数据站由第三方维护，偶尔会短暂不可用。</p>
+              <button class="btn primary" id="btnMiaoyuRetry">重试</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" data-view="rank">
+          <div class="board-head">
+            <div>
+              <div class="board-day" id="rankDay">尚无榜单数据</div>
+              <div class="hint-line" id="rankSub">抓取一次即可看到点击榜与收藏榜，排名变化需连续两天</div>
+            </div>
+            <div class="actions">
+              <button class="btn ghost" id="btnPrevRank" hidden>看前一天</button>
+              <button class="btn primary" id="btnRefreshRank">刷新榜单</button>
+            </div>
+          </div>
+
+          <div class="rank-grid" id="rankGrid"></div>
+
+          <div id="rankEmpty" class="empty">
+            <div class="empty-title">还没有榜单数据</div>
+            <p>点「刷新榜单」抓取一次。榜单页是公开页面，不需要登录作者后台。</p>
+          </div>
+
+          <div class="notice" id="rankNotice" hidden></div>
+        </section>
+
+        <section class="view" data-view="sync">
+          <div class="panel">
+            <div class="panel-head">
+              <h3>第一步 · 登录作者后台</h3>
+            </div>
+            <p class="muted">
+              抓取需要先登录。点击下方按钮打开作者后台，在内嵌页面里完成一次登录，
+              之后会话会保留，通常几周内无需重复登录。应用不保存账号密码。
+            </p>
+            <div class="actions">
+              <button class="btn primary" id="btnGoAuthor">打开作者后台</button>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h3>第二步 · 抓取评论</h3>
+              <span class="tag">只读</span>
+            </div>
+            <p class="muted">
+              读取你名下作品的间贴（段评）。全程只做页面浏览，不点赞、不删除、不提交任何表单。
+            </p>
+
+            <div class="field">
+              <div class="field-label">选择作品</div>
+              <div id="bookPicker" class="book-picker">
+                <div class="hint-line">登录后点击「读取作品列表」</div>
+              </div>
+            </div>
+
+            <div class="field field-inline">
+              <label class="field-label" for="maxPages">每本最多抓</label>
+              <input class="input input-sm" id="maxPages" type="number" min="1" max="999" value="10" />
+              <span class="hint-line">页（每页 10 条，留空或填大值即抓全部）</span>
+            </div>
+
+            <div class="actions">
+              <button class="btn ghost" id="btnListBooks">读取作品列表</button>
+              <button class="btn primary" id="btnCrawl" disabled>开始抓取</button>
+              <button class="btn ghost" id="btnStopCrawl" hidden>停止</button>
+            </div>
+
+            <div class="progress" id="crawlProgress" hidden>
+              <div class="progress-bar"><span id="crawlBar"></span></div>
+              <div class="progress-text" id="crawlText"></div>
+            </div>
+            <div class="notice" id="crawlNotice" hidden></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head"><h3>本地数据</h3></div>
+            <dl class="kv">
+              <dt>上次同步</dt><dd id="kvLastSync">尚未抓取</dd>
+              <dt>评论条数</dt><dd id="kvTotal">0</dd>
+              <dt>数据文件</dt><dd id="kvDataDir" class="mono">读取中…</dd>
+            </dl>
+          </div>
+
+          <details class="panel details">
+            <summary>页面结构测绘（站点改版时使用）</summary>
+            <p class="muted">
+              依次访问后台各功能页并记录结构，用于在刺猬猫改版后重建解析规则。
+              测绘期间请勿在平台页面内操作。
+            </p>
+            <div class="actions">
+              <button class="btn ghost" id="btnProbe">开始测绘</button>
+              <button class="btn ghost" id="btnOpenDiagDir" hidden>打开诊断目录</button>
+            </div>
+            <div class="progress" id="probeProgress" hidden>
+              <div class="progress-bar"><span id="probeBar"></span></div>
+              <div class="progress-text" id="probeText"></div>
+            </div>
+            <div class="notice" id="probeNotice" hidden></div>
+          </details>
+        </section>
+
+        <section class="view plugin-view" data-view="plugins">
+          <div id="pluginManager">
+            <div class="plugin-head">
+              <div>
+                <h2>插件中心</h2>
+                <p>把自定义功能装进独立沙箱，需要什么就自己做什么。</p>
+              </div>
+              <div class="plugin-actions">
+                <button class="btn primary" id="btnPluginTemplate" type="button">＋ 创建开发模板</button>
+                <button class="btn ghost" id="btnPluginImport" type="button">导入插件包</button>
+                <button class="btn ghost" id="btnPluginFolder" type="button">打开插件目录</button>
+                <button class="btn ghost" id="btnPluginReload" type="button">重新加载</button>
+              </div>
+            </div>
+            <div class="plugin-safety">
+              插件页面运行在隔离环境中，只能使用清单里声明并由宿主放行的接口。安装第三方插件前仍应确认来源可信。
+            </div>
+            <div class="writer-notice" id="pluginNotice" hidden></div>
+            <div class="plugin-grid" id="pluginGrid"></div>
+            <div class="writer-empty" id="pluginEmpty" hidden>
+              <div class="writer-empty-icon">⌘</div>
+              <h3>还没有安装插件</h3>
+              <p>点击“创建开发模板”，就能得到一个可以直接修改的示例插件。</p>
+            </div>
+          </div>
+
+          <div class="plugin-host" id="pluginHost" hidden>
+            <div class="plugin-hostbar">
+              <button class="writer-tool" id="btnPluginBack" type="button">← 插件中心</button>
+              <strong id="pluginHostTitle">插件</strong>
+              <span id="pluginHostStatus"></span>
+              <button class="writer-tool" id="btnPluginRefresh" type="button">刷新插件</button>
+            </div>
+            <iframe id="pluginFrame" sandbox="allow-scripts" title="插件页面"></iframe>
+          </div>
+        </section>
+
+        <section class="view" data-view="settings">
+          <div class="panel">
+            <div class="panel-head"><h3>数据保存位置</h3><span class="tag" id="storageModeTag">系统默认</span></div>
+            <p class="storage-path mono" id="storagePath">读取中…</p>
+            <div class="toolbar" style="margin-top:12px">
+              <button class="btn primary" id="btnStorageChoose" type="button">选择保存文件夹</button>
+              <button class="btn ghost" id="btnStorageReset" type="button">恢复系统默认</button>
+            </div>
+            <p class="hint-line">作品库、章节草稿、导入书籍和本地统计都会保存在这里。切换位置不会删除旧目录中的文件。</p>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head"><h3>关于</h3><span class="tag">二组</span></div>
+            <dl class="kv">
+              <dt>作者</dt><dd>二组作者：坚持更新的阿烬</dd>
+              <dt>联系 QQ</dt>
+              <dd>
+                <span class="mono" id="kvAuthorQQ">1834671434</span>
+                <button class="link-btn" id="btnCopyQQ" type="button" style="margin-left:8px">复制</button>
+                <div class="hint-line" style="margin-top:3px">有修改建议、用着不顺手的地方，直接加这个号说</div>
+              </dd>
+              <dt>审查功能</dt><dd>二组作者：MINI 喵~</dd>
+              <dt>免费声明</dt>
+              <dd>
+                <button class="link-btn" id="btnShowFreeNotice" type="button">重新查看声明</button>
+                <div class="hint-line" style="margin-top:3px">本工具完全免费、开源、不盈利，永不收费</div>
+              </dd>
+            </dl>
+          </div>
+
+          <div class="panel" id="aiPanel">
+            <div class="panel-head">
+              <h3>AI 接入</h3>
+              <span class="tag" id="aiStateTag">已关闭</span>
+            </div>
+
+            <p class="muted">
+              让本机的 AI（dsh / Claude Code / Cursor 等）读取这里的评论、数据与正文，用来做剧情汇总、表格统计。
+              <strong>全程只读</strong>：AI 能读能算，不能删除、禁言或改动任何东西。
+            </p>
+
+            <label class="check-line">
+              <input type="checkbox" id="aiToggle" />
+              允许本机 AI 读取数据（只监听 127.0.0.1，外部网络访问不到）
+            </label>
+
+            <dl class="kv" id="aiDetails" hidden>
+              <dt>接口地址</dt>
+              <dd><span class="mono" id="aiUrl">—</span></dd>
+              <dt>访问令牌</dt>
+              <dd>
+                <span class="mono" id="aiToken">••••••••••••</span>
+                <button class="link-btn" id="btnAiShowToken" type="button" style="margin-left:8px">显示</button>
+                <button class="link-btn" id="btnAiCopyToken" type="button" style="margin-left:6px">复制</button>
+                <div class="hint-line" style="margin-top:3px">每次启动都会换新令牌；关掉开关即失效。</div>
+              </dd>
+              <dt>连接信息文件</dt>
+              <dd>
+                <button class="link-btn" id="btnAiEndpoint" type="button">打开所在文件夹</button>
+                <span class="hint-line">MCP 桥靠这个文件找到接口</span>
+              </dd>
+            </dl>
+
+            <div class="ai-actions">
+              <button class="btn primary" id="btnAiExportPack" type="button">生成 AI 素材包</button>
+              <button class="btn ghost" id="btnAiOpenFolder" type="button">打开素材文件夹</button>
+            </div>
+            <div class="hint-line" id="aiExportHint">素材包不看接口也能用：把它拖给网页版 AI、或让 agent 读那个目录。</div>
+
+            <div class="ai-config">
+              <div class="ai-config-head">
+                <span>MCP 配置（Claude Code / Cursor / Cherry Studio 等）</span>
+                <button class="link-btn" id="btnAiCopyConfig" type="button">复制</button>
+              </div>
+              <pre class="exec-code" id="aiConfigBox">打开上面的开关后，这里会显示可直接粘贴的配置。</pre>
+            </div>
+
+            <div class="notice" id="aiMsg" hidden></div>
+
+            <p class="hint-line">
+              安全边界：只监听本机回环地址、每次启动换新令牌、只允许 GET；
+              密码本、登录凭据、诊断包都不在可读范围；没有删除 / 禁言接口。
+            </p>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head"><h3>外观</h3></div>
+            <div class="scope-bar">
+              <span class="scope-label">主题</span>
+              <div class="segmented" id="themeSeg">
+                <button type="button" data-theme-mode="light">浅色</button>
+                <button type="button" data-theme-mode="dark">深色</button>
+                <button type="button" data-theme-mode="auto">跟随系统</button>
+              </div>
+            </div>
+            <p class="hint-line">深色适合夜间使用；选「跟随系统」会随 Windows 的浅色 / 深色设置自动切换。</p>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head"><h3>评论审查</h3></div>
+            <div class="scope-bar">
+              <span class="scope-label">强度</span>
+              <div class="segmented" id="reviewStrictSeg">
+                <button type="button" data-strict="0">标准</button>
+                <button type="button" data-strict="1">严格</button>
+              </div>
+            </div>
+            <p class="hint-line">
+              <b>标准</b>：只标人身攻击、攻击性表达、广告、剧透、刷屏、无依据的严重指控；对作品的负面评价不处理。<br />
+              <b>严格</b>：把「尴尬 / 暴死 / 扑街 / 离谱」这类负面评价也算进来。<b>容易误伤</b>——正常讨论里出现一个「离谱」就会被标红，建议只在集中清场时开。
+            </p>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head"><h3>设置</h3></div>
+            <dl class="kv">
+              <dt>数据目录</dt><dd id="kvUserData2" class="mono">读取中…</dd>
+              <dt>密码本</dt><dd id="kvVault" class="mono">读取中…</dd>
+              <dt>密码加密</dt><dd>Windows DPAPI（safeStorage），换机器或换系统账户都解不开</dd>
+              <dt>登录态存储</dt><dd>Chromium 分区 persist:ciweimao</dd>
+              <dt>账号密码</dt><dd>密码本之外，应用不读取、不上传任何凭据</dd>
+              <dt>执行动作</dt><dd>仅「评论审查」内的删除 / 禁言，逐条或批量确认后发出，全部写入动作日志</dd>
+              <dt>动作日志</dt><dd id="kvActionLog" class="mono">读取中…</dd>
+            </dl>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="plugin-background-host" id="pluginBackgrounds" aria-hidden="true"></div>
+
+  <!-- 首次启动声明：点过「我已知悉」之后不再出现，设置里可重新打开 -->
+  <div class="notice-overlay" id="freeNotice" hidden>
+    <div class="notice-card" role="dialog" aria-modal="true" aria-labelledby="freeNoticeTitle">
+      <div class="notice-badge">郑重声明</div>
+      <h2 class="notice-title" id="freeNoticeTitle">本软件完全免费 · 永久免费</h2>
+      <p class="notice-lead">
+        刺猬猫作家助手由个人作者自发制作，<b>不收取任何费用</b>，
+        <b>不进行任何性质的盈利</b>。
+      </p>
+      <ul class="notice-points">
+        <li><b>完全免费</b>：全部功能开放使用，没有付费版，也没有任何功能限制。</li>
+        <li><b>完全开源</b>：代码公开，任何人都可以自行查阅、自行构建。</li>
+        <li><b>绝不盈利</b>：无广告、无内购、无会员、无授权费，也不接受打赏或赞助。</li>
+      </ul>
+      <p class="notice-warn">若有人以本工具的名义向你收费，那一定不是作者本人，请勿支付。</p>
+      <button class="btn primary notice-ok" id="btnFreeNoticeOk" type="button">我已知悉，不再提示</button>
+      <div class="notice-foot">二组作者：坚持更新的阿烬 · 联系 QQ 1834671434</div>
+    </div>
+  </div>
+
+  <script src="../adapters/ciweimao.js"></script>
+  <script src="reviewer.js"></script>
+  <script src="signals.js"></script>
+  <script src="stats.js"></script>
+  <script src="chart.js"></script>
+  <script src="rank.js"></script>
+  <script src="crawler.js"></script>
+  <script src="exporter.js"></script>
+  <script src="executor.js"></script>
+  <script src="inbox.js"></script>
+  <script src="probe.js"></script>
+  <script src="badwords.js"></script>
+  <script src="publish.js"></script>
+  <script src="prefs.js"></script>
+  <script src="theme.js"></script>
+  <script src="app.js?v=20261105-11"></script>
+</body>
+</html>

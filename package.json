@@ -1,0 +1,8 @@
+{
+  "name": "ciweimao-author-tool",
+  "productName": "刺猬猫作家助手",
+  "version": "0.10.1",
+  "description": "刺猬猫作者后台数据整理、评论审查、章节导出与执行台",
+  "main": "src/main/main.js",
+  "private": true
+}
