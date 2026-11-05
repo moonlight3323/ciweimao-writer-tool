@@ -169,6 +169,7 @@ function saveBook(dataDir, payload) {
     ...old,
     bookId,
     name: String(p.name || old.name || '未命名作品').trim() || '未命名作品',
+    cover: String(p.cover || old.cover || ''),
     source,
     platformBookId: String(p.platformBookId || old.platformBookId || (source === 'author' ? bookId : ''))
       .replace(/[^0-9A-Za-z_-]/g, ''),
@@ -185,6 +186,7 @@ function saveBook(dataDir, payload) {
   const entry = {
     bookId,
     name: book.name,
+    cover: book.cover,
     source: book.source,
     platformBookId: book.platformBookId,
     chapters: chapters.length,
@@ -227,6 +229,35 @@ function deleteBook(dataDir, bookId) {
     updatedAt: Date.now(),
   });
   return true;
+}
+
+/**
+ * 批量写入封面地址（同步作者库时调用）。
+ * 只改 book.json 与索引里的 cover 字段，不碰正文，因此对已同步到本地的书也安全。
+ * @param {{bookId:string|number, cover:string}[]} list
+ */
+function updateCovers(dataDir, list) {
+  const items = Array.isArray(list) ? list : [];
+  if (!items.length) return { updated: 0 };
+  const idx = readIndex(dataDir);
+  let updated = 0;
+  items.forEach((item) => {
+    const bookId = safeId(item && item.bookId);
+    const cover = String((item && item.cover) || '').trim();
+    if (!bookId || !cover) return;
+    const file = bookPath(dataDir, bookId);
+    const book = readJson(file, null);
+    if (book) {
+      if (book.cover === cover) return;
+      book.cover = cover;
+      writeJson(file, book);
+    }
+    const entry = idx.books.find((b) => String(b.bookId) === bookId);
+    if (entry) entry.cover = cover;
+    updated += 1;
+  });
+  if (updated) writeJson(indexPath(dataDir), { books: idx.books, updatedAt: Date.now() });
+  return { updated };
 }
 
 /** 章节目录（不含正文，避免接口一次吐出整本） */
@@ -297,6 +328,7 @@ function clearAll(dataDir) {
 
 module.exports = {
   archive, listBooks, saveBook, createBook, getBook, deleteBook,
+  updateCovers,
   getBookToc, getChapter, getChapterRange, clearAll,
   libraryDir, MAX_BOOKS,
 };

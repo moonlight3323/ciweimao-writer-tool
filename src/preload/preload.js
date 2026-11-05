@@ -82,6 +82,7 @@ contextBridge.exposeInMainWorld('api', {
     open: (bookId) => ipcRenderer.invoke('writer:open', bookId),
     create: (name) => ipcRenderer.invoke('writer:create', name),
     save: (book) => ipcRenderer.invoke('writer:save', book),
+    covers: (list) => ipcRenderer.invoke('writer:covers', list),
     remove: (bookId) => ipcRenderer.invoke('writer:delete', bookId),
     importBook: () => ipcRenderer.invoke('writer:import'),
   },

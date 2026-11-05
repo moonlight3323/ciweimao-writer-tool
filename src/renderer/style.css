@@ -1738,6 +1738,52 @@ input[type="checkbox"] { accent-color: var(--accent-line); cursor: pointer; }
 
 /* ---------------------------------------------------------- 首次启动声明 */
 
+/* 通用输入弹窗（替代 Electron 不支持的 window.prompt） */
+.text-prompt-card {
+  max-width: 520px;
+  border-top-width: 2px;
+  padding: 22px 24px 18px;
+}
+
+.text-prompt-hint {
+  max-height: 42vh;
+  overflow: auto;
+  margin: 0 0 12px;
+  padding: 0;
+  white-space: pre-line;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-2);
+}
+
+.text-prompt-hint[hidden] { display: none; }
+
+.text-prompt-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--surface-3);
+  border: 1.5px solid var(--border-strong);
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.text-prompt-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-weak);
+}
+
+.text-prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
 /* 只在第一次启动时弹一次，点过按钮后写进 ui-prefs.json 不再出现。
    这里刻意做得比其它面板大一号、粗一号——声明本身要一眼看清。 */
 .notice-overlay {
@@ -2065,17 +2111,35 @@ body.is-locked { overflow: hidden; }
 
 .writer-book-cover {
   position: relative;
-  height: 220px;
   overflow: hidden;
   border-radius: 8px;
   background: linear-gradient(145deg, #dce7f5, #8aa7cc);
   box-shadow: 0 5px 16px rgba(33, 52, 78, .18), inset 7px 0 rgba(255,255,255,.18);
 }
 
+/* 无封面时的渐变占位：保持竖版常规比例，避免卡片高度塌陷 */
+.writer-book-cover:not(.has-cover) { aspect-ratio: 3 / 4; }
+
+/* 有封面但图片尚未解码时先占个位，加载完成后按真实比例撑开 */
+.writer-book-cover.has-cover { min-height: 0; }
+.writer-book-cover-img[loading] { background: transparent; }
+
 .writer-book-cover.tone-1 { background: linear-gradient(145deg, #f0dfd1, #c38d73); }
 .writer-book-cover.tone-2 { background: linear-gradient(145deg, #dcebdc, #79a47c); }
 .writer-book-cover.tone-3 { background: linear-gradient(145deg, #e6dff2, #9380ba); }
 .writer-book-cover.tone-4 { background: linear-gradient(145deg, #f2e8c9, #c4a151); }
+
+/* 真实封面：按图片自身尺寸比例撑开，不裁切、不拉伸 */
+.writer-book-cover-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+
+.writer-book-cover.has-cover::after,
+.writer-book-cover.has-cover .writer-book-feather { display: none; }
+
 .writer-book-cover::after {
   content: "";
   position: absolute;

@@ -2,12 +2,13 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
+  <!-- img-src 放开到 https：作者后台的书籍封面是远程图，受 'self' 限制会直接被拦 -->
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'nonce-ciweimao-plugin'; img-src 'self' data:; frame-src data:;" />
+        content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'nonce-ciweimao-plugin'; img-src 'self' data: https:; frame-src data:;" />
   <title>刺猬猫作家助手</title>
   <!-- 先定主题再上色，避免深色模式下闪一下白底 -->
   <script src="theme-init.js"></script>
-  <link rel="stylesheet" href="style.css?v=20261105-3" />
+  <link rel="stylesheet" href="style.css?v=20261106-2" />
 </head>
 <body>
   <div class="app">
@@ -835,6 +836,19 @@
       <p class="notice-warn">若有人以本工具的名义向你收费，那一定不是作者本人，请勿支付。</p>
       <button class="btn primary notice-ok" id="btnFreeNoticeOk" type="button">我已知悉，不再提示</button>
       <div class="notice-foot">二组作者：坚持更新的阿烬 · 联系 QQ 1834671434</div>
+    </div>
+  </div>
+
+  <!-- 通用输入弹窗：替代 Electron 不支持的 window.prompt -->
+  <div class="notice-overlay" id="textPrompt" hidden>
+    <div class="notice-card text-prompt-card" role="dialog" aria-modal="true" aria-labelledby="textPromptTitle">
+      <h2 class="notice-title" id="textPromptTitle">请输入</h2>
+      <p class="text-prompt-hint" id="textPromptHint" hidden></p>
+      <input class="text-prompt-input" id="textPromptInput" type="text" autocomplete="off" spellcheck="false" />
+      <div class="text-prompt-actions">
+        <button class="btn ghost" id="textPromptCancel" type="button">取消</button>
+        <button class="btn primary" id="textPromptOk" type="button">确定</button>
+      </div>
     </div>
   </div>
 

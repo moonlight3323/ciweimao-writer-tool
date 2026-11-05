@@ -545,6 +545,7 @@ ipcMain.handle('writer:list', () => ({ books: library.listBooks(dataDir()) }));
 ipcMain.handle('writer:open', (_e, bookId) => ({ book: library.getBook(dataDir(), bookId) }));
 ipcMain.handle('writer:create', (_e, name) => library.createBook(dataDir(), name));
 ipcMain.handle('writer:save', (_e, book) => library.saveBook(dataDir(), book));
+ipcMain.handle('writer:covers', (_e, list) => library.updateCovers(dataDir(), list));
 ipcMain.handle('writer:delete', (_e, bookId) => ({ deleted: library.deleteBook(dataDir(), bookId) }));
 ipcMain.handle('writer:import', async () => {
   const picked = await dialog.showOpenDialog(win, {

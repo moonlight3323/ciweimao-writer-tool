@@ -642,13 +642,40 @@
     var out = [];
     var seen = {};
 
-    function push(id, name) {
+    function push(id, name, cover) {
       if (!id || !/^\d{5,}$/.test(id)) return;
       if (seen[id]) return;
       var nm = String(name || '').replace(/[《》]/g, '').replace(/\s+/g, ' ').trim();
       if (!nm) nm = id;
       seen[id] = true;
-      out.push({ bookId: id, name: nm });
+      out.push({ bookId: id, name: nm, cover: cover || '' });
+    }
+
+    /** 从一行里挑出封面图：优先懒加载属性，排除图标类资源，相对路径补成绝对 */
+    function pickCover(row) {
+      var imgs = row.querySelectorAll('img');
+      for (var n = 0; n < imgs.length; n += 1) {
+        var raw = String(
+          imgs[n].getAttribute('data-src')
+          || imgs[n].getAttribute('data-original')
+          || imgs[n].getAttribute('src')
+          || ''
+        ).trim();
+        if (!raw) continue;
+        if (/icon|logo|avatar|sprite|blank\.|spacer/i.test(raw)) continue;
+        if (/^data:/i.test(raw)) continue;
+        if (!/^(https?:)?\/\//i.test(raw)) {
+          try {
+            raw = new URL(raw, baseUrl || location.href).href;
+          } catch (_) {
+            continue;
+          }
+        } else if (raw.indexOf('//') === 0) {
+          raw = 'https:' + raw;
+        }
+        return raw;
+      }
+      return '';
     }
 
     var rows = doc.querySelectorAll('tr');
@@ -678,7 +705,7 @@
           if (ct.length >= 2 && !/^[\d,.]+$/.test(ct)) { name = ct; break; }
         }
       }
-      push(id, name);
+      push(id, name, pickCover(row));
     }
 
     // 下拉框兜底：几乎所有功能页左上角都有作品选择

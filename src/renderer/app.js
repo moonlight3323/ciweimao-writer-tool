@@ -3,6 +3,57 @@
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
+/**
+ * 输入弹窗。
+ *
+ * Electron 的渲染进程不支持 window.prompt()，调用会直接抛出
+ * "prompt() is and will not be supported"，函数在第一行就中断，
+ * 表现就是按钮点了完全没反应。这里改用页面内的遮罩层替代，
+ * 返回 Promise<string|null>，取消时为 null，与 prompt 的语义保持一致。
+ */
+function askText({ title = '请输入', hint = '', value = '', okText = '确定', cancelText = '取消' } = {}) {
+  return new Promise((resolve) => {
+    const overlay = $('#textPrompt');
+    const input = $('#textPromptInput');
+    const hintEl = $('#textPromptHint');
+    if (!overlay || !input) { resolve(null); return; }
+
+    const okBtn = $('#textPromptOk');
+    const cancelBtn = $('#textPromptCancel');
+    $('#textPromptTitle').textContent = title;
+    okBtn.textContent = okText;
+    cancelBtn.textContent = cancelText;
+    hintEl.textContent = hint || '';
+    hintEl.hidden = !hint;
+    input.value = value == null ? '' : String(value);
+    overlay.hidden = false;
+    document.body.classList.add('is-locked');
+
+    function onOk() { finish(input.value); }
+    function onCancel() { finish(null); }
+    function onKey(event) {
+      if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); onOk(); }
+      else if (event.key === 'Escape') { event.preventDefault(); onCancel(); }
+    }
+    function onBackdrop(event) { if (event.target === overlay) onCancel(); }
+    function finish(result) {
+      overlay.hidden = true;
+      document.body.classList.remove('is-locked');
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      input.removeEventListener('keydown', onKey);
+      overlay.removeEventListener('mousedown', onBackdrop);
+      resolve(result);
+    }
+
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    input.addEventListener('keydown', onKey);
+    overlay.addEventListener('mousedown', onBackdrop);
+    setTimeout(() => { input.focus(); input.select(); }, 0);
+  });
+}
+
 const HOST = $('#content');
 const VIEW_TITLES = {
   overview: '概览',
@@ -2971,12 +3022,36 @@ function writerSourceLabel(source) {
   return '作者库';
 }
 
+/** 本地作品还没落盘封面时，从作者库同步结果里借用同 bookId 的封面 */
+function remoteCoverFor(book) {
+  if (!book || !Array.isArray(writerRemoteBooks) || !writerRemoteBooks.length) return '';
+  const hit = writerRemoteBooks.find((r) => String(r.bookId) === String(book.bookId));
+  return (hit && hit.cover) || '';
+}
+
+/** 封面图加载失败时退回到原来的渐变底，避免出现破图占位 */
+function bindWriterCoverFallback() {
+  $$('#writerBookGrid .writer-book-cover-img').forEach((img) => {
+    img.addEventListener('error', () => {
+      const cover = img.closest('.writer-book-cover');
+      if (cover) cover.classList.remove('has-cover');
+      img.remove();
+    }, { once: true });
+  });
+}
+
 function renderWriterBooks() {
   const grid = $('#writerBookGrid');
   $('#writerEmpty').hidden = !!writerBooks.length;
-  grid.innerHTML = writerBooks.map((book, i) => `
+  grid.innerHTML = writerBooks.map((book, i) => {
+    const cover = String(book.cover || remoteCoverFor(book) || '');
+    const coverTag = cover
+      ? `<img class="writer-book-cover-img" src="${escapeHtml(cover)}" alt="" loading="lazy" />`
+      : '';
+    return `
     <article class="writer-book-card" data-writer-book="${escapeHtml(String(book.bookId))}">
-      <div class="writer-book-cover tone-${i % 5}">
+      <div class="writer-book-cover tone-${i % 5}${cover ? ' has-cover' : ''}">
+        ${coverTag}
         <span class="writer-book-source">${writerSourceLabel(book.source)}</span>
         <span class="writer-book-feather">✎</span>
       </div>
@@ -2986,7 +3061,9 @@ function renderWriterBooks() {
       </div>
       <button class="writer-book-delete" data-writer-delete="${escapeHtml(String(book.bookId))}" type="button" title="从本地作品库删除">•••</button>
     </article>
-  `).join('');
+  `;
+  }).join('');
+  bindWriterCoverFallback();
 }
 
 function normaliseWriterBook(book) {
@@ -3048,7 +3125,13 @@ async function syncWriterRemoteBook(remote) {
         content: c.content || '',
       };
     });
-    await window.api.writer.save({ bookId: remote.bookId, name: remote.name, source: 'author', chapters });
+    await window.api.writer.save({
+      bookId: remote.bookId,
+      name: remote.name,
+      cover: remote.cover || '',
+      source: 'author',
+      chapters,
+    });
     writerRemoteBooks = writerRemoteBooks.filter((b) => String(b.bookId) !== String(remote.bookId));
     await loadWriterBooks();
     writerNotice(`《${remote.name}》已同步 ${chapters.length} 章${result.failed.length ? `，${result.failed.length} 章读取失败` : ''}`,
@@ -3220,13 +3303,17 @@ $('#btnWriterSync').addEventListener('click', async () => {
   writerNotice('正在读取作者后台作品列表…');
   try {
     const remote = await window.Exporter.listBooks();
-    const localIds = new Set(writerBooks.filter((b) => b.source !== 'remote').map((b) => String(b.bookId)));
-    writerRemoteBooks = remote
-      .filter((b) => !localIds.has(String(b.bookId)))
-      .map((b) => ({ ...b, source: 'remote', chapters: b.chapters || 0, words: b.words || 0 }));
-    const local = writerBooks.filter((b) => b.source !== 'remote');
-    writerBooks = local.concat(writerRemoteBooks);
-    renderWriterBooks();
+    // 先把封面写进本地作品库：这样已同步的书也能显示封面，且重启后仍保留
+    try {
+      await window.api.writer.covers(remote.map((b) => ({ bookId: b.bookId, cover: b.cover || '' })));
+    } catch (_) { /* 封面写不进去不影响同步主流程 */ }
+    writerRemoteBooks = remote.map((b) => ({
+      ...b,
+      source: 'remote',
+      chapters: b.chapters || 0,
+      words: b.words || 0,
+    }));
+    await loadWriterBooks();
     writerNotice(writerRemoteBooks.length
       ? `作者库中还有 ${writerRemoteBooks.length} 本作品未同步，点击作品即可读取正文并开始创作。`
       : `作者库中的 ${remote.length} 本作品均已在本地。`);
@@ -3237,7 +3324,11 @@ $('#btnWriterSync').addEventListener('click', async () => {
   }
 });
 $('#btnWriterCreate').addEventListener('click', async () => {
-  const name = prompt('请输入书名', '我的新书');
+  const name = await askText({
+    title: '新建书籍',
+    hint: '给这本书取个名字，之后可以在作品设置里修改。',
+    value: '我的新书',
+  });
   if (name == null || !name.trim()) return;
   const res = await window.api.writer.create(name.trim());
   await loadWriterBooks();
@@ -3390,9 +3481,13 @@ $('#btnWriterNewChapter').addEventListener('click', async () => {
   loadWriterChapter();
   $('#writerChapterTitle').select();
 });
-$('#btnWriterNewVolume').addEventListener('click', () => {
+$('#btnWriterNewVolume').addEventListener('click', async () => {
   if (!writerEditorBook) return;
-  const volume = prompt('请输入卷名', `第${new Set(writerEditorBook.chapters.map((c) => c.volume)).size + 1}卷`);
+  const volume = await askText({
+    title: '新建分卷',
+    hint: '卷名会作为目录分组显示。',
+    value: `第${new Set(writerEditorBook.chapters.map((c) => c.volume)).size + 1}卷`,
+  });
   if (volume == null || !volume.trim()) return;
   syncWriterChapterFromForm();
   const chapter = { id: `chapter_${Date.now()}`, title: '第一章', volume: volume.trim(), content: '' };
@@ -3587,7 +3682,11 @@ async function bindWriterPlatformBook(localBook) {
     let selected = exact.length === 1 ? exact[0] : (remote.length === 1 ? remote[0] : null);
     if (!selected) {
       const choices = remote.map((book) => `${book.bookId}  《${book.name}》`).join('\n');
-      const entered = window.prompt(`请选择《${localBook.name}》对应的后台作品号：\n\n${choices}`, '');
+      const entered = await askText({
+        title: '绑定后台作品',
+        hint: `请填写《${localBook.name}》对应的后台作品号：\n\n${choices}`,
+        value: '',
+      });
       if (entered == null) return { ok: false, canceled: true };
       selected = remote.find((book) => String(book.bookId) === String(entered).trim());
       if (!selected) return { ok: false, error: '没有找到这个后台作品号' };
@@ -3642,14 +3741,18 @@ function renderWriterPublishSchedule() {
   button.classList.toggle('is-set', !!value);
 }
 
-$('#btnWriterSchedule').addEventListener('click', () => {
+$('#btnWriterSchedule').addEventListener('click', async () => {
   if (!window.Publish) return;
   const current = window.Publish.getSchedule() || '';
-  const value = window.prompt('留空代表立即发布；定时发布请填写：年-月-日 时:分', current);
+  const value = await askText({
+    title: '定时发布',
+    hint: '留空代表立即发布；定时发布请填写：年-月-日 时:分',
+    value: current,
+  });
   if (value == null) return;
   const next = String(value).trim();
   if (next && !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(next)) {
-    alert('时间格式不正确，请填写成 2026-11-06 08:00');
+    writerNotice('时间格式不正确，请填写成 2026-11-06 08:00', true);
     return;
   }
   window.Publish.setSchedule(next);
