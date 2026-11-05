@@ -31,6 +31,7 @@ Windows 上安装 Node.js 24 后，在项目根目录执行：
 
 ```sh
 npm ci
+npm run install:electron
 npm run check
 npm test
 npm run build

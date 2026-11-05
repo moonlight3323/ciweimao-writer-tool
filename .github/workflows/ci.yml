@@ -46,6 +46,7 @@ jobs:
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           if ($env:REF_TYPE -eq 'tag' -and $env:REF_NAME -ne "v$version") { throw 'Tag must match package.json version' }
       - run: npm ci --no-audit --no-fund
+      - run: npm run install:electron
       - name: Build portable directory
         run: |
           $distPath = [IO.Path]::GetFullPath((Join-Path $PWD 'dist'))
