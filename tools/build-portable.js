@@ -95,6 +95,8 @@ function dirSize(dir) {
   fs.mkdirSync(appDir, { recursive: true });
   robocopy(path.join(ROOT, 'src'), path.join(appDir, 'src'));
   robocopy(path.join(ROOT, 'assets'), path.join(appDir, 'assets'));
+  const bundled = path.join(ROOT, 'bundled-plugins');
+  if (fs.existsSync(bundled)) robocopy(bundled, path.join(appDir, 'bundled-plugins'));
 
   // 运行时 package.json：去掉 dev 依赖与脚本，避免被误当作可安装工程
   fs.writeFileSync(
@@ -117,7 +119,7 @@ function dirSize(dir) {
 
   // ---- 5. 改写 exe 的图标与版本信息 ----
   try {
-    const rcedit = require('rcedit');
+    const { rcedit } = await import('rcedit');
     await rcedit(newExe, {
       icon: path.join(ROOT, 'assets', 'icon.ico'),
       'version-string': {

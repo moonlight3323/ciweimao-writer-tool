@@ -1,0 +1,96 @@
+name: Check and build Windows portable
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - run: npm run check
+      - run: npm test
+
+  portable:
+    needs: check
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Validate release version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($env:REF_TYPE -eq 'tag' -and $env:REF_NAME -ne "v$version") { throw 'Tag must match package.json version' }
+      - run: npm ci --no-audit --no-fund
+      - name: Build portable directory
+        run: |
+          $distPath = [IO.Path]::GetFullPath((Join-Path $PWD 'dist'))
+          if ($distPath -ne (Join-Path $env:GITHUB_WORKSPACE 'dist')) { throw 'Unexpected build output path' }
+          npm run build
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run pack
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run verify:portable
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Create ZIP and checksum
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $archive = "dist/ciweimao-writer-tool-v$version-windows-x64.zip"
+          Compress-Archive -LiteralPath "dist/刺猬猫作家助手-v$version" -DestinationPath $archive -CompressionLevel Optimal
+          $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $([IO.Path]::GetFileName($archive))" | Set-Content -LiteralPath "$archive.sha256" -Encoding utf8NoBOM
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-portable
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  release:
+    needs: portable
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.run_id }}
+      TAG_NAME: ${{ github.ref_name }}
+    steps:
+      - name: Download verified package and publish
+        run: |
+          gh run download "$RUN_ID" --name windows-portable --dir release
+          cd release
+          sha256sum --check *.sha256
+          gh release create "$TAG_NAME" *.zip *.sha256 --verify-tag --generate-notes --draft --title "刺猬猫作家助手 $TAG_NAME"
+          gh release edit "$TAG_NAME" --draft=false

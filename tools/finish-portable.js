@@ -193,7 +193,7 @@ fs.writeFileSync(path.join(OUT, '使用说明.txt'), '\ufeff' + readme, 'utf8');
 console.log('  使用说明.txt 已写入');
 
 // ---- 4. 附上 Word 版功能说明（如已生成） ----
-const docxSrc = path.join(ROOT, 'output', '刺猬猫作家助手-功能与使用说明.docx');
+const docxSrc = path.join(ROOT, 'docs', '功能说明与使用说明.docx');
 if (fs.existsSync(docxSrc)) {
   fs.copyFileSync(docxSrc, path.join(OUT, '功能说明与使用说明.docx'));
   console.log('  功能说明与使用说明.docx 已附上');
@@ -202,7 +202,7 @@ if (fs.existsSync(docxSrc)) {
 }
 
 // ---- 5. 附上 AI 接入新手教程（如已生成） ----
-const tutorSrc = path.join(ROOT, 'output', 'AI接入新手教程.docx');
+const tutorSrc = path.join(ROOT, 'docs', 'AI创作辅助教程.docx');
 if (fs.existsSync(tutorSrc)) {
   fs.copyFileSync(tutorSrc, path.join(OUT, 'AI接入新手教程.docx'));
   console.log('  AI接入新手教程.docx 已附上');
@@ -211,7 +211,7 @@ if (fs.existsSync(tutorSrc)) {
 }
 
 // ---- 6. 插件开发说明 + 可运行示例 ----
-const pluginDoc = path.join(ROOT, '插件开发说明.md');
+const pluginDoc = path.join(ROOT, 'docs', '插件开发说明.md');
 if (fs.existsSync(pluginDoc)) {
   fs.copyFileSync(pluginDoc, path.join(OUT, '插件开发说明.md'));
   console.log('  插件开发说明.md 已附上');
@@ -234,4 +234,21 @@ if (fs.existsSync(sampleSrc)) {
 }
 
 console.log('');
+// 收集仓库内正式文档及独立插件 ZIP，不包含用户数据。
+for (const file of fs.readdirSync(path.join(ROOT, 'docs'))) {
+  const source = path.join(ROOT, 'docs', file);
+  if (fs.statSync(source).isFile() && !fs.existsSync(path.join(OUT, file))) {
+    fs.copyFileSync(source, path.join(OUT, file));
+  }
+}
+const pluginRoot = path.join(ROOT, 'plugins');
+if (fs.existsSync(pluginRoot)) {
+  for (const entry of fs.readdirSync(pluginRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    for (const file of fs.readdirSync(path.join(pluginRoot, entry.name))) {
+      if (!file.endsWith('.zip')) continue;
+      fs.copyFileSync(path.join(pluginRoot, entry.name, file), path.join(OUT, file));
+    }
+  }
+}
 console.log('便携包就绪：' + OUT);

@@ -1,5 +1,6 @@
 # 依赖与构建产物
 node_modules/
+.npm-cache/
 dist/
 
 # 本地成品包（exe 235MB，走 GitHub Releases，不进仓库）

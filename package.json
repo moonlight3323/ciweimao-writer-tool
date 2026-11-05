@@ -7,6 +7,9 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
+    "check": "node tools/check.js",
+    "test": "node --test tests/*.test.js",
+    "verify:portable": "node tools/verify-portable.js",
     "start": "electron .",
     "build": "node tools/build-portable.js",
     "pack": "node tools/finish-portable.js"
