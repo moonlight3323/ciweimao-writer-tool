@@ -1,0 +1,173 @@
+/* 章节小工具 —— 浅色/深色两套配色，靠 body.is-dark 切换（由 main.js 问 app.info() 决定） */
+
+:root {
+  --bg: #f7f3e7;
+  --card: #ffffff;
+  --line: #ece3d0;
+  --ink: #2b2620;
+  --ink-2: #6e6555;
+  --ink-3: #a79d89;
+  --gold: #f9bf03;
+  --gold-ink: #5a3f00;
+  --bad: #a32d2d;
+}
+
+body.is-dark {
+  --bg: #14120d;
+  --card: #1e1b14;
+  --line: #332c20;
+  --ink: #ede6d7;
+  --ink-2: #b3a88f;
+  --ink-3: #7d735f;
+  --gold: #f9bf03;
+  --gold-ink: #2b2000;
+  --bad: #f2a09b;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.7 "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+.card {
+  max-width: 720px;
+  margin: 28px auto;
+  padding: 22px 24px 18px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.head h1 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.tag {
+  padding: 1px 7px;
+  border-radius: 20px;
+  background: var(--gold);
+  color: var(--gold-ink);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.lead {
+  margin: 8px 0 16px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.lead code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--bg);
+  font-size: 12px;
+}
+
+.info {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px 14px;
+  margin: 0 0 16px;
+}
+
+.info > div {
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.info dt {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.info dd {
+  margin: 2px 0 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.goal {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.goal input {
+  width: 120px;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.btn {
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.btn:hover { border-color: var(--gold); }
+
+.btn.ghost { background: var(--bg); }
+
+/* 首个按钮用品牌金做主动作 */
+.row .btn:first-child {
+  border-color: var(--gold);
+  background: var(--gold);
+  color: var(--gold-ink);
+  font-weight: 700;
+}
+
+.msg {
+  min-height: 20px;
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.msg.is-error { color: var(--bad); font-weight: 600; }
+
+.foot {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+  font-size: 11.5px;
+  line-height: 1.8;
+  color: var(--ink-3);
+}
+
+.foot b { color: var(--ink-2); }

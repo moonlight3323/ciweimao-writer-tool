@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>章节小工具</title>
+</head>
+<body>
+  <section class="card">
+    <header class="head">
+      <h1>章节小工具</h1>
+      <span class="tag">插件示例</span>
+    </header>
+
+    <p class="lead">
+      这个插件只做四件小事，目的是把 <code>PluginAPI</code> 的每个接口都用一遍。
+      右边这些数据来自「码字台」当前打开的那一章。
+    </p>
+
+    <dl class="info">
+      <div><dt>本书</dt><dd id="bookName">—</dd></div>
+      <div><dt>本章</dt><dd id="chapterTitle">—</dd></div>
+      <div><dt>本章字数</dt><dd id="chapterWords">—</dd></div>
+      <div><dt>本书总字数</dt><dd id="totalWords">—</dd></div>
+      <div><dt>今日码字</dt><dd id="todayWords">—</dd></div>
+      <div><dt>今日进度</dt><dd id="progress">—</dd></div>
+    </dl>
+
+    <div class="goal">
+      <label for="goalInput">每日目标字数</label>
+      <input id="goalInput" type="number" min="0" step="100" placeholder="例如 3000" />
+      <button id="saveGoal" class="btn ghost" type="button">保存目标</button>
+    </div>
+
+    <div class="row">
+      <button id="refresh" class="btn" type="button">刷新信息</button>
+      <button id="divider" class="btn" type="button">末尾插入分隔符</button>
+      <button id="bracket" class="btn" type="button">选中文字加【】</button>
+    </div>
+
+    <p class="msg" id="msg" role="status"></p>
+
+    <footer class="foot">
+      <b>改这个插件：</b>插件目录里的 manifest.json / page.html / main.js / style.css，
+      改完点右上角「刷新插件」。接口细节见随包的《插件开发说明.md》。
+    </footer>
+  </section>
+
+  <!-- 注意：这一页里不要写脚本标签，软件会剥掉；所有 JS 请写在 main.js -->
+</body>
+</html>

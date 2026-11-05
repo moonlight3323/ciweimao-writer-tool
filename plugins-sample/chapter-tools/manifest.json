@@ -1,0 +1,8 @@
+{
+  "id": "chapter-tools",
+  "name": "章节小工具",
+  "version": "1.0.0",
+  "author": "示例插件",
+  "description": "查看本章与本书统计、在正文末尾插入分隔符、给选中文字加【】、记录每日码字目标。",
+  "permissions": ["editor.read", "editor.write", "stats.read"]
+}

@@ -1,0 +1,16 @@
+* text=auto
+
+# Windows 脚本必须是 CRLF，否则 cmd 解析出错
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制：不要做行尾转换，也不要试图 diff 内容
+*.png binary
+*.jpg binary
+*.ico binary
+*.docx binary
+*.zip binary
+*.exe binary
+*.dll binary
+*.pak binary
+*.dat binary

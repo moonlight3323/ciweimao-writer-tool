@@ -1,21 +1,33 @@
-# ---- 打包产物（数百 MB，绝不进版本库）----
-_release/
-dist/
-build/
-out/
-
-# ---- 依赖 ----
+# 依赖与构建产物
 node_modules/
+dist/
 
-# ---- 日志与临时文件 ----
+# 本地成品包（exe 235MB，走 GitHub Releases，不进仓库）
+_release/
+
+# 运行/导出产物
+output/
+_ui*/
+_ui[0-9]*/
+会话上下文/
+
+# 日志与调试残留
 *.log
 debug.log
-*.tmp
-*.bak
-Thumbs.db
-desktop.ini
 
-# ---- 编辑器 ----
+# 压缩包
+*.zip
+*.7z
+*.rar
+
+# 编辑器与系统
 .vscode/
 .idea/
-*.swp
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# 临时文件
+*.tmp
+*.bak
+~$*

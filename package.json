@@ -2,7 +2,20 @@
   "name": "ciweimao-author-tool",
   "productName": "刺猬猫作家助手",
   "version": "0.10.1",
-  "description": "刺猬猫作者后台数据整理、评论审查、章节导出与执行台",
+  "description": "刺猬猫作者后台数据整理、评论审查、码字台与一键投递、插件中心的 Windows 桌面工具",
   "main": "src/main/main.js",
-  "private": true
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "build": "node tools/build-portable.js",
+    "pack": "node tools/finish-portable.js"
+  },
+  "devDependencies": {
+    "electron": "44.9.3",
+    "rcedit": "^5.0.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
 }
