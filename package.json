@@ -5,7 +5,7 @@
   "description": "刺猬猫作者后台数据整理、评论审查、码字台与一键投递、插件中心的 Windows 桌面工具",
   "main": "src/main/main.js",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "AGPL-3.0",
   "scripts": {
     "check": "node tools/check.js",
     "test": "node --test tests/*.test.js tools/test-*.js",
