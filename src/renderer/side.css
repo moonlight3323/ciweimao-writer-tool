@@ -9,6 +9,7 @@
   --bg: #f8f3e7;
   --surface: #ffffff;
   --surface-2: #fffdf6;
+  --surface-3: #fdf6e6;
   --border: #f0e7d3;
   --border-strong: #e2d4b6;
   --text: #2b2620;
@@ -19,6 +20,7 @@
   --accent-hover: #e8af00;
   --accent-weak: #fff3cf;
   --accent-ink: #7a5600;
+  --accent-line: #e0ac00;
 
   --ok-bg: #eef4da;
   --ok-ink: #4c6b14;
@@ -39,6 +41,7 @@
   --bg: #14120d;
   --surface: #1e1b14;
   --surface-2: #1a1710;
+  --surface-3: #241f16;
   --border: #302a1e;
   --border-strong: #443b29;
   --text: #ede6d7;
@@ -49,6 +52,7 @@
   --accent-hover: #ffcf2e;
   --accent-weak: #33290f;
   --accent-ink: #ffd25e;
+  --accent-line: #a8870d;
 
   --ok-bg: #232b17;
   --ok-ink: #a9c97a;
@@ -61,6 +65,40 @@
   --seg-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   --scroll: #3a3323;
   --scroll-hover: #4b422e;
+}
+
+/* 粉白：与主界面 style.css 的 pink 变量保持一致，
+   否则切过来时侧栏会退回默认的暖黄，和主窗口明显不是一套 */
+:root[data-theme="pink"] {
+  color-scheme: light;
+
+  --bg: #fff4f8;
+  --surface: #ffffff;
+  --surface-2: #fffafc;
+  --surface-3: #ffeef4;
+  --border: #f9dce6;
+  --border-strong: #f0c0d2;
+  --text: #43303a;
+  --text-2: #806671;
+  --text-3: #b396a3;
+
+  --accent: #ffa8c4;
+  --accent-hover: #ff9ab8;
+  --accent-weak: #ffe3ee;
+  --accent-ink: #a63a68;
+  --accent-line: #f0a8c2;
+
+  --ok-bg: #eaf6ea;
+  --ok-ink: #4a7748;
+
+  --danger-bg: #ffe8ec;
+  --danger-ink: #b13a52;
+
+  --track: #ffe9f0;
+  --seg-active: #ffffff;
+  --seg-shadow: 0 1px 3px rgba(200, 90, 130, 0.12);
+  --scroll: #f4c9d9;
+  --scroll-hover: #eaaec5;
 }
 
 * { box-sizing: border-box; }

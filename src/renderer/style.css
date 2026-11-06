@@ -2500,13 +2500,24 @@ body.is-locked { overflow: hidden; }
 :root[data-theme="pink"] .link-btn { border-radius: 999px; }
 
 /* 主按钮在浅色下是「金底深棕字 + 金描边」，粉白底上沿用会发脏，
-   这里换成果冻粉底 + 深莓字，对比度够且不抢眼 */
+   这里换成果冻粉底 + 深莓字，对比度够且不抢眼。
+   底色压淡一档：原来的 #ff8fb4 大面积铺开偏浓，描边也用 #f07ba3 会显得脏。 */
 :root[data-theme="pink"] .btn.primary {
+  background: #ffb3cb;
   color: #611c3b;
-  border-color: #f07ba3;
+  border-color: #f7c3d6;
 }
 
-:root[data-theme="pink"] .btn.primary:hover { border-color: #e05c8c; }
+:root[data-theme="pink"] .btn.primary:hover {
+  background: #ffa3c0;
+  border-color: #f0aec8;
+}
+
+/* 稿费这类插件指标原来用 --accent-ink（深莓），在粉白底上发黑；
+   换成中粉，和整体色相保持一致 */
+:root[data-theme="pink"] .plugin-editor-stat b {
+  color: #d4537e;
+}
 
 :root[data-theme="pink"] .panel,
 :root[data-theme="pink"] .card,
