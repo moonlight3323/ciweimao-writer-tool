@@ -66,6 +66,22 @@ test('非法版本号直接报错，不静默当作 0', () => {
   assert.throws(() => updater.compareVersions('abc', '0.1.0'), /版本号不合法/);
 });
 
+test('更新清单优先使用 GitHub Contents API，并为 GitHub 地址添加防缓存参数', () => {
+  assert.match(updater.DEFAULT_MANIFEST_API_URL, /^https:\/\/api\.github\.com\/repos\//);
+  assert.match(updater.DEFAULT_MANIFEST_API_URL, /update\/latest\.json\?ref=main$/);
+
+  const apiUrl = updater.manifestRequestUrl(updater.DEFAULT_MANIFEST_API_URL, 12345);
+  const apiParsed = new URL(apiUrl);
+  assert.equal(apiParsed.searchParams.get('ref'), 'main');
+  assert.equal(apiParsed.searchParams.get('_cw'), '12345');
+
+  const rawUrl = updater.manifestRequestUrl(updater.DEFAULT_MANIFEST_URL, 67890);
+  assert.equal(new URL(rawUrl).searchParams.get('_cw'), '67890');
+
+  const local = 'http://127.0.0.1:1234/manifest.json';
+  assert.equal(updater.manifestRequestUrl(local, 1), local, '本地和自定义清单地址不应被改写');
+});
+
 // ------------------------------------------------------- 2. 跨版本变更集
 
 test('跨版本筛选：只取 (当前, 目标] 区间，且按版本倒序', () => {

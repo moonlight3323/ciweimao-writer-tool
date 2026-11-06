@@ -20,6 +20,7 @@
   let info = null;
   let dismissed = false;
   let busy = false;
+  let checking = false;
 
   function escapeHtml(s) {
     return String(s == null ? '' : s)
@@ -115,6 +116,72 @@
 
   function closeDialog() {
     $('#updateDialog').hidden = true;
+  }
+
+  function setSettingsCheck(text, tone, tag) {
+    const hint = $('#updateSettingsHint');
+    const badge = $('#updateSettingsTag');
+    if (hint) {
+      hint.textContent = text;
+      hint.dataset.tone = tone || '';
+    }
+    if (badge && tag) badge.textContent = tag;
+  }
+
+  async function checkLatest(manual) {
+    if (checking) return null;
+    checking = true;
+    const button = $('#btnCheckUpdate');
+    if (button) {
+      button.disabled = true;
+      button.textContent = '正在检查…';
+    }
+    if (manual) setSettingsCheck('正在连接 GitHub 获取最新版本…', '', '检查中');
+
+    try {
+      const result = await api.check();
+      if (!result || !result.available) {
+        info = null;
+        const current = result && result.current ? result.current : '当前版本';
+        setSettingsCheck(`已经是最新版本（v${current}）。`, 'ok', `v${current}`);
+        if (manual) hideBar();
+        return result;
+      }
+
+      info = result;
+      setSettingsCheck(
+        `发现新版本 v${info.version}，更新包 ${info.sizeText}。`,
+        'warn',
+        `可更新至 v${info.version}`,
+      );
+
+      // 启动时尊重“跳过此版本”；用户主动检查时仍允许重新查看并安装。
+      if (info.skipped && !manual) {
+        setSettingsCheck(`v${info.version} 已被跳过；点击“立即检查更新”仍可重新安装。`, '', `已跳过 v${info.version}`);
+        return result;
+      }
+
+      if (manual) dismissed = false;
+      if (info.readyToRestart) showBar(`v${info.version} 已下载，重启后生效`);
+      else showBar(`发现新版本 v${info.version} · 更新包 ${info.sizeText}`);
+
+      if (manual) {
+        openDialog();
+        renderConfirm();
+      }
+      return result;
+    } catch (err) {
+      if (manual) {
+        setSettingsCheck(`检查失败：${err && err.message ? err.message : '无法连接更新服务器'}`, 'error', '检查失败');
+      }
+      return null;
+    } finally {
+      checking = false;
+      if (button) {
+        button.disabled = false;
+        button.textContent = '立即检查更新';
+      }
+    }
   }
 
   /** 主展示：确认阶段的画面 */
@@ -315,6 +382,12 @@
     $('#btnUpdateReleases').addEventListener('click', () => {
       api.openReleases(info ? info.releasesPage : '');
     });
+    const checkButton = $('#btnCheckUpdate');
+    if (checkButton) checkButton.addEventListener('click', () => checkLatest(true));
+    const releasesButton = $('#btnSettingsReleases');
+    if (releasesButton) releasesButton.addEventListener('click', () => {
+      api.openReleases(info ? info.releasesPage : '');
+    });
 
     // 被更新脚本拉起来的新版本：先领上次的回滚提示
     try {
@@ -322,22 +395,7 @@
       if (notice && notice.kind === 'rolled-back') showRollbackNotice(notice);
     } catch (_) { /* 没有提示就是正常的 */ }
 
-    let r;
-    try {
-      r = await api.check();
-    } catch (_) {
-      return; // 检查更新失败不打扰用户，静默等下次启动
-    }
-    if (!r || !r.available) return;
-    info = r;
-
-    if (info.skipped) return; // 用户主动跳过过这个版本
-
-    if (info.readyToRestart) {
-      showBar(`v${info.version} 已下载，重启后生效`);
-      return;
-    }
-    showBar(`发现新版本 v${info.version} · 更新包 ${info.sizeText}`);
+    await checkLatest(false);
   }
 
   // 等界面先画出来再联网，避免启动瞬间被网络请求拖慢

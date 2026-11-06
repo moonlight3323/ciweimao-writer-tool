@@ -2561,6 +2561,9 @@ body.is-locked { overflow: hidden; }
 .plugin-background-host { position: fixed; left: -10000px; top: -10000px; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
 .plugin-background-host iframe { width: 1px; height: 1px; border: 0; }
 .storage-path { overflow-wrap: anywhere; padding: 11px 13px; border-radius: 7px; background: var(--surface-3); color: var(--text-2); }
+#updateSettingsHint[data-tone="ok"] { color: var(--ok-ink); }
+#updateSettingsHint[data-tone="warn"] { color: var(--accent-ink); }
+#updateSettingsHint[data-tone="error"] { color: var(--danger-ink); }
 
 @media (max-width: 1160px) {
   .writer-stats { width: 165px; flex-basis: 165px; }

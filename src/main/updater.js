@@ -24,6 +24,7 @@ const http = require('http');
 const crypto = require('crypto');
 
 const REPO = 'moonlight3323/ciweimao-writer-tool';
+const DEFAULT_MANIFEST_API_URL = `https://api.github.com/repos/${REPO}/contents/update/latest.json?ref=main`;
 const DEFAULT_MANIFEST_URL = `https://raw.githubusercontent.com/${REPO}/main/update/latest.json`;
 const RELEASES_PAGE = `https://github.com/${REPO}/releases`;
 /** 清单里保留多少个历史版本 */
@@ -182,6 +183,12 @@ function httpGetBuffer(url, opts) {
   const o = opts || {};
   const maxRedirect = o.maxRedirect == null ? 5 : o.maxRedirect;
   const timeout = o.timeout == null ? 20000 : o.timeout;
+  const headers = Object.assign({
+    Accept: 'application/vnd.github.raw+json',
+    'Cache-Control': 'no-cache',
+    Pragma: 'no-cache',
+    'User-Agent': 'ciweimao-author-tool',
+  }, o.headers || {});
 
   return new Promise((resolve, reject) => {
     let parsed;
@@ -197,7 +204,7 @@ function httpGetBuffer(url, opts) {
     }
 
     const lib = parsed.protocol === 'https:' ? https : http;
-    const req = lib.get(parsed, { timeout }, (res) => {
+    const req = lib.get(parsed, { timeout, headers }, (res) => {
       const status = res.statusCode || 0;
       if (status >= 300 && status < 400 && res.headers.location) {
         res.resume();
@@ -206,7 +213,7 @@ function httpGetBuffer(url, opts) {
           return;
         }
         const next = new URL(res.headers.location, parsed).href;
-        httpGetBuffer(next, { maxRedirect: maxRedirect - 1, timeout }).then(resolve, reject);
+        httpGetBuffer(next, { maxRedirect: maxRedirect - 1, timeout, headers }).then(resolve, reject);
         return;
       }
       if (status !== 200) {
@@ -300,11 +307,23 @@ function httpDownloadToFile(url, destFile, onProgress, opts) {
   });
 }
 
-async function fetchManifest(urls, opts) {  const list = (Array.isArray(urls) ? urls : [urls]).filter(Boolean);
+/** GitHub 的分支 raw 地址可能命中数分钟旧缓存；只给清单地址加时间戳，不改发布包 URL。 */
+function manifestRequestUrl(url, now) {
+  const parsed = new URL(url);
+  if (parsed.hostname === 'raw.githubusercontent.com' || parsed.hostname === 'api.github.com') {
+    parsed.searchParams.set('_cw', String(now == null ? Date.now() : now));
+  }
+  return parsed.href;
+}
+
+async function fetchManifest(urls, opts) {
+  const list = (Array.isArray(urls) ? urls : [urls]).filter(Boolean);
   const errors = [];
+  const stamp = Date.now();
   for (const u of list) {
     try {
-      const buf = await httpGetBuffer(u, opts);
+      const requestUrl = manifestRequestUrl(u, stamp);
+      const buf = await httpGetBuffer(requestUrl, opts);
       return normalizeManifest(JSON.parse(buf.toString('utf8')));
     } catch (e) {
       errors.push(`${u}：${e.message}`);
@@ -536,6 +555,7 @@ function extractZip(zipFile, destDir) {
 
 module.exports = {
   REPO,
+  DEFAULT_MANIFEST_API_URL,
   DEFAULT_MANIFEST_URL,
   RELEASES_PAGE,
   MAX_CHANGES,
@@ -547,6 +567,7 @@ module.exports = {
   normalizeManifest,
   humanSize,
   httpGetBuffer,
+  manifestRequestUrl,
   fetchManifest,
   sha256File,
   downloadWithFallback,

@@ -1,7 +1,7 @@
 {
   "name": "ciweimao-author-tool",
   "productName": "刺猬猫作家助手",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "刺猬猫作者后台数据整理、评论审查、码字台与一键投递、插件中心的 Windows 桌面工具",
   "main": "src/main/main.js",
   "private": true,

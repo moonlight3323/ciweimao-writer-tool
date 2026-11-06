@@ -1161,7 +1161,13 @@ let downloading = false;
  * 清单地址。环境变量优先，方便本地对着一个手工改过的清单演练整个流程，
  * 不必真的发一个版本出来。
  */
-const MANIFEST_URLS = [process.env.CW_UPDATE_MANIFEST_URL, updater.DEFAULT_MANIFEST_URL].filter(Boolean);
+// Contents API 的 raw 响应优先：它直接读取 main 当前内容；raw.githubusercontent.com
+// 保留为兜底。两条请求都会由 updater 加 no-cache 头和唯一查询参数。
+const MANIFEST_URLS = [
+  process.env.CW_UPDATE_MANIFEST_URL,
+  updater.DEFAULT_MANIFEST_API_URL,
+  updater.DEFAULT_MANIFEST_URL,
+].filter(Boolean);
 
 function prefsPath() { return path.join(dataDir(), 'ui-prefs.json'); }
 

@@ -52,7 +52,7 @@
           <span class="conn-dot"></span>
           <span class="conn-text">后台未打开</span>
         </div>
-        <div class="version">v1.0.0</div>
+        <div class="version">v1.0.1</div>
       </div>
     </aside>
 
@@ -841,6 +841,15 @@
             <div class="segmented" id="closeBehaviorSeg">
               <button type="button" data-close-behavior="minimize">最小化到托盘</button>
               <button type="button" data-close-behavior="quit">直接退出</button>
+            </div>
+          </div>
+
+          <div class="panel" id="panelUpdate">
+            <div class="panel-head"><h3>软件更新</h3><span class="tag" id="updateSettingsTag">等待检查</span></div>
+            <p class="hint-line" id="updateSettingsHint">启动时会自动检查；也可以在这里主动获取 GitHub 上的最新版本。</p>
+            <div class="toolbar" style="margin-top:12px">
+              <button class="btn primary" id="btnCheckUpdate" type="button">立即检查更新</button>
+              <button class="btn ghost" id="btnSettingsReleases" type="button">查看发布页</button>
             </div>
           </div>
 
