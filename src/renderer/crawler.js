@@ -38,13 +38,21 @@
     return `${ORIGIN}/review_manage/manage_tsukkomi?&page=${page}&book_id=${bookId}&chapter_id=0&search_type=1&content=`;
   }
 
+  function reviewUrl(bookId, page) {
+    const url = new URL(`${ORIGIN}/review_manage/manage_review`);
+    url.searchParams.set('book_id', bookId);
+    if (page > 1) url.searchParams.set('page', page);
+    return url.href;
+  }
+
   /**
    * 抓取指定书籍的全部间贴。
    * @param {Object} opts { bookIds:[], maxPages:number, onProgress:fn, shouldStop:fn }
    */
-  async function crawlTsukkomi(opts) {
+  async function crawlComments(opts) {
     const o = opts || {};
     const bookIds = o.bookIds || [];
+    const kinds = (o.kinds || ['tsukkomi']).filter((x) => x === 'tsukkomi' || x === 'review');
     const maxPages = o.maxPages || 999;
     const emit = o.onProgress || function () {};
     const stopped = o.shouldStop || function () { return false; };
@@ -56,46 +64,53 @@
     for (let bi = 0; bi < bookIds.length; bi += 1) {
       const bookId = bookIds[bi];
       if (stopped()) break;
+      let meta = { bookId, name: bookId };
+      const summary = { bookId, name: meta.name, pages: 0, count: 0, kinds: {} };
 
-      emit({ phase: 'book-start', bookIndex: bi + 1, bookTotal: bookIds.length, bookId });
-
-      await goto(tsukkomiUrl(bookId, 1));
-      const opts2 = await callAdapter('extractBookOptions');
-      const meta = (opts2 || []).find((x) => x.bookId === bookId) || { bookId, name: bookId };
-      const pager = await callAdapter('extractPager');
-      const totalPages = Math.min(pager.total || 1, maxPages);
-
-      emit({ phase: 'book-info', bookIndex: bi + 1, bookTotal: bookIds.length, bookName: meta.name, pages: totalPages });
-
-      let count = 0;
-      for (let p = 1; p <= totalPages; p += 1) {
+      for (let ki = 0; ki < kinds.length; ki += 1) {
         if (stopped()) break;
-        if (p > 1) {
-          await goto(tsukkomiUrl(bookId, p));
-        }
-        const rows = await callAdapter('extractTsukkomi');
-        for (const r of rows) {
-          if (seen.has(r.id)) continue;
-          seen.add(r.id);
-          r.bookId = r.bookId || bookId;
-          r.bookName = r.bookName || meta.name;
-          collected.push(r);
-          count += 1;
-        }
-        emit({
-          phase: 'page',
-          bookIndex: bi + 1,
-          bookTotal: bookIds.length,
-          bookName: meta.name,
-          page: p,
-          pages: totalPages,
-          bookCount: count,
-          total: collected.length,
-        });
-        if (p < totalPages) await sleep(PAGE_DELAY);
-      }
+        const kind = kinds[ki];
+        const urlOf = kind === 'review' ? reviewUrl : tsukkomiUrl;
+        const adapterFn = kind === 'review' ? 'extractReview' : 'extractTsukkomi';
+        const kindName = kind === 'review' ? '书评' : '间贴';
+        emit({ phase: 'book-start', bookIndex: bi + 1, bookTotal: bookIds.length, bookId, kind, kindName });
 
-      bookMeta.push({ bookId, name: meta.name, pages: totalPages, count });
+        await goto(urlOf(bookId, 1));
+        const options = await callAdapter('extractBookOptions');
+        meta = (options || []).find((x) => String(x.bookId) === String(bookId)) || meta;
+        summary.name = meta.name;
+        const pager = await callAdapter('extractPager');
+        const totalPages = Math.min(pager.total || 1, maxPages);
+        emit({ phase: 'book-info', bookIndex: bi + 1, bookTotal: bookIds.length, bookName: meta.name, pages: totalPages, kind, kindName });
+
+        let count = 0;
+        for (let p = 1; p <= totalPages; p += 1) {
+          if (stopped()) break;
+          if (p > 1) await goto(urlOf(bookId, p));
+          const rows = await callAdapter(adapterFn);
+          for (const r of rows || []) {
+            const key = `${kind}:${r.id}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            r.kind = r.kind || kind;
+            r.bookId = r.bookId || bookId;
+            r.bookName = r.bookName || meta.name;
+            collected.push(r);
+            count += 1;
+          }
+          emit({
+            phase: 'page', bookIndex: bi + 1, bookTotal: bookIds.length,
+            bookName: meta.name, kind, kindName, page: p, pages: totalPages,
+            kindCount: count, bookCount: summary.count + count, total: collected.length,
+            completedKinds: ki, kindTotal: kinds.length,
+          });
+          if (p < totalPages) await sleep(PAGE_DELAY);
+        }
+        summary.pages += totalPages;
+        summary.count += count;
+        summary.kinds[kind] = { pages: totalPages, count };
+      }
+      bookMeta.push(summary);
     }
 
     return {
@@ -105,6 +120,10 @@
     };
   }
 
+  async function crawlTsukkomi(opts) {
+    return crawlComments(Object.assign({}, opts || {}, { kinds: ['tsukkomi'] }));
+  }
+
   /** 只读取书籍清单（快） */
   async function listBooks() {
     await goto(`${ORIGIN}/review_manage/manage_tsukkomi`);
@@ -112,7 +131,11 @@
     return opts || [];
   }
 
-  const api = { crawlTsukkomi, listBooks, callAdapter, goto };
+  async function queryFanValue(nickname, bookId) {
+    return callAdapter('queryFanValue', { nickname, bookId });
+  }
+
+  const api = { crawlComments, crawlTsukkomi, listBooks, queryFanValue, callAdapter, goto };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.Crawler = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

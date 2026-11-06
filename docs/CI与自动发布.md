@@ -9,7 +9,7 @@
 - 推送 `v*` 标签：标签必须与 `package.json` 一致。构建通过后，自动创建 GitHub Release，上传免安装 ZIP 与校验文件。
 - 普通提交不会创建 Release。Actions 页面运行详情中的 `windows-portable` 是测试安装包，保留 14 天。
 
-构建会附带内置插件、`docs/` 文档、MCP 桥、插件示例及 `plugins/` 内已提交的独立插件 ZIP，不会读取开发电脑的用户数据。
+构建会附带内置插件、`docs/` 文档、MCP 桥与插件示例，不会读取开发电脑的用户数据。稿费计算器位于 `bundled-plugins/`，随程序安装，不再额外附带独立 ZIP。
 
 ## 产出的两个包
 
@@ -33,8 +33,8 @@
 
 ```sh
 git push origin main
-git tag v0.13.2
-git push origin v0.13.2
+git tag v0.14.0
+git push origin v0.14.0
 ```
 
 示例版本号需替换成实际版本。已发布的标签不要重复使用；重新发版请递增版本号。

@@ -51,7 +51,7 @@
           <span class="conn-dot"></span>
           <span class="conn-text">后台未打开</span>
         </div>
-        <div class="version">v0.13.2</div>
+        <div class="version">v0.14.0</div>
       </div>
     </aside>
 
@@ -155,7 +155,7 @@
               <li class="step done"><span class="step-no">3</span><div><strong>违规审查</strong><p>内容规则 + 行为特征（刷屏、复读），输出带证据的风险评分。</p></div></li>
               <li class="step done"><span class="step-no">4</span><div><strong>读者反馈</strong><p>自动挑出章节被屏蔽、错字指正、断更质疑等值得你亲自看的评论。</p></div></li>
               <li class="step done"><span class="step-no">5</span><div><strong>数据看板</strong><p>字数、收藏、新增订阅、均订、总订阅，按每日 06:00 结算口径做日间对比。</p></div></li>
-              <li class="step done"><span class="step-no">6</span><div><strong>平台榜单</strong><p>点击榜与收藏榜的周榜、月榜前 10，含排名升降对比，无需登录即可抓取。</p></div></li>
+              <li class="step done"><span class="step-no">6</span><div><strong>平台榜单</strong><p>点击、收藏、推荐、订阅、月票、吐槽、新书、刀片与更新九类榜单，含周榜、月榜及排名升降，无需登录即可抓取。</p></div></li>
               <li class="step done"><span class="step-no">7</span><div><strong>章节导出</strong><p>整本或勾选若干章导出为 TXT，带 UTF-8 BOM，记事本直接打开不乱码。</p></div></li>
               <li class="step done"><span class="step-no">8</span><div><strong>执行动作</strong><p>删除、禁言、拉黑：随机抽样 → 审查 → 执行单 → 由你决定手动还是自动，逐个确认后发出。</p></div></li>
             </ul>
@@ -304,6 +304,11 @@
             </div>
             <div class="toolbar-right" id="reviewTools">
               <select class="input select-sm" id="reviewBook"><option value="all">全部作品</option></select>
+              <select class="input select-sm" id="reviewType">
+                <option value="all">全部评论</option>
+                <option value="tsukkomi">间贴（段评）</option>
+                <option value="review">普通书评</option>
+              </select>
               <div class="segmented is-lg" id="reviewFilter">
                 <button data-filter="all" class="is-active">全部</button>
                 <button data-filter="high">高风险</button>
@@ -564,7 +569,7 @@
           <div class="board-head">
             <div>
               <div class="board-day" id="rankDay">尚无榜单数据</div>
-              <div class="hint-line" id="rankSub">抓取一次即可看到点击榜与收藏榜，排名变化需连续两天</div>
+              <div class="hint-line" id="rankSub">抓取一次即可看到平台公开榜单，排名变化需连续两天</div>
             </div>
             <div class="actions">
               <button class="btn ghost" id="btnPrevRank" hidden>看前一天</button>
@@ -602,8 +607,14 @@
               <span class="tag">只读</span>
             </div>
             <p class="muted">
-              读取你名下作品的间贴（段评）。全程只做页面浏览，不点赞、不删除、不提交任何表单。
+              读取你名下作品的间贴（段评）和普通书评。全程只做页面浏览，不点赞、不删除。
             </p>
+
+            <div class="field">
+              <div class="field-label">抓取类型</div>
+              <label class="check-line"><input type="checkbox" id="crawlTsukkomi" checked /> 间贴（段评）</label>
+              <label class="check-line"><input type="checkbox" id="crawlReview" checked /> 普通书评</label>
+            </div>
 
             <div class="field">
               <div class="field-label">选择作品</div>
@@ -834,6 +845,22 @@
               <b>标准</b>：只标人身攻击、攻击性表达、广告、剧透、刷屏、无依据的严重指控；对作品的负面评价不处理。<br />
               <b>严格</b>：把「尴尬 / 暴死 / 扑街 / 离谱」这类负面评价也算进来。<b>容易误伤</b>——正常讨论里出现一个「离谱」就会被标红，建议只在集中清场时开。
             </p>
+            <div class="field field-inline">
+              <label class="field-label" for="reviewHigh">高风险阈值</label>
+              <input class="input input-sm" id="reviewHigh" type="number" min="1" max="100" value="70" />
+              <label class="field-label" for="reviewMid">中风险阈值</label>
+              <input class="input input-sm" id="reviewMid" type="number" min="1" max="100" value="45" />
+            </div>
+            <div class="field">
+              <label class="field-label" for="reviewCustomWords">自定义风险词</label>
+              <textarea class="input" id="reviewCustomWords" rows="3" placeholder="一行一个，或用逗号分隔"></textarea>
+            </div>
+            <div class="field">
+              <label class="field-label" for="reviewProtectedReaders">保护名单</label>
+              <textarea class="input" id="reviewProtectedReaders" rows="3" placeholder="读者 ID 或昵称，一行一个"></textarea>
+            </div>
+            <div class="actions"><button class="btn primary" id="btnSaveReviewSettings" type="button">保存审查设置</button></div>
+            <p class="hint-line" id="reviewSettingsHint">设置保存后会立即重算当前评论，无需重新抓取。</p>
           </div>
 
           <div class="panel">

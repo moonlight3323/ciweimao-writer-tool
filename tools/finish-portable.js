@@ -29,9 +29,12 @@ const appPkg = {
   version: pkg.version,
   description: pkg.description,
   main: pkg.main,
+  license: pkg.license,
   private: true,
 };
 fs.writeFileSync(path.join(APP_DIR, 'package.json'), JSON.stringify(appPkg, null, 2) + '\n', 'utf8');
+fs.copyFileSync(path.join(ROOT, 'LICENSE'), path.join(APP_DIR, 'LICENSE'));
+fs.copyFileSync(path.join(ROOT, 'LICENSE'), path.join(OUT, 'LICENSE'));
 console.log('  package.json 已写入（无 BOM）');
 
 // ---- 2. exe 图标与版本信息 ----
@@ -117,7 +120,8 @@ ${'='.repeat(50)}
              设置里可切「标准 / 严格」：严格会把「尴尬 / 暴死 / 扑街」这类负面评价也计入，容易误伤。
 - 数据看板   字数、收藏、总订阅、新增订阅、均订、日均追订；选中单本可看折线图。
 - 章节导出   把某本书的章节导出为 TXT，可一键全部或只导出勾选的。
-- 平台榜单   点击榜、收藏榜的周榜/月榜前 10，含名次升降（公开页面，不用登录）；
+- 平台榜单   点击、收藏、推荐、订阅、月票、吐槽、新书、刀片、更新九类榜单，
+             含周榜/月榜与名次升降（公开页面，不用登录）；
              点书名会用浏览器打开该书页面。
 - 喵语数据   内嵌第三方数据站「喵语」，只保留刺猬猫栏目：试水推榜（七项数据、可按渠道/周次/排序查看，
              点书名展开封面简介）与万收首订榜。第三方站点偶尔打不开，页面会给出提示。
@@ -234,21 +238,11 @@ if (fs.existsSync(sampleSrc)) {
 }
 
 console.log('');
-// 收集仓库内正式文档及独立插件 ZIP，不包含用户数据。
+// 收集仓库内正式文档，不包含用户数据。插件由 bundled-plugins 随应用代码打包。
 for (const file of fs.readdirSync(path.join(ROOT, 'docs'))) {
   const source = path.join(ROOT, 'docs', file);
   if (fs.statSync(source).isFile() && !fs.existsSync(path.join(OUT, file))) {
     fs.copyFileSync(source, path.join(OUT, file));
-  }
-}
-const pluginRoot = path.join(ROOT, 'plugins');
-if (fs.existsSync(pluginRoot)) {
-  for (const entry of fs.readdirSync(pluginRoot, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    for (const file of fs.readdirSync(path.join(pluginRoot, entry.name))) {
-      if (!file.endsWith('.zip')) continue;
-      fs.copyFileSync(path.join(pluginRoot, entry.name, file), path.join(OUT, file));
-    }
   }
 }
 console.log('便携包就绪：' + OUT);

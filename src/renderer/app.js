@@ -777,6 +777,7 @@ $('#btnOpenDiagDir').addEventListener('click', async () => {
 let crawlData = null;
 let reviewResult = null;
 let reviewFilter = 'all';
+let reviewType = 'all';
 let reviewQuery = '';
 let reviewLimit = 60;
 let readerView = false;
@@ -792,6 +793,9 @@ let batchStop = false;
 let bookList = [];
 let pickedBooks = new Set();
 const reviewParagraphCache = new Map();
+let readerHistory = { version: 1, readers: {} };
+let readerWatchlist = [];
+let reviewConfig = { high: 70, mid: 45, customWords: [], protectedReaders: [] };
 
 const PAGE_SIZE = 60;
 
@@ -802,6 +806,90 @@ function fmtTime(iso) {
     const p = (n) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
   } catch (_) { return iso; }
+}
+
+function splitSettingList(value) {
+  return [...new Set(String(value || '').split(/[\n,，;；]+/).map((x) => x.trim()).filter(Boolean))];
+}
+
+function normalizeReviewConfig(raw) {
+  const o = raw || {};
+  let high = Math.min(100, Math.max(1, Number(o.high) || 70));
+  let mid = Math.min(100, Math.max(1, Number(o.mid) || 45));
+  if (mid >= high) mid = Math.max(1, high - 1);
+  return {
+    high,
+    mid,
+    customWords: Array.isArray(o.customWords) ? splitSettingList(o.customWords.join('\n')) : [],
+    protectedReaders: Array.isArray(o.protectedReaders) ? splitSettingList(o.protectedReaders.join('\n')) : [],
+  };
+}
+
+function renderReviewSettings() {
+  $('#reviewHigh').value = reviewConfig.high;
+  $('#reviewMid').value = reviewConfig.mid;
+  $('#reviewCustomWords').value = reviewConfig.customWords.join('\n');
+  $('#reviewProtectedReaders').value = reviewConfig.protectedReaders.join('\n');
+}
+
+async function saveReviewSettings() {
+  reviewConfig = normalizeReviewConfig({
+    high: $('#reviewHigh').value,
+    mid: $('#reviewMid').value,
+    customWords: splitSettingList($('#reviewCustomWords').value),
+    protectedReaders: splitSettingList($('#reviewProtectedReaders').value),
+  });
+  await window.api.data.write('review-settings.json', reviewConfig);
+  renderReviewSettings();
+  if (crawlData && crawlData.items) { runReview(); renderAll(); }
+  const hint = $('#reviewSettingsHint');
+  hint.textContent = `已保存：高风险 ${reviewConfig.high} 分，中风险 ${reviewConfig.mid} 分。`;
+  setTimeout(() => { hint.textContent = '设置保存后会立即重算当前评论，无需重新抓取。'; }, 1800);
+}
+
+function watchedReader(readerId) {
+  return readerWatchlist.find((x) => String(x.readerId) === String(readerId));
+}
+
+async function saveReaderWatchlist() {
+  await window.api.data.write('reader-watchlist.json', { version: 1, items: readerWatchlist });
+}
+
+async function toggleReaderWatch(item) {
+  const readerId = String(item.readerId || '');
+  if (!readerId || readerId === 'unknown') return;
+  const pos = readerWatchlist.findIndex((x) => String(x.readerId) === readerId);
+  if (pos >= 0) readerWatchlist.splice(pos, 1);
+  else readerWatchlist.push({ readerId, nickname: item.nickname || '', reason: '手动关注', at: new Date().toISOString() });
+  await saveReaderWatchlist();
+  renderList();
+}
+
+async function mergeReaderHistory(items) {
+  const store = readerHistory && readerHistory.readers ? readerHistory : { version: 1, readers: {} };
+  for (const it of items || []) {
+    const readerId = String(it.readerId || '');
+    if (!readerId) continue;
+    const rec = store.readers[readerId] || { nickname: '', books: {}, samples: [], seen: [], count: 0, lastAt: '' };
+    rec.books = rec.books && typeof rec.books === 'object' ? rec.books : {};
+    rec.samples = Array.isArray(rec.samples) ? rec.samples : [];
+    rec.seen = Array.isArray(rec.seen) ? rec.seen : [];
+    rec.count = Number(rec.count) || 0;
+    rec.nickname = it.nickname || rec.nickname;
+    if (it.bookId) rec.books[String(it.bookId)] = it.bookName || String(it.bookId);
+    const key = String(it.id || `${it.kind || ''}:${it.content || ''}`);
+    if (!rec.seen.includes(key)) {
+      rec.seen.push(key);
+      rec.count += 1;
+      if (it.content && !rec.samples.includes(it.content)) rec.samples.push(it.content);
+    }
+    rec.seen = rec.seen.slice(-200);
+    rec.samples = rec.samples.slice(-50);
+    rec.lastAt = new Date().toISOString();
+    store.readers[readerId] = rec;
+  }
+  readerHistory = store;
+  await window.api.data.write('reader-history.json', store);
 }
 
 function renderBookPicker() {
@@ -867,33 +955,40 @@ $('#btnCrawl').addEventListener('click', async () => {
   const maxPages = maxRaw ? Math.max(1, parseInt(maxRaw, 10)) : 999;
 
   try {
-    const result = await window.Crawler.crawlTsukkomi({
+    const kinds = [];
+    if ($('#crawlTsukkomi').checked) kinds.push('tsukkomi');
+    if ($('#crawlReview').checked) kinds.push('review');
+    if (!kinds.length) throw new Error('请至少选择一种抓取类型');
+    const result = await window.Crawler.crawlComments({
       bookIds: [...pickedBooks],
+      kinds,
       maxPages,
       shouldStop: () => crawlStop,
       onProgress: (p) => {
         if (p.phase === 'book-start') {
-          $('#crawlText').textContent = `开始读取第 ${p.bookIndex}/${p.bookTotal} 本…`;
+          $('#crawlText').textContent = `开始读取第 ${p.bookIndex}/${p.bookTotal} 本的${p.kindName}…`;
         } else if (p.phase === 'book-info') {
-          $('#crawlText').textContent = `《${p.bookName}》共 ${p.pages} 页`;
+          $('#crawlText').textContent = `《${p.bookName}》${p.kindName}共 ${p.pages} 页`;
         } else if (p.phase === 'page') {
-          const overall = (p.bookIndex - 1) / p.bookTotal + (p.page / p.pages) / p.bookTotal;
+          const withinBook = (p.completedKinds + p.page / p.pages) / p.kindTotal;
+          const overall = ((p.bookIndex - 1) + withinBook) / p.bookTotal;
           $('#crawlBar').style.width = Math.round(overall * 100) + '%';
           $('#crawlText').textContent =
-            `《${p.bookName}》 ${p.page}/${p.pages} 页 · 本书 ${p.bookCount} 条 · 累计 ${p.total} 条`;
+            `《${p.bookName}》${p.kindName} ${p.page}/${p.pages} 页 · 本类 ${p.kindCount} 条 · 累计 ${p.total} 条`;
         }
       },
     });
 
     await window.api.data.write('tsukkomi.json', result);
+    await mergeReaderHistory(result.items);
     crawlData = result;
     runReview();
     renderAll();
 
     $('#crawlBar').style.width = '100%';
-    const truncated = result.books.some((b) => b.pages >= maxPages && maxPages < 999);
+    const truncated = result.books.some((b) => Object.values(b.kinds || {}).some((x) => x.pages >= maxPages)) && maxPages < 999;
     showCrawlNotice(
-      `抓取完成：${result.items.length} 条间贴，来自 ${result.books.length} 部作品。` +
+      `抓取完成：${result.items.length} 条评论（含间贴/书评），来自 ${result.books.length} 部作品。` +
       (truncated ? '<br>注意：已按「每本最多抓」限制截断，如需全量请调大页数。' : '')
     );
   } catch (err) {
@@ -916,15 +1011,16 @@ let reviewStrict = false;
 
 /** 当前作品范围内的原始条目 */
 function scopedItems() {
-  const all = (crawlData && crawlData.items) || [];
-  if (reviewBook === 'all') return all;
-  return all.filter((x) => String(x.bookId || '') === String(reviewBook));
+  let all = (crawlData && crawlData.items) || [];
+  if (reviewBook !== 'all') all = all.filter((x) => String(x.bookId || '') === String(reviewBook));
+  if (reviewType !== 'all') all = all.filter((x) => String(x.kind || 'tsukkomi') === reviewType);
+  return all;
 }
 
 function runReview() {
   if (!crawlData || !crawlData.items) { reviewResult = null; signalResult = null; return; }
   // 统计、列表、读者视图都基于「当前选中的作品」，否则单本筛选后数字会对不上
-  reviewResult = window.Reviewer.review(scopedItems(), { strictNegative: reviewStrict });
+  reviewResult = window.Reviewer.review(scopedItems(), Object.assign({}, reviewConfig, { strictNegative: reviewStrict }));
   picked.clear();
   runSignals();
 }
@@ -948,6 +1044,12 @@ $('#reviewStrictSeg').addEventListener('click', (e) => {
     runReview();
     renderAll();
   }
+});
+
+$('#btnSaveReviewSettings').addEventListener('click', () => {
+  saveReviewSettings().catch((err) => {
+    $('#reviewSettingsHint').textContent = '保存失败：' + String((err && err.message) || err);
+  });
 });
 
 function renderStats() {
@@ -1003,7 +1105,10 @@ function renderList() {
   if (readerView) {
     const readers = reviewResult.stats.likelyBadReaders;
     list.innerHTML = readers.length
-      ? readers.map((r) => `
+      ? readers.map((r) => {
+        const history = readerHistory.readers[String(r.readerId)] || null;
+        const watched = watchedReader(r.readerId);
+        return `
         <div class="review-item ${r.flagged >= 2 ? 'lv-high' : 'lv-mid'}">
           <div class="review-head">
             <span class="review-nick">${escapeHtml(r.nickname || '未知读者')}</span>
@@ -1014,9 +1119,14 @@ function renderList() {
             ${typeof r.ratio === 'number' ? `<span>负面 ${Math.round(r.ratio * 100)}%</span>` : ''}
             ${r.verdict === 'rhythm-troll' ? '<span class="badge high">疑似带节奏</span>' : ''}
             ${r.verdict === 'suspect' ? '<span class="badge mid">有嫌疑</span>' : ''}
+            ${history ? `<span>历史 ${history.count || 0} 条 · ${Object.keys(history.books || {}).length} 本书</span>` : '<span>暂无历史</span>'}
+            ${watched ? '<span class="badge high">已关注</span>' : ''}
+            <button class="link-btn" type="button" data-reader-watch="${escapeHtml(r.readerId)}">${watched ? '移出关注' : '加入关注'}</button>
+            <button class="link-btn" type="button" data-reader-fan="${escapeHtml(r.readerId)}">查粉丝值</button>
+            <span class="hint-line" data-reader-fan-result="${escapeHtml(r.readerId)}"></span>
           </div>
         </div>
-      `).join('')
+      `; }).join('')
       : '<div class="empty"><div class="empty-title">没有发现可疑读者</div><p>当前规则下未识别出集中的违规行为。</p></div>';
     more.hidden = true;
     return;
@@ -1032,7 +1142,9 @@ function renderList() {
       ? `<div class="review-hits">${x.hits.map((h) => `<span class="hit">${escapeHtml(h.name)} · ${escapeHtml(h.matched)}</span>`).join('')}</div>`
       : '';
     const id = escapeHtml(String(x.id));
-    const checkable = x.level !== 'none';
+    const isTsukkomi = (x.kind || 'tsukkomi') === 'tsukkomi';
+    const checkable = isTsukkomi && x.level !== 'none';
+    const watched = watchedReader(x.readerId);
     return `
       <div class="review-item ${lvClass}${x.handled ? ' is-done' : ''}">
         <div class="review-head">
@@ -1040,17 +1152,21 @@ function renderList() {
             ? `<input type="checkbox" class="review-check" data-check-id="${id}" ${picked.has(String(x.id)) ? 'checked' : ''} />`
             : '<span class="review-check-space"></span>'}
           <span class="review-nick">${escapeHtml(x.nickname || '未知')}</span>
+          <span class="badge">${isTsukkomi ? '间贴' : '书评'}</span>
           <span>${escapeHtml(x.time || '')}</span>
           ${x.level === 'high' ? '<span class="badge high">高风险 ' + x.score + '</span>' : ''}
           ${x.level === 'mid' ? '<span class="badge mid">中风险 ' + x.score + '</span>' : ''}
           ${x.handled ? '<span class="badge">已处理</span>' : ''}
-          <button class="link-btn review-paragraph-btn" type="button" data-paragraph-id="${id}">查看原段</button>
-          <button class="link-btn review-act" type="button" data-act-id="${id}">${x.handled ? '再看一眼' : '处理'}</button>
+          ${watched ? '<span class="badge high">关注读者</span>' : ''}
+          ${isTsukkomi ? `<button class="link-btn review-paragraph-btn" type="button" data-paragraph-id="${id}">查看原段</button>` : ''}
+          ${isTsukkomi ? `<button class="link-btn review-act" type="button" data-act-id="${id}">${x.handled ? '再看一眼' : '处理'}</button>` : '<span class="hint-line">书评暂仅审查</span>'}
+          ${x.readerId ? `<button class="link-btn" type="button" data-reader-watch="${escapeHtml(x.readerId)}">${watched ? '移出关注' : '关注读者'}</button>` : ''}
+          ${x.readerId ? `<button class="link-btn" type="button" data-reader-fan="${escapeHtml(x.readerId)}">查粉丝值</button><span class="hint-line" data-reader-fan-result="${escapeHtml(x.readerId)}"></span>` : ''}
           <button class="link-btn review-dismiss" type="button" data-dismiss-id="${id}">剔除</button>
         </div>
         <div class="review-body ${short ? 'is-short' : ''}">${escapeHtml(x.content || '（空）')}</div>
         ${hits}
-        <div class="review-meta-line">${escapeHtml(x.bookName || '')} · ${escapeHtml(x.chapterName || '')} · ${escapeHtml(x.paraPos || '')}</div>
+        <div class="review-meta-line">${escapeHtml(x.bookName || '')}${isTsukkomi ? ` · ${escapeHtml(x.chapterName || '')} · ${escapeHtml(x.paraPos || '')}` : ' · 作品评论区'}</div>
         <div class="review-paragraph" data-paragraph-box="${id}" hidden></div>
       </div>
     `;
@@ -1120,7 +1236,7 @@ function restoreDismissed() {
 
 function selectedItems() {
   if (!reviewResult) return [];
-  return reviewResult.items.filter((x) => picked.has(String(x.id)));
+  return reviewResult.items.filter((x) => (x.kind || 'tsukkomi') === 'tsukkomi' && picked.has(String(x.id)));
 }
 
 function renderBatchBar() {
@@ -1131,7 +1247,7 @@ function renderBatchBar() {
   if (reviewResult) {
     const valid = new Set(
       reviewResult.items
-        .filter((x) => x.level !== 'none' && !dismissed.has(String(x.id)))
+        .filter((x) => (x.kind || 'tsukkomi') === 'tsukkomi' && x.level !== 'none' && !dismissed.has(String(x.id)))
         .map((x) => String(x.id))
     );
     [...picked].forEach((id) => { if (!valid.has(id)) picked.delete(id); });
@@ -1276,6 +1392,14 @@ $('#reviewSearch').addEventListener('input', (e) => {
   renderList();
 });
 
+$('#reviewType').addEventListener('change', (e) => {
+  reviewType = e.target.value || 'all';
+  reviewLimit = PAGE_SIZE;
+  picked.clear();
+  runReview();
+  renderAll();
+});
+
 $('#btnLoadMore').addEventListener('click', () => {
   reviewLimit += PAGE_SIZE;
   renderList();
@@ -1332,6 +1456,32 @@ async function toggleReviewParagraph(button) {
 
 // 列表内的四个动作：勾选 / 查看原段 / 处理 / 剔除
 $('#reviewList').addEventListener('click', (e) => {
+  const watch = e.target.closest('[data-reader-watch]');
+  if (watch) {
+    const readerId = String(watch.dataset.readerWatch || '');
+    const source = (reviewResult && reviewResult.items || []).find((x) => String(x.readerId || '') === readerId)
+      || { readerId, nickname: '' };
+    toggleReaderWatch(source).catch((err) => execNotice('更新关注名单失败：' + escapeHtml(err.message || err), true));
+    return;
+  }
+
+  const fan = e.target.closest('[data-reader-fan]');
+  if (fan) {
+    const readerId = String(fan.dataset.readerFan || '');
+    const source = (reviewResult && reviewResult.items || []).find((x) => String(x.readerId || '') === readerId);
+    const result = fan.parentElement.querySelector(`[data-reader-fan-result="${CSS.escape(readerId)}"]`);
+    if (!source || !result) return;
+    fan.disabled = true;
+    result.textContent = '查询中…';
+    window.Crawler.queryFanValue(source.nickname, source.bookId).then((res) => {
+      result.textContent = res && res.ok
+        ? `${res.level ? res.level + ' · ' : ''}粉丝值 ${Number(res.value || 0).toLocaleString('zh-CN')}`
+        : '未查到粉丝值';
+    }).catch((err) => { result.textContent = '查询失败：' + String(err.message || err); })
+      .finally(() => { fan.disabled = false; });
+    return;
+  }
+
   const chk = e.target.closest('[data-check-id]');
   if (chk) {
     const id = String(chk.dataset.checkId);
@@ -1386,7 +1536,7 @@ $('#btnBatchRun').addEventListener('click', runBatch);
 
 function selectByLevel(level) {
   picked.clear();
-  filteredItems().filter((x) => x.level === level && !x.handled)
+  filteredItems().filter((x) => (x.kind || 'tsukkomi') === 'tsukkomi' && x.level === level && !x.handled)
     .forEach((x) => picked.add(String(x.id)));
   renderList();
   renderBatchBar();
@@ -1915,7 +2065,7 @@ let reviewMode = 'review';
 
 function runSignals() {
   if (!crawlData || !crawlData.items) { signalResult = null; return; }
-  signalResult = window.Signals.extract(scopedItems());
+  signalResult = window.Signals.extract(scopedItems().filter((x) => (x.kind || 'tsukkomi') === 'tsukkomi'));
 }
 
 function highlight(text, word) {
@@ -1981,6 +2131,13 @@ let rankViewDay = null;
 const RANK_LABELS = {
   click: { week: '点击榜 · 周榜', month: '点击榜 · 月榜' },
   collect: { week: '收藏榜 · 周榜', month: '收藏榜 · 月榜' },
+  recommend: { week: '推荐榜 · 周榜', month: '推荐榜 · 月榜' },
+  subscribe: { week: '订阅榜 · 周榜', month: '订阅榜 · 月榜' },
+  monthly: { week: '月票榜 · 周榜', month: '月票榜 · 月榜' },
+  tsukkomi: { week: '吐槽榜 · 周榜', month: '吐槽榜 · 月榜' },
+  newbook: { week: '新书榜 · 周榜', month: '新书榜 · 月榜' },
+  blade: { week: '刀片榜 · 周榜', month: '刀片榜 · 月榜' },
+  update: { week: '更新榜 · 周榜', month: '更新榜 · 月榜' },
 };
 
 function currentRankRecord() {
@@ -2024,7 +2181,7 @@ function rankCardHtml(key, period, list) {
 
   return `<div class="rank-card">
     <div class="rank-card-head">
-      <span class="rank-card-name">${RANK_LABELS[key][period]}</span>
+      <span class="rank-card-name">${(RANK_LABELS[key] && RANK_LABELS[key][period]) || key}</span>
       <span class="rank-card-meta">前 ${list.length} 名</span>
     </div>
     <div class="rank-list">${rows || '<div class="rank-row"><span class="rank-title">暂无数据</span></div>'}</div>
@@ -2040,7 +2197,7 @@ function renderRank() {
     empty.hidden = false;
     grid.innerHTML = '';
     $('#rankDay').textContent = '尚无榜单数据';
-    $('#rankSub').textContent = '抓取一次即可看到点击榜与收藏榜，排名变化需连续两天';
+    $('#rankSub').textContent = '抓取一次即可看到平台公开榜单，排名变化需连续两天';
     $('#btnPrevRank').hidden = true;
     return;
   }
@@ -2065,7 +2222,9 @@ function renderRank() {
   $('#btnPrevRank').hidden = older.length === 0;
   $('#btnPrevRank').textContent = '看前一天';
 
-  grid.innerHTML = ['click', 'collect']
+  const availableKeys = (window.Rank.RANK_KEYS || Object.keys(RANK_LABELS))
+    .filter((key) => data[key] && ((data[key].week || []).length || (data[key].month || []).length));
+  grid.innerHTML = availableKeys
     .map((key) => ['week', 'month'].map((p) => rankCardHtml(key, p, data[key][p] || [])).join(''))
     .join('');
 }
@@ -2553,7 +2712,7 @@ function execNotice(text, isError) {
 function execPool() {
   if (!reviewResult) return [];
   // 已处理、已剔除的都不再出现在待处理池里
-  return reviewResult.items.filter((x) => !x.handled && !dismissed.has(String(x.id)));
+  return reviewResult.items.filter((x) => (x.kind || 'tsukkomi') === 'tsukkomi' && !x.handled && !dismissed.has(String(x.id)));
 }
 
 function renderExecPool() {
@@ -2695,7 +2854,7 @@ function showExecSample(x) {
 /** 处理完就地标记，避免下一条又抽到它 */
 function markHandled(slip, action) {
   const hit = (reviewResult && reviewResult.items || []).find(
-    (x) => String(x.id) === String(slip.commentId)
+    (x) => String(x.id) === String(slip.localId || slip.commentId)
   );
   if (!hit) return;
   hit.handled = true;
@@ -2705,7 +2864,7 @@ function markHandled(slip, action) {
 
   // 落盘的是「已处理」标记，评论原文与审查结果都保留，方便日后回查
   if (crawlData && Array.isArray(crawlData.items)) {
-    const raw = crawlData.items.find((x) => String(x.id) === String(slip.commentId));
+    const raw = crawlData.items.find((x) => String(x.id) === String(slip.localId || slip.commentId));
     if (raw) {
       raw.handled = true;
       raw.handledAt = hit.handledAt;
@@ -4677,6 +4836,20 @@ document.addEventListener('keydown', (e) => {
     renderReviewStrict();
     window.Theme.boot();
   } catch (_) { /* ignore */ }
+
+  try {
+    reviewConfig = normalizeReviewConfig(await window.api.data.read('review-settings.json'));
+  } catch (_) { reviewConfig = normalizeReviewConfig({}); }
+  renderReviewSettings();
+
+  try {
+    const stored = await window.api.data.read('reader-history.json');
+    if (stored && stored.readers) readerHistory = stored;
+  } catch (_) { readerHistory = { version: 1, readers: {} }; }
+  try {
+    const stored = await window.api.data.read('reader-watchlist.json');
+    readerWatchlist = stored && Array.isArray(stored.items) ? stored.items : [];
+  } catch (_) { readerWatchlist = []; }
 
   // 偏好里没有「已看过声明」的记录，就说明是第一次启动
   if (!window.Prefs || !window.Prefs.get(FREE_NOTICE_KEY, false)) openFreeNotice();

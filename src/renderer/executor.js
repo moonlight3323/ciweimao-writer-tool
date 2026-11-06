@@ -31,7 +31,8 @@
     if (!item) return null;
     const hits = (item.hits || []).map((h) => `${h.name}（${h.matched}）`);
     return {
-      commentId: String(item.id || ''),
+      localId: String(item.id || ''),
+      commentId: String(item.platformId || item.id || '').replace(/^tsukkomi:/, ''),
       readerId: String(item.readerId || ''),
       bookId: String(item.bookId || ''),
       chapterId: String(item.chapterId || '0') || '0',
