@@ -1,12 +1,20 @@
 {
-  "version": "0.14.0",
+  "version": "0.14.1",
   "type": "app",
-  "size": 1237659,
-  "sha256": "75e0d6ed44b7d01aae3ba14bd32b0d5b331788adf8705e64a708b96311456371",
+  "size": 1240000,
+  "sha256": "d456d2f907aef65c3cfa366a28c2c8d0c0a3ec86b067a15efaa4b8d0fdcd0ed0",
   "url": [
-    "https://github.com/moonlight3323/ciweimao-writer-tool/releases/download/v0.14.0/ciweimao-writer-tool-v0.14.0-app.zip"
+    "https://github.com/moonlight3323/ciweimao-writer-tool/releases/download/v0.14.1/ciweimao-writer-tool-v0.14.1-app.zip"
   ],
   "changes": [
+    {
+      "version": "0.14.1",
+      "date": "2026-11-06",
+      "items": [
+        "· 修复：下载更新时看不到进度，现在会显示进度条和已下载大小",
+        "· 修复：点重启后反复弹出黑色命令行窗口，关掉还会再冒出来"
+      ]
+    },
     {
       "version": "0.14.0",
       "date": "2026-11-06",
