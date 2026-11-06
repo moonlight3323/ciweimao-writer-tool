@@ -2094,7 +2094,6 @@ $('#btnRefreshStats').addEventListener('click', () => captureAndSave(false));
 /** 采集并入库。silent=true 时不打断界面（用于每日 6 点自动更新） */
 async function captureAndSave(silent) {
   if (statsBusy) return;
-  statsBusy = true;
   const btn = $('#btnRefreshStats');
   const notice = $('#boardNotice');
 
@@ -2107,13 +2106,9 @@ async function captureAndSave(silent) {
   }
 
   try {
-    const snap = await window.Stats.captureSnapshot({
-      onProgress: (p) => { if (!silent) notice.textContent = p.text || '采集中…'; },
+    const snap = await captureStatsSnapshot((p) => {
+      if (!silent) notice.textContent = p.text || '采集中…';
     });
-    snapshots = window.Stats.mergeSnapshot(snapshots, snap);
-    viewDay = snap.day;
-    await window.api.data.write('stats-snapshots.json', { snapshots });
-    renderBoard();
 
     const prev = window.Stats.previousSnapshot(snapshots, snap.day);
     const msg = prev
@@ -2137,11 +2132,30 @@ async function captureAndSave(silent) {
       console.warn('[auto-capture] 跳过：', err.message || err);
     }
   } finally {
-    statsBusy = false;
     if (!silent) {
       btn.disabled = false;
       btn.textContent = '刷新数据';
     }
+  }
+}
+
+/**
+ * 共用的作者后台统计采集入口。
+ * 数据看板和获准读取作者统计的插件都从这里刷新，确保只维护一套采集、入库与并发保护逻辑。
+ */
+async function captureStatsSnapshot(onProgress) {
+  if (statsBusy) throw new Error('作者后台数据正在刷新，请稍候再试');
+  if (exportBusy) throw new Error('正在同步作品，请完成后再刷新作者后台数据');
+  statsBusy = true;
+  try {
+    const snap = await window.Stats.captureSnapshot({ onProgress });
+    snapshots = window.Stats.mergeSnapshot(snapshots, snap);
+    viewDay = snap.day;
+    await window.api.data.write('stats-snapshots.json', { snapshots });
+    renderBoard();
+    return snap;
+  } finally {
+    statsBusy = false;
   }
 }
 
@@ -4811,6 +4825,7 @@ function pluginPermissionLabel(permission) {
     'editor.read': '读取当前章节',
     'editor.write': '修改当前章节',
     'stats.read': '读取码字统计',
+    'stats.author': '刷新作者后台统计',
     'ui.editorStat': '显示编辑器指标',
   }[permission] || permission;
 }
@@ -4998,7 +5013,7 @@ function pluginBridgeSource(token) {
     const TOKEN = ${JSON.stringify(token)};
     let sequence = 0;
     const waiting = new Map();
-    function request(method, payload) {
+    function request(method, payload, timeoutMs) {
       return new Promise((resolve, reject) => {
         const id = ++sequence;
         waiting.set(id, { resolve, reject });
@@ -5008,7 +5023,7 @@ function pluginBridgeSource(token) {
           if (!item) return;
           waiting.delete(id);
           item.reject(new Error('插件请求超时'));
-        }, 15000);
+        }, timeoutMs || 15000);
       });
     }
     addEventListener('message', (event) => {
@@ -5027,7 +5042,10 @@ function pluginBridgeSource(token) {
         setContent: (content) => request('editor.setContent', { content }),
         insertText: (text, position = 'selection') => request('editor.insertText', { text, position }),
       },
-      stats: { get: () => request('stats.get') },
+      stats: {
+        get: () => request('stats.get'),
+        refreshAuthorSubscriptions: () => request('stats.refreshAuthorSubscriptions', null, 300000),
+      },
       ui: { setEditorStat: (item) => request('ui.setEditorStat', item) },
       storage: {
         get: (key) => request('storage.get', { key }),
@@ -5215,6 +5233,7 @@ async function handlePluginRequest(runtime, method, payload) {
       books: books.map((book) => ({
         bookId: String(book.bookId),
         name: String(book.name || '未命名作品'),
+        platformBookId: String(book.platformBookId || ''),
       })),
       updatedAt: Math.max(writingStatsData.updatedAt || 0, savedOutputStatsData.updatedAt || 0),
       currentBookId: writerEditorBook ? String(writerEditorBook.bookId) : '',
@@ -5222,6 +5241,24 @@ async function handlePluginRequest(runtime, method, payload) {
       currentChapterSavedWords: writerEditorBook && writerCurrentChapter()
         ? writerLastSavedChapterWords : 0,
     };
+  }
+  if (method === 'stats.refreshAuthorSubscriptions') {
+    requirePluginPermission(plugin, 'stats.author');
+    if (runtime.kind !== 'page') throw new Error('只有插件页面可以主动刷新作者后台统计');
+    const oldStatus = $('#pluginHostStatus').textContent;
+    try {
+      const snap = await captureStatsSnapshot((progress) => {
+        $('#pluginHostStatus').textContent = String((progress && progress.text) || '正在读取作者后台…');
+      });
+      const library = await window.api.writer.list();
+      const localBooks = (library && library.books) || [];
+      const resultBooks = window.Stats.mapAuthorBooksToLibrary(snap.books, localBooks);
+      $('#pluginHostStatus').textContent = '作者后台统计已刷新';
+      return { day: snap.day, capturedAt: snap.capturedAt, books: resultBooks };
+    } catch (err) {
+      $('#pluginHostStatus').textContent = oldStatus || '隔离运行中';
+      throw err;
+    }
   }
   if (method === 'ui.setEditorStat') {
     requirePluginPermission(plugin, 'ui.editorStat');

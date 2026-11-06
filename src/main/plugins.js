@@ -59,7 +59,9 @@ function readManifest(folder) {
     author: String(manifest.author || '').slice(0, 80),
     description: String(manifest.description || '').slice(0, 240),
     permissions: Array.isArray(manifest.permissions)
-      ? [...new Set(manifest.permissions.map(String).filter((p) => ['editor.read', 'editor.write', 'stats.read', 'ui.editorStat'].includes(p)))]
+      ? [...new Set(manifest.permissions.map(String).filter((p) => [
+        'editor.read', 'editor.write', 'stats.read', 'stats.author', 'ui.editorStat',
+      ].includes(p)))]
       : [],
     contributes: {
       navigation: manifest.contributes && manifest.contributes.navigation

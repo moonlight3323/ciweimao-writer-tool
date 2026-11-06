@@ -79,6 +79,21 @@ jobs:
           $appHash = (Get-FileHash -LiteralPath $appArchive -Algorithm SHA256).Hash.ToLowerInvariant()
           "$appHash  $([IO.Path]::GetFileName($appArchive))" | Set-Content -LiteralPath "$appArchive.sha256" -Encoding utf8NoBOM
           Write-Output "app-only: $([IO.Path]::GetFileName($appArchive)) $([math]::Round((Get-Item $appArchive).Length / 1MB, 2)) MB"
+      - name: Create standalone income calculator plugin
+        run: |
+          $pluginVersion = (Get-Content "bundled-plugins/income-calculator/manifest.json" -Raw | ConvertFrom-Json).version
+          $pluginArchive = "dist/income-calculator-v$pluginVersion.zip"
+          $pluginFiles = @(
+            "bundled-plugins/income-calculator/background.js",
+            "bundled-plugins/income-calculator/main.js",
+            "bundled-plugins/income-calculator/manifest.json",
+            "bundled-plugins/income-calculator/page.html",
+            "bundled-plugins/income-calculator/README.md",
+            "bundled-plugins/income-calculator/style.css"
+          )
+          Compress-Archive -LiteralPath $pluginFiles -DestinationPath $pluginArchive -CompressionLevel Optimal
+          $pluginHash = (Get-FileHash -LiteralPath $pluginArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$pluginHash  $([IO.Path]::GetFileName($pluginArchive))" | Set-Content -LiteralPath "$pluginArchive.sha256" -Encoding utf8NoBOM
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: windows-portable

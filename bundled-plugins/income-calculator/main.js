@@ -202,6 +202,61 @@ async function reload() {
   render();
 }
 
+function hasAuthorAverage(value) {
+  return value !== null && value !== '' && Number.isFinite(Number(value)) && Number(value) >= 0;
+}
+
+async function refreshAuthorSubscriptions() {
+  const button = document.querySelector('#refresh');
+  const state = document.querySelector('#refreshState');
+  clearTimeout(autoSaveTimer);
+  button.disabled = true;
+  button.textContent = '读取中…';
+  state.textContent = '正在从作者后台重新获取章节均订，请稍候';
+  try {
+    // 先把用户刚刚手填但尚未触发防抖保存的内容落盘，避免刷新覆盖输入过程。
+    await persistSettings(false);
+    settings = normaliseSettings(await PluginAPI.storage.get('settings'));
+    stats = await PluginAPI.stats.get() || { days: {}, savedBookDays: {}, books: [] };
+
+    const authorStats = await PluginAPI.stats.refreshAuthorSubscriptions();
+    const existingIds = new Set(booksList().map(function (book) { return String(book.bookId); }));
+    let updated = 0;
+    let missing = 0;
+    let unmatched = 0;
+    ((authorStats && authorStats.books) || []).forEach(function (book) {
+      const id = String(book.bookId || '');
+      if (!id || !existingIds.has(id)) {
+        unmatched += 1;
+        return;
+      }
+      if (!hasAuthorAverage(book.avgSubs)) {
+        missing += 1;
+        return;
+      }
+      settings.bookSubscriptions[id] = Number(book.avgSubs);
+      updated += 1;
+    });
+
+    if (updated) await PluginAPI.storage.set('settings', JSON.parse(JSON.stringify(settings)));
+    stats = await PluginAPI.stats.get() || { days: {}, savedBookDays: {}, books: [] };
+    fillSettings();
+    render();
+
+    const details = [];
+    if (updated) details.push('已更新 ' + updated + ' 本作品');
+    if (missing) details.push(missing + ' 本暂无均订');
+    if (unmatched) details.push(unmatched + ' 本未与本地作品对应');
+    state.textContent = details.length ? details.join('，') : '后台没有可更新的作品均订';
+    await PluginAPI.app.notify(state.textContent);
+  } catch (error) {
+    state.textContent = '刷新失败：' + error.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = '刷新';
+  }
+}
+
 function readSettingsForm() {
   const next = normaliseSettings(settings);
   next.tier = document.querySelector('#tier').value;
@@ -254,7 +309,7 @@ document.querySelector('#save').addEventListener('click', function () {
     document.querySelector('#saveState').textContent = error.message;
   });
 });
-document.querySelector('#refresh').addEventListener('click', reload);
+document.querySelector('#refresh').addEventListener('click', refreshAuthorSubscriptions);
 
 reload().catch(function (error) { document.querySelector('#saveState').textContent = error.message; });
 setInterval(async function () {

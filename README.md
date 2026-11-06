@@ -81,6 +81,7 @@ npm install
 | `docs/使用说明.txt` | 快速开始（纯文字） |
 | `docs/安全说明和使用说明.docx` | 安全边界与操作说明 |
 | `docs/AI创作辅助教程.docx` | 让 AI 读本地数据的三种用法 |
+| `docs/稿费统计后台均订同步操作说明.md` | 稿费统计：刷新后台均订、作品对应与独立插件安装 |
 | `docs/插件开发说明.md` | 想写插件的人 / 让 AI 代写插件的人 |
 | `docs/测试与修复说明-2026-11-05.md` | 一次完整回归发现的 bug 与成因 |
 
@@ -90,7 +91,7 @@ npm install
 
 - 插件目录：`manifest.json` + `page.html` + `main.js` + `style.css` + `README.md`（预装插件还可带 `background.js`）
 - `manifest.json` 支持 `contributes.navigation`（在左侧加一项）与 `contributes.editorStat`（在编辑器里显示指标）
-- 权限：`editor.read` / `editor.write` / `stats.read` / `ui.editorStat`
+- 权限：`editor.read` / `editor.write` / `stats.read` / `stats.author` / `ui.editorStat`
 - 随包预装放在 `bundled-plugins/`，首次启动会按版本号安装到用户数据目录，升级时不覆盖用户改动
 
 接口细节、沙箱红线与常见错误对照见 `docs/插件开发说明.md`。

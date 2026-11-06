@@ -195,6 +195,48 @@
     return list;
   }
 
+  /**
+   * 把作者后台作品统计对应到本地作品库。
+   * 后台作品号最可靠；老数据没有绑定号时，只允许用唯一同名作品兜底，避免同名误配。
+   */
+  function mapAuthorBooksToLibrary(remoteBooks, localBooks) {
+    const locals = Array.isArray(localBooks) ? localBooks : [];
+    const byPlatformId = new Map();
+    const byLocalId = new Map();
+    const byName = new Map();
+    locals.forEach((book) => {
+      const localId = String((book && book.bookId) || '');
+      const platformId = String((book && book.platformBookId) || '');
+      const name = String((book && book.name) || '').trim();
+      if (localId) byLocalId.set(localId, book);
+      if (platformId) byPlatformId.set(platformId, book);
+      if (name) {
+        const matches = byName.get(name) || [];
+        matches.push(book);
+        byName.set(name, matches);
+      }
+    });
+
+    return (Array.isArray(remoteBooks) ? remoteBooks : []).map((remote) => {
+      const platformBookId = String((remote && remote.bookId) || '');
+      const name = String((remote && remote.name) || '').trim();
+      const sameName = byName.get(name) || [];
+      const local = byPlatformId.get(platformBookId)
+        || byLocalId.get(platformBookId)
+        || (sameName.length === 1 ? sameName[0] : null);
+      return {
+        bookId: local ? String(local.bookId || '') : '',
+        platformBookId,
+        name,
+        avgSubs: remote && remote.avgSubs != null ? Number(remote.avgSubs) : null,
+        matchedBy: local
+          ? (String(local.platformBookId || '') === platformBookId ? 'platformBookId'
+            : (String(local.bookId || '') === platformBookId ? 'bookId' : 'name'))
+          : '',
+      };
+    });
+  }
+
   const api = {
     STAT_HOUR,
     statDay,
@@ -205,6 +247,7 @@
     annotateDiff,
     scopeSnapshot,
     mergeSnapshot,
+    mapAuthorBooksToLibrary,
   };
 
   if (typeof module === 'object' && module.exports) module.exports = api;

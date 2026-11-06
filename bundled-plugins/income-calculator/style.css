@@ -5,7 +5,10 @@ body { margin: 0; background: #f7f5ef; color: #2b2620; font: 14px/1.6 system-ui,
 header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
 header span { color: #8c816d; font-size: 12px; }
 h1 { margin: 1px 0 0; font-size: 23px; }
+.refresh-actions { display: flex; align-items: flex-end; flex-direction: column; gap: 4px; }
+.refresh-actions small { max-width: 360px; color: #8c816d; font-size: 11px; text-align: right; }
 button { border: 1px solid #d9ceb5; border-radius: 7px; padding: 7px 13px; background: #fff; color: #2b2620; cursor: pointer; }
+button:disabled { cursor: wait; opacity: .65; }
 button:hover { border-color: #c89600; }
 #save { border-color: #d2a100; background: #f9bf03; font-weight: 700; }
 .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }

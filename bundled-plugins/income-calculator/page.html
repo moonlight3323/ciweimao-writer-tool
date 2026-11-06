@@ -1,7 +1,7 @@
 <main class="income-app">
   <header>
     <div><span>稿费预估</span><h1>收入统计</h1></div>
-    <button id="refresh" type="button">刷新</button>
+    <div class="refresh-actions"><button id="refresh" type="button">刷新</button><small id="refreshState"></small></div>
   </header>
 
   <section class="summary">
@@ -23,7 +23,7 @@
   </section>
 
   <section class="panel settings">
-    <div class="panel-title"><div><h2>插件设置</h2><p>先选择作品，再设置这本书的平均订阅数；修改后会自动保存。</p></div></div>
+    <div class="panel-title"><div><h2>插件设置</h2><p>先选择作品，再设置这本书的平均订阅数；点击顶部刷新会优先读取作者后台的章节均订。</p></div></div>
     <p class="payout-note"><strong>说明：</strong>页面显示金额均为预估，稿费以实际发放为准。</p>
     <div class="form-grid">
       <label><span>作品</span><select id="book"></select></label>
