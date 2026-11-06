@@ -11,6 +11,22 @@
 
 构建会附带内置插件、`docs/` 文档、MCP 桥、插件示例及 `plugins/` 内已提交的独立插件 ZIP，不会读取开发电脑的用户数据。
 
+## 产出的两个包
+
+同一次构建会产出两个 ZIP，用途不同，都需要随 Release 一起发布：
+
+| 文件 | 内容 | 压缩后 | 用途 |
+| --- | --- | --- | --- |
+| `ciweimao-writer-tool-v<版本>-windows-x64.zip` | 完整便携包：exe、Chromium 运行时、`resources/app` | 约 140 MB | 新用户安装、Electron 运行时升级 |
+| `ciweimao-writer-tool-v<版本>-app.zip` | 只含 `resources/app` 里的应用代码 | 约 1.2 MB | 软件内置的自动更新 |
+
+客户端读 `update/latest.json` 里的 `type` 决定走哪条路径：
+
+- `type: "app"` → 下载小包，替换 `resources\app`，失败自动回滚。日常发版用这个。
+- `type: "full"` → 只把包下到临时目录并提示路径，由用户自行解压覆盖。改了 Electron 版本时用这个。
+
+`app` 包的打包必须用 .NET 的 `[IO.Compression.ZipFile]::CreateFromDirectory(..., $false)`，最后那个参数是「不含基目录」。用 `Compress-Archive` 会多套一层 `app\`，解压后覆盖到 `resources\app` 会变成 `app\app\...`，更新就会失败。
+
 ## 发布步骤
 
 先同步 main，将 `package.json` 和界面版本号一并更新。提交代码和相应锁文件后：

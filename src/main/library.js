@@ -218,6 +218,61 @@ function getBook(dataDir, bookId) {
   return readJson(bookPath(dataDir, bookId), null);
 }
 
+/**
+ * 把平台上新建的作品补进本地作品库，并直接建立连接。
+ *
+ * 只补「平台上还没有章节」的书：这类就是刚在后台建好的空壳，本地立刻能用，
+ * 投递时也不用再手动选作品号。已经有章节的老书不在这里处理 —— 那样会用一本
+ * 空书把「待同步」的入口顶掉，作者反而找不到拉正文的地方。
+ *
+ * 另一种情况也一并接上：本地先写了同名作品、之后才去后台建书，
+ * 这时把两者绑在一起，而不是在库里多出一本重名书。
+ */
+function adoptPlatformBooks(dataDir, books) {
+  const list = Array.isArray(books) ? books : [];
+  const idx = readIndex(dataDir);
+  const known = new Set(idx.books.map((b) => String(b.bookId)));
+  const unbound = idx.books.filter((b) => !b.platformBookId);
+  const created = [];
+  const linked = [];
+
+  for (const raw of list) {
+    if (!raw) continue;
+    const id = String(raw.bookId || '').trim();
+    if (!id || known.has(id)) continue;
+
+    const name = String(raw.name || '').trim();
+    const hasChapters = Number(raw.chapters) > 0;
+
+    const twin = hasChapters ? null : unbound.find((b) => String(b.name).trim() === name);
+    if (twin) {
+      const full = getBook(dataDir, twin.bookId);
+      if (full) {
+        saveBook(dataDir, Object.assign({}, full, { platformBookId: id }));
+        unbound.splice(unbound.indexOf(twin), 1);
+        known.add(id);
+        linked.push({ bookId: String(twin.bookId), platformBookId: id, name });
+        continue;
+      }
+    }
+
+    if (hasChapters) continue;
+
+    saveBook(dataDir, {
+      bookId: id,
+      name: name || '未命名作品',
+      platformBookId: id,
+      source: 'author',
+      cover: String(raw.cover || ''),
+      chapters: [{ id: 'chapter_1', title: '第一章', volume: '正文', content: '' }],
+    });
+    known.add(id);
+    created.push({ bookId: id, name: name || '未命名作品' });
+  }
+
+  return { created, linked };
+}
+
 function deleteBook(dataDir, bookId) {
   const id = safeId(bookId);
   const idx = readIndex(dataDir);
@@ -328,6 +383,7 @@ function clearAll(dataDir) {
 
 module.exports = {
   archive, listBooks, saveBook, createBook, getBook, deleteBook,
+  adoptPlatformBooks,
   updateCovers,
   getBookToc, getChapter, getChapterRange, clearAll,
   libraryDir, MAX_BOOKS,

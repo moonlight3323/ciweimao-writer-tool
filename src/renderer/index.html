@@ -8,9 +8,16 @@
   <title>刺猬猫作家助手</title>
   <!-- 先定主题再上色，避免深色模式下闪一下白底 -->
   <script src="theme-init.js"></script>
-  <link rel="stylesheet" href="style.css?v=20261106-2" />
+  <link rel="stylesheet" href="style.css?v=20261106-5" />
 </head>
 <body>
+  <!-- 更新提示条：仅在有新版本时出现，固定 32px，关闭后本次运行不再出现 -->
+  <div class="update-bar" id="updateBar" hidden>
+    <span class="update-bar-pill">NEW</span>
+    <span class="update-bar-text" id="updateBarText"></span>
+    <button class="update-bar-open" id="updateBarOpen" type="button">查看本次更新</button>
+    <button class="update-bar-close" id="updateBarClose" type="button" aria-label="关闭">×</button>
+  </div>
   <div class="app">
     <aside class="sidebar">
       <div class="brand">
@@ -44,7 +51,7 @@
           <span class="conn-dot"></span>
           <span class="conn-text">后台未打开</span>
         </div>
-        <div class="version">v0.13.1</div>
+        <div class="version">v0.13.2</div>
       </div>
     </aside>
 
@@ -221,8 +228,9 @@
               <button class="writer-tool" id="btnWriterFormat" type="button">一键排版</button>
               <button class="writer-tool" id="btnWriterFind" type="button">查找替换</button>
               <button class="writer-tool is-active" id="btnWriterStats" type="button">码字统计</button>
-              <button class="writer-tool" id="btnWriterSchedule" type="button" title="设置立即发布或定时发布时间">立即发布</button>
-              <button class="btn primary btn-sm" id="btnWriterPublish" type="button">投到后台</button>
+              <!-- 定时/立即发布设置暂时收起：等下个版本重做发布流程再放出来 -->
+              <button class="writer-tool" id="btnWriterSchedule" type="button" title="设置立即发布或定时发布时间" hidden>立即发布</button>
+              <button class="btn primary btn-sm" id="btnWriterPublish" type="button">跳转后台并发布</button>
             </div>
 
             <div class="writer-findbar" id="writerFindbar" hidden>
@@ -407,7 +415,7 @@
             <div class="exec-log" id="execLog"><div class="hint-line">还没有执行过任何动作</div></div>
           </div>
 
-          <div class="credit credit-right">审查功能　二组作者：MINI 喵~</div>
+          <div class="credit credit-right">审查功能　二组-MINI 喵~</div>
 
         </section>
 
@@ -701,20 +709,47 @@
           <div class="panel">
             <div class="panel-head"><h3>关于</h3><span class="tag">二组</span></div>
             <dl class="kv">
-              <dt>作者</dt><dd>二组作者：坚持更新的阿烬</dd>
+              <dt>作者</dt><dd>二组-坚持更新的阿烬</dd>
+              <dt>技术支持</dt><dd>三组-汐</dd>
+              <dt>审查功能</dt><dd>二组-MINI 喵~</dd>
               <dt>联系 QQ</dt>
               <dd>
                 <span class="mono" id="kvAuthorQQ">1834671434</span>
                 <button class="link-btn" id="btnCopyQQ" type="button" style="margin-left:8px">复制</button>
                 <div class="hint-line" style="margin-top:3px">有修改建议、用着不顺手的地方，直接加这个号说</div>
               </dd>
-              <dt>审查功能</dt><dd>二组作者：MINI 喵~</dd>
               <dt>免费声明</dt>
               <dd>
                 <button class="link-btn" id="btnShowFreeNotice" type="button">重新查看声明</button>
                 <div class="hint-line" style="margin-top:3px">本工具完全免费、开源、不盈利，永不收费</div>
               </dd>
             </dl>
+          </div>
+
+          <div class="panel" id="panelWordlib">
+            <div class="panel-head">
+              <h3>敏感词库</h3>
+              <span class="tag" id="wordlibTag">0 条</span>
+            </div>
+            <p class="hint-line">这里只保存词本身，不含你的正文与账号信息</p>
+
+            <div class="wordlib-stats" id="wordlibStats">共 0 条 · 已提交 0 条</div>
+            <div class="wordlib-list" id="wordlibList"></div>
+            <div class="wordlib-more" id="wordlibMore" hidden>
+              <button class="link-btn" id="btnWordlibMore" type="button"></button>
+            </div>
+
+            <div class="wordlib-actions">
+              <button class="btn ghost" id="btnWordlibCopy" type="button">复制全部</button>
+              <button class="btn ghost" id="btnWordlibClear" type="button">清空</button>
+              <button class="btn ghost" id="btnWordlibDir" type="button">打开数据目录</button>
+            </div>
+
+            <label class="check-line wordlib-sub">
+              <input type="checkbox" id="chkSubscribeWordlib" />
+              接收作者后续更新的词库
+            </label>
+            <p class="hint-line">开启后，软件会定期从项目的发布地址获取作者整理的词库，用于本地预检。关闭也能正常使用，只是不会有新增的词。</p>
           </div>
 
           <div class="panel" id="aiPanel">
@@ -778,11 +813,12 @@
               <span class="scope-label">主题</span>
               <div class="segmented" id="themeSeg">
                 <button type="button" data-theme-mode="light">浅色</button>
+                <button type="button" data-theme-mode="pink">粉白</button>
                 <button type="button" data-theme-mode="dark">深色</button>
                 <button type="button" data-theme-mode="auto">跟随系统</button>
               </div>
             </div>
-            <p class="hint-line">深色适合夜间使用；选「跟随系统」会随 Windows 的浅色 / 深色设置自动切换。</p>
+            <p class="hint-line">「粉白」是樱粉配色，按钮与卡片圆角更大、观感更柔和；深色适合夜间使用；选「跟随系统」会随 Windows 的浅色 / 深色设置自动切换。</p>
           </div>
 
           <div class="panel">
@@ -835,7 +871,7 @@
       </ul>
       <p class="notice-warn">若有人以本工具的名义向你收费，那一定不是作者本人，请勿支付。</p>
       <button class="btn primary notice-ok" id="btnFreeNoticeOk" type="button">我已知悉，不再提示</button>
-      <div class="notice-foot">二组作者：坚持更新的阿烬 · 联系 QQ 1834671434</div>
+      <div class="notice-foot">二组-坚持更新的阿烬 · 三组-汐 · 二组-MINI 喵~ · 联系 QQ 1834671434</div>
     </div>
   </div>
 
@@ -849,6 +885,22 @@
         <button class="btn ghost" id="textPromptCancel" type="button">取消</button>
         <button class="btn primary" id="textPromptOk" type="button">确定</button>
       </div>
+    </div>
+  </div>
+
+  <!-- 更新确认对话框：点横幅才展开，不在启动时自动弹 -->
+  <div class="notice-overlay" id="updateDialog" hidden>
+    <div class="notice-card update-card" role="dialog" aria-modal="true" aria-labelledby="updateTitle">
+      <h2 class="notice-title" id="updateTitle">发现新版本</h2>
+      <p class="update-meta" id="updateMeta"></p>
+      <p class="update-full" id="updateFull" hidden></p>
+      <div class="update-changes" id="updateChanges"></div>
+      <p class="update-empty" id="updateEmpty" hidden>
+        作者未提供本次更新说明
+        <button class="link-btn" id="btnUpdateReleases" type="button">查看发布页</button>
+      </p>
+      <p class="update-status" id="updateStatus" hidden></p>
+      <div class="update-actions" id="updateActions"></div>
     </div>
   </div>
 
@@ -867,6 +919,8 @@
   <script src="publish.js"></script>
   <script src="prefs.js"></script>
   <script src="theme.js"></script>
-  <script src="app.js?v=20261105-11"></script>
+  <script src="app.js?v=20261106-12"></script>
+  <script src="update-ui.js"></script>
+  <script src="wordlib-ui.js"></script>
 </body>
 </html>

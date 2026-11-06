@@ -81,6 +81,8 @@ contextBridge.exposeInMainWorld('api', {
     list: () => ipcRenderer.invoke('writer:list'),
     open: (bookId) => ipcRenderer.invoke('writer:open', bookId),
     create: (name) => ipcRenderer.invoke('writer:create', name),
+    /** 把后台新建、本地还没有的作品补进作品库并绑定 */
+    adopt: (books) => ipcRenderer.invoke('writer:adopt', books),
     save: (book) => ipcRenderer.invoke('writer:save', book),
     covers: (list) => ipcRenderer.invoke('writer:covers', list),
     remove: (bookId) => ipcRenderer.invoke('writer:delete', bookId),
@@ -143,5 +145,31 @@ contextBridge.exposeInMainWorld('api', {
   },
   rank: {
     fetch: () => ipcRenderer.invoke('rank:fetch'),
+  },
+  /** 敏感词库：只存词本身，接口按 word 增删查，不提供任何批量导出到网络的通道 */
+  badword: {
+    list: () => ipcRenderer.invoke('badword:list'),
+    add: (words) => ipcRenderer.invoke('badword:add', words),
+    stats: () => ipcRenderer.invoke('badword:stats'),
+    remove: (word) => ipcRenderer.invoke('badword:remove', word),
+    clear: () => ipcRenderer.invoke('badword:clear'),
+    dir: () => ipcRenderer.invoke('badword:dir'),
+  },
+  /**
+   * 自动更新。
+   * 清单地址、哈希、版本号都在主进程侧重新拉取，这里只负责触发与接收进度。
+   */
+  update: {
+    notice: () => ipcRenderer.invoke('update:notice'),
+    check: () => ipcRenderer.invoke('update:check'),
+    download: () => ipcRenderer.invoke('update:download'),
+    install: () => ipcRenderer.invoke('update:install'),
+    skip: (version) => ipcRenderer.invoke('update:skip', version),
+    openReleases: (url) => ipcRenderer.invoke('update:open-releases', url),
+    onEvent: (cb) => {
+      const handler = (_e, data) => cb(data);
+      ipcRenderer.on('update:event', handler);
+      return () => ipcRenderer.removeListener('update:event', handler);
+    },
   },
 });

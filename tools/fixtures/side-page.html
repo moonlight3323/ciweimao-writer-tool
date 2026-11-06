@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <title>敏感词侧栏 · 提示条测试页</title>
+  <link rel="stylesheet" href="../../src/renderer/side.css" />
+</head>
+<body>
+<!--
+  真实侧栏页面 + 桩：DOM 与 src/renderer/side.html 一致，side.js 也是同一份，
+  只把 window.sideApi（preload 注入的那个）换成桩，用来观察提示条与回执命令。
+-->
+  <div class="wrap">
+    <header class="ps-head" id="sideHead">
+      <div class="ps-head-text">
+        <div class="ps-title" id="bwTitle">已填入后台</div>
+        <div class="ps-sub" id="psSub">在左边页面上确认后再发布</div>
+      </div>
+      <button class="icon-btn no-drag" id="btnSideClose" type="button" title="收起侧栏">×</button>
+    </header>
+
+    <div class="ps-notice" id="sideNotice" hidden data-kind="info">
+      <span class="ps-notice-text" id="sideNoticeText"></span>
+      <button class="ps-notice-x no-drag" id="btnNoticeClose" type="button" title="知道了">×</button>
+    </div>
+
+    <div class="ps-body">
+      <div class="ps-state" id="psReady" hidden>
+        <div class="ps-ready-card">
+          <div class="ps-ready-row"><span>作品</span><b id="psBookName">—</b></div>
+          <div class="ps-ready-row"><span>章节</span><b id="psChapterTitle">—</b></div>
+          <div class="ps-ready-row"><span>分卷</span><b id="psVol">—</b></div>
+          <div class="ps-ready-row"><span>正文</span><b id="psWords">0 字</b></div>
+          <div class="ps-ready-row" id="psScheduleRow" hidden><span>定时</span><b id="psSchedule">—</b></div>
+        </div>
+        <p class="ps-lead ps-done-note" id="psReadyNote" hidden></p>
+      </div>
+
+      <div class="ps-state" id="psBadword" hidden>
+        <p class="ps-lead" id="bwLead"></p>
+        <div class="bw-list" id="bwList"></div>
+        <label class="bw-collect" id="bwCollectRow">
+          <input type="checkbox" id="bwCollectOn" />
+          <span>把这些词加入我的敏感词库（只存词本身，不含正文）</span>
+        </label>
+        <div class="bw-collect-hint" id="bwCollectHint" hidden>
+          <span class="bw-hint-text" id="bwCollectHintText"></span>
+          <button class="bw-hint-go" id="bwCollectGo" type="button">去查看</button>
+          <button class="bw-hint-close" id="bwCollectClose" type="button" aria-label="关闭">×</button>
+        </div>
+      </div>
+    </div>
+
+    <footer class="ps-foot">
+      <div id="psActionsReady" hidden>
+        <button class="btn primary block" id="btnPsPublish" type="button">发布这一章</button>
+      </div>
+
+      <div id="psActionsBad" hidden>
+        <div class="segmented" id="bwMode" title="点一下套用到所有词">
+          <button type="button" data-mode="dot">插「.」</button>
+          <button type="button" data-mode="synonym">近义</button>
+          <button type="button" data-mode="del">删除</button>
+        </div>
+        <div class="ps-actions">
+          <button class="btn ghost" id="btnBwForce" type="button">直接提交</button>
+          <button class="btn primary" id="btnBwApply" type="button">一键处理</button>
+        </div>
+        <div class="ps-note">改的是<b>页面正文本身</b>，本地稿一起同步。</div>
+      </div>
+    </footer>
+  </div>
+
+<pre id="result" hidden></pre>
+
+<script>
+(function () {
+  window.__commands = [];
+  window.__onState = null;
+  window.sideApi = {
+    onState: (cb) => { window.__onState = cb; },
+    command: (cmd) => { window.__commands.push(cmd); },
+    hide: () => { window.__commands.push({ type: 'hide' }); },
+    reflow: () => {},
+  };
+})();
+</script>
+
+<script src="../../src/renderer/side.js"></script>
+
+<script>
+(async function () {
+  const checks = [];
+  const check = (name, ok, got) => checks.push({ name, ok: !!ok, got: got === undefined ? '' : String(got) });
+  const $ = (s) => document.querySelector(s);
+
+  const push = (payload) => {
+    if (window.__onState) window.__onState(Object.assign({ theme: 'light', version: '0.13.1' }, payload));
+  };
+
+  const items = [{ word: '血腥', hit: true, count: 2, ctx: { before: '他', hit: '血腥', after: '地笑' } }];
+
+  // 第一次：带提示数据
+  push({ mode: 'bad', bad: { items, title: '站点报出来的词', lead: '' }, wordCollectOn: true, bwHint: { count: 3 } });
+  await new Promise((r) => setTimeout(r, 120));
+
+  check('复选框默认勾选', $('#bwCollectOn').checked === true, $('#bwCollectOn').checked);
+  const bar = $('#bwCollectHint');
+  check('提示条出现', bar.hidden === false, bar.hidden);
+  check('提示条文案正确',
+    /已收集 3 个词/.test($('#bwCollectHintText').textContent) && /设置 → 敏感词库/.test($('#bwCollectHintText').textContent),
+    $('#bwCollectHintText').textContent);
+  check('回执 wordhint-shown', window.__commands.some((c) => c.type === 'wordhint-shown'),
+    JSON.stringify(window.__commands));
+
+  // 第二次：主窗口不再推 bwHint（已展示过）
+  push({ mode: 'bad', bad: { items, title: '站点报出来的词', lead: '' }, wordCollectOn: true, bwHint: null });
+  await new Promise((r) => setTimeout(r, 60));
+  check('无新提示时不重复出现', $('#bwCollectHint').hidden === false, '保持已显示状态，不再重复推送');
+
+  // 关掉提示条
+  $('#bwCollectClose').click();
+  check('可关闭提示条', $('#bwCollectHint').hidden === true, $('#bwCollectHint').hidden);
+
+  // 取消勾选 → 回传命令
+  const box = $('#bwCollectOn');
+  box.checked = false;
+  box.dispatchEvent(new Event('change'));
+  const toggle = window.__commands.filter((c) => c.type === 'wordcollect-toggle').pop();
+  check('取消勾选回传给主窗口', toggle && toggle.on === false, JSON.stringify(toggle));
+
+  $('#result').textContent = JSON.stringify({ scene: 'hint', checks });
+})();
+</script>
+</body>
+</html>

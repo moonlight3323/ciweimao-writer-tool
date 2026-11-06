@@ -3,13 +3,14 @@
 /**
  * 主题切换。
  *
- * 三档：light / dark / auto（跟随系统）。
+ * 四档：light / pink / dark / auto（跟随系统）。
+ * pink 是浅色系的配色变体（粉白 + 大圆角），切明暗时按「浅色」对待。
  * 首帧由 theme-init.js 负责（同步、无闪烁），这里只管运行时切换与持久化。
  */
 (function (root) {
   const KEY = 'ciweimao.theme';
-  const MODES = ['light', 'dark', 'auto'];
-  const LABEL = { light: '浅色', dark: '深色', auto: '跟随系统' };
+  const MODES = ['light', 'pink', 'dark', 'auto'];
+  const LABEL = { light: '浅色', pink: '粉白', dark: '深色', auto: '跟随系统' };
 
   const mq = window.matchMedia('(prefers-color-scheme: dark)');
 
@@ -20,7 +21,9 @@
 
   function effective(m) {
     if (m === 'auto') return mq.matches ? 'dark' : 'light';
-    return m === 'dark' ? 'dark' : 'light';
+    if (m === 'dark') return 'dark';
+    if (m === 'pink') return 'pink';
+    return 'light';
   }
 
   function paint(m) {

@@ -21,6 +21,8 @@
     /** 当前列表的内容指纹：内容没变时不要重建 DOM，否则会把作者选好的方案重置 */
     badKey: '',
     busy: false,
+    /** 本次打开期间用户是否手动关掉了收集提示条 */
+    hintClosed: false,
   };
 
   function esc(s) {
@@ -210,6 +212,32 @@
     }
 
     if (payload.notice) showNotice(payload.notice);
+    syncCollect(payload);
+  }
+
+  // -------------------------------------------------------- 收集开关与提示
+
+  /**
+   * 收集开关与一次性提示。
+   *
+   * 开关的真实值存在主窗口的 ui-prefs 里，这边只负责画出来并回传点击；
+   * 提示条由主窗口决定要不要给（它知道是不是第一次收集）。
+   */
+  function syncCollect(payload) {
+    const box = $('#bwCollectOn');
+    if (box) box.checked = !(payload && payload.wordCollectOn === false);
+
+    const hint = payload && payload.bwHint;
+    if (!hint || !hint.count) return;
+    if (state.hintClosed) return;
+    const bar = $('#bwCollectHint');
+    if (!bar || !bar.hidden) return; // 已经显示过就不再重复推
+
+    $('#bwCollectHintText').textContent =
+      `已收集 ${hint.count} 个词，可在「设置 → 敏感词库」查看`;
+    bar.hidden = false;
+    // 回执：主窗口收到就把待展示的提示清掉，避免下次开侧栏又冒出来
+    api.command({ type: 'wordhint-shown' });
   }
 
   // ---------------------------------------------------------------- 动作
@@ -238,6 +266,20 @@
 
   $('#btnSideClose').addEventListener('click', () => api.hide());
   $('#btnNoticeClose').addEventListener('click', hideNotice);
+
+  $('#bwCollectOn').addEventListener('change', (e) => {
+    api.command({ type: 'wordcollect-toggle', on: !!e.target.checked });
+  });
+
+  $('#bwCollectClose').addEventListener('click', () => {
+    state.hintClosed = true;
+    $('#bwCollectHint').hidden = true;
+  });
+
+  $('#bwCollectGo').addEventListener('click', () => {
+    api.command({ type: 'open-wordlib' });
+    api.hide();
+  });
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') api.hide();

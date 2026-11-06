@@ -64,6 +64,21 @@ jobs:
           Compress-Archive -LiteralPath "dist/刺猬猫作家助手-v$version" -DestinationPath $archive -CompressionLevel Optimal
           $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $([IO.Path]::GetFileName($archive))" | Set-Content -LiteralPath "$archive.sha256" -Encoding utf8NoBOM
+      - name: Create app-only ZIP for in-place update
+        run: |
+          # 自动更新只替换 resources\app，单独产一个只含应用代码的包（约 1 MB）。
+          # 必须用 .NET 的 CreateFromDirectory 并把 includeBaseDirectory 传 $false：
+          # Compress-Archive 没有这个参数，打包结果会多一层 app\ 目录，
+          # 解压后覆盖到 resources\app 会变成 app\app\...
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $appSrc = Join-Path $PWD "dist/刺猬猫作家助手-v$version/resources/app"
+          if (-not (Test-Path -LiteralPath $appSrc)) { throw "app directory not found: $appSrc" }
+          $appArchive = "dist/ciweimao-writer-tool-v$version-app.zip"
+          [IO.Compression.ZipFile]::CreateFromDirectory($appSrc, $appArchive, [IO.Compression.CompressionLevel]::Optimal, $false)
+          $appHash = (Get-FileHash -LiteralPath $appArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$appHash  $([IO.Path]::GetFileName($appArchive))" | Set-Content -LiteralPath "$appArchive.sha256" -Encoding utf8NoBOM
+          Write-Output "app-only: $([IO.Path]::GetFileName($appArchive)) $([math]::Round((Get-Item $appArchive).Length / 1MB, 2)) MB"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: windows-portable

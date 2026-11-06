@@ -21,7 +21,10 @@ const aiApiModule = require('./api');
 const library = require('./library');
 const plugins = require('./plugins');
 const aiexportModule = require('./aiexport');
+const updater = require('./updater');
+const badwordlib = require('./badwordlib');
 const adapter = require('../adapters/ciweimao');
+const { spawn } = require('child_process');
 
 const PARTITION = 'persist:ciweimao';
 const AUTHOR_HOME = 'https://author.ciweimao.com/homepage';
@@ -37,6 +40,10 @@ let win = null;
 let browserView = null;
 /** 当前平台页面是否已挂载到窗口上 */
 let attached = false;
+/** 退出兜底定时器：正常退出时会被 will-quit 清掉 */
+let quitFallback = null;
+/** 正在退出：防止 before-quit 里销毁窗口时重入 */
+let quitting = false;
 
 function isLoginUrl(url) {
   if (!url) return false;
@@ -148,6 +155,10 @@ function createWindow() {
     pubSideApi.destroy();
     miaoyuApi.destroy();
     win = null;
+    // 主窗口就是应用本体，关掉就该退出。
+    // 这里不能只靠 window-all-closed：侧栏和喵语窗口平时是 hide() 而不是销毁，
+    // 关主窗口这一刻它们仍然存在，window-all-closed 不会触发，进程就一直留在后台。
+    if (process.platform !== 'darwin') app.quit();
   });
 }
 
@@ -544,6 +555,8 @@ function importedTextToBook(file, text) {
 ipcMain.handle('writer:list', () => ({ books: library.listBooks(dataDir()) }));
 ipcMain.handle('writer:open', (_e, bookId) => ({ book: library.getBook(dataDir(), bookId) }));
 ipcMain.handle('writer:create', (_e, name) => library.createBook(dataDir(), name));
+// 后台新建的书补进本地作品库并绑定作品号，省掉投递时手动选一次
+ipcMain.handle('writer:adopt', (_e, books) => library.adoptPlatformBooks(dataDir(), books));
 ipcMain.handle('writer:save', (_e, book) => library.saveBook(dataDir(), book));
 ipcMain.handle('writer:covers', (_e, list) => library.updateCovers(dataDir(), list));
 ipcMain.handle('writer:delete', (_e, bookId) => ({ deleted: library.deleteBook(dataDir(), bookId) }));
@@ -958,6 +971,369 @@ ipcMain.handle('rank:fetch', async () => {
   return await res.text();
 });
 
+// ------------------------------------------------------------ 敏感词库
+
+/**
+ * 发布校验时站点报出来的词的本地记录。
+ *
+ * 只做存取，不做判断：要不要收、收哪些由渲染层决定（见 publish.js）。
+ * 所有写盘异常都在 badwordlib 里被吞掉，这里的 IPC 不会因为磁盘问题抛给界面。
+ */
+ipcMain.handle('badword:list', () => badwordlib.list(dataDir()));
+ipcMain.handle('badword:add', (_e, words) => badwordlib.addMany(dataDir(), words));
+ipcMain.handle('badword:stats', () => badwordlib.stats(dataDir()));
+ipcMain.handle('badword:remove', (_e, w) => badwordlib.remove(dataDir(), w));
+ipcMain.handle('badword:clear', () => badwordlib.clear(dataDir()));
+ipcMain.handle('badword:dir', () => badwordlib.dir(dataDir()));
+
+// ---------------------------------------------------------------- updater
+
+
+/**
+ * 自动更新。
+ *
+ * 分工：判定逻辑全在 updater.js（纯 Node，可测）；这里只管三件事 ——
+ * 读写 ui-prefs 里的 skippedVersions、调度下载/解压、在合适的时机退出自己。
+ *
+ * 安全边界：下载地址、哈希、版本号一律以重新拉取的清单为准，
+ * 不采信渲染进程传上来的任何字段，避免界面被注入后能指定任意 URL。
+ */
+
+/** 本次启动需要告知用户的一次性消息（回滚提示等），渲染进程起来后来领 */
+let updateNotice = null;
+/** 最近一次 check 的清单，下载时复用，避免连点两次打两遍网络 */
+let cachedManifest = null;
+/** 正在下载时挡住重复请求 */
+let downloading = false;
+
+/**
+ * 清单地址。环境变量优先，方便本地对着一个手工改过的清单演练整个流程，
+ * 不必真的发一个版本出来。
+ */
+const MANIFEST_URLS = [process.env.CW_UPDATE_MANIFEST_URL, updater.DEFAULT_MANIFEST_URL].filter(Boolean);
+
+function prefsPath() { return path.join(dataDir(), 'ui-prefs.json'); }
+
+function readPrefsFile() {
+  try {
+    const v = JSON.parse(fs.readFileSync(prefsPath(), 'utf8'));
+    return v && typeof v === 'object' ? v : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function writePrefsFile(prefs) {
+  try {
+    fs.writeFileSync(prefsPath(), JSON.stringify(prefs, null, 2), 'utf8');
+  } catch (_) { /* 偏好写不进去不影响主流程 */ }
+}
+
+function skippedList() {
+  const p = readPrefsFile();
+  return Array.isArray(p.skippedVersions) ? p.skippedVersions : [];
+}
+
+/**
+ * 启动自检：处理上一次升级留下的痕迹。
+ *
+ * 三种情况必须分清楚，否则用户会遇到「更新完还是旧版」或「每次启动都提示」：
+ * 1. state.to === 当前版本 → 新版本起来了，写 ok 标记给 cmd、删备份、清状态
+ * 2. state.from === 当前版本 → 新版本没起来，cmd 已经回滚，提示一次
+ * 3. 版本对不上 → 清掉，避免状态永远卡住
+ */
+function recoverUpdateState() {
+  const dir = dataDir();
+  const version = app.getVersion();
+
+  const failed = updater.readFailed(dir);
+  if (failed && failed.to) {
+    updateNotice = {
+      kind: 'rolled-back',
+      to: String(failed.to || ''),
+      at: String(failed.at || ''),
+      reason: String(failed.reason || '启动失败'),
+    };
+    updater.clearFailed(dir);
+  }
+
+  const st = updater.readState(dir);
+  if (!st || st.stage !== 'installing') return;
+
+  if (st.to === version) {
+    // 新版本已经跑起来了：先落 ok 标记（cmd 靠它判断成功），再清状态与备份
+    try { fs.writeFileSync(updater.okFlagPath(dir), version, 'utf8'); } catch (_) { /* ignore */ }
+    updater.clearState(dir);
+    if (st.bakPath) {
+      try { fs.rmSync(st.bakPath, { recursive: true, force: true }); } catch (_) { /* 删不掉就留着 */ }
+    }
+    return;
+  }
+
+  if (st.from === version) {
+    if (!updateNotice) {
+      updateNotice = {
+        kind: 'rolled-back',
+        to: st.to,
+        at: st.at,
+        reason: '启动失败',
+      };
+    }
+    updater.clearState(dir);
+    return;
+  }
+
+  updater.clearState(dir);
+}
+
+/** 拉清单并算出要不要提示；不落任何文件，纯只读 */
+async function checkForUpdate() {
+  const dir = dataDir();
+  const current = app.getVersion();
+  const manifest = await updater.fetchManifest(MANIFEST_URLS);
+  cachedManifest = manifest;
+
+  let cmp;
+  try {
+    cmp = updater.compareVersions(manifest.version, current);
+  } catch (e) {
+    throw new Error(`清单里的版本号读不懂：${manifest.version}`);
+  }
+  if (cmp <= 0) {
+    return { available: false, current, version: manifest.version };
+  }
+
+  const skipped = skippedList();
+  const changes = updater.pickChanges(current, manifest.version, manifest.changes);
+
+  // 目标版本高于已跳过的记录时顺手清理，别让数组越攒越长
+  const pruned = updater.pruneSkipped(manifest.version, skipped);
+  if (pruned.length !== skipped.length) {
+    const prefs = readPrefsFile();
+    prefs.skippedVersions = pruned;
+    writePrefsFile(prefs);
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('update:event', { type: 'skipped-pruned', skippedVersions: pruned });
+    }
+  }
+
+  const st = updater.readState(dir);
+  return {
+    available: true,
+    skipped: updater.isSkipped(manifest.version, skipped),
+    current,
+    version: manifest.version,
+    type: manifest.type,
+    size: manifest.size,
+    sizeText: updater.humanSize(manifest.size),
+    bundle: changes.bundle,
+    fallback: changes.fallback,
+    across: changes.across,
+    releasesPage: manifest.releasesPage,
+    readyToRestart: !!(st && st.stage === 'ready' && st.to === manifest.version),
+  };
+}
+
+/** 下载并校验；失败一律回到干净状态，不留半截文件 */
+async function downloadUpdate() {
+  if (downloading) throw new Error('正在下载，请稍候再试');
+  downloading = true;
+
+  const dir = dataDir();
+  const current = app.getVersion();
+  try {
+    const manifest = cachedManifest || await updater.fetchManifest(MANIFEST_URLS);
+    cachedManifest = manifest;
+
+    const workDir = path.join(updater.tempRoot(), manifest.version);
+    const pkgFile = path.join(workDir, 'package.zip');
+
+    updater.writeState(dir, {
+      to: manifest.version,
+      from: current,
+      at: new Date().toISOString(),
+      stage: 'downloading',
+      bakPath: '',
+      attempts: 0,
+    });
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('update:event', { type: 'progress', phase: 'downloading' });
+    }
+
+    const got = await updater.downloadWithFallback(
+      manifest.urls,
+      pkgFile,
+      manifest.sha256,
+      (bytes) => {
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('update:event', { type: 'progress', phase: 'downloading', bytes });
+        }
+      },
+    );
+
+    updater.writeState(dir, {
+      to: manifest.version,
+      from: current,
+      at: new Date().toISOString(),
+      stage: 'ready',
+      bakPath: '',
+      attempts: 0,
+    });
+
+    return {
+      ok: true,
+      stage: 'ready',
+      version: manifest.version,
+      bytes: got.bytes,
+      sizeText: updater.humanSize(got.bytes),
+      type: manifest.type,
+    };
+  } catch (e) {
+    updater.clearState(dir);
+    const detail = String(e.message || e);
+    const kind = /校验不通过/.test(detail) ? 'verify' : (/HTTP|超时|ENOTFOUND|ECONN|fetch/i.test(detail) ? 'network' : 'unknown');
+    return {
+      ok: false,
+      kind,
+      detail,
+      current: app.getVersion(),
+      message: kind === 'verify'
+        ? `下载不完整（校验不通过），当前版本 v${app.getVersion()} 可继续使用`
+        : `没能下到更新包，当前版本 v${app.getVersion()} 可继续使用`,
+    };
+  } finally {
+    downloading = false;
+  }
+}
+
+/**
+ * 执行替换：解压 → 写脚本 → 交棒给 cmd → 退出自己。
+ *
+ * 备份改名刻意放在脚本里做，而不是现在做：Windows 上正在运行的程序
+ * 还持有 resources\app 的句柄，此刻改名大概率失败；等进程真正退出再 mv 才稳。
+ */
+async function installUpdate() {
+  const dir = dataDir();
+  const current = app.getVersion();
+  const st = updater.readState(dir);
+  if (!st || st.stage !== 'ready') {
+    return { ok: false, message: `更新包还没准备好，当前版本 v${current} 可继续使用` };
+  }
+
+  const manifest = cachedManifest;
+  const pkgFile = path.join(updater.tempRoot(), st.to, 'package.zip');
+  if (!fs.existsSync(pkgFile)) {
+    updater.clearState(dir);
+    return { ok: false, message: `更新包已不在临时目录，当前版本 v${current} 可继续使用` };
+  }
+
+  // 完整包（含运行时）不自动替换：里面的目录结构和安装目录不同，
+  // 硬套替换规则只会把程序目录搅乱，交给用户解压反而安全。
+  if (manifest && manifest.type === 'full') {
+    return {
+      ok: true,
+      manual: true,
+      version: st.to,
+      packagePath: pkgFile,
+      sizeText: updater.humanSize(fs.statSync(pkgFile).size),
+      message: `完整包已下载到临时目录，解压后覆盖安装目录即可；当前版本 v${current} 可继续使用`,
+    };
+  }
+
+  // app.getAppPath() 在打包后就是 <install>\resources\app，不要再 dirname 一层，
+  // 否则会把整个 resources 目录当成应用代码目录备份走。
+  const appPath = app.getAppPath();
+  if (!/[\\/]resources[\\/]app$/i.test(appPath)) {
+    return {
+      ok: false,
+      message: `当前不是打包后的运行形态，自动替换不可用；当前版本 v${current} 可继续使用`,
+    };
+  }
+  const appDir = appPath;
+  const bakDir = path.join(path.dirname(appDir), `app.bak-${current}`);
+  const newDir = path.join(updater.tempRoot(), st.to, 'new');
+
+  try {
+    await updater.extractZip(pkgFile, newDir);
+  } catch (e) {
+    return { ok: false, message: `解压更新包失败，当前版本 v${current} 可继续使用（${e.message}）` };
+  }
+
+  updater.writeState(dir, {
+    to: st.to,
+    from: current,
+    at: new Date().toISOString(),
+    stage: 'installing',
+    bakPath: bakDir,
+    attempts: 0,
+  });
+
+  const cmdText = updater.buildUpdateCommand({
+    pid: process.pid,
+    appDir,
+    newDir,
+    bakDir,
+    exePath: process.execPath,
+    args: process.argv.slice(1).map((a) => (/[\s"]/.test(a) ? `"${a.replace(/"/g, '""')}"` : a)).join(' '),
+    dataDir: dir,
+    to: st.to,
+    waitSeconds: 15,
+  });
+
+  const cmdPath = path.join(updater.tempRoot(), 'run-update.cmd');
+  fs.mkdirSync(path.dirname(cmdPath), { recursive: true });
+  fs.writeFileSync(cmdPath, cmdText, 'utf8');
+
+  // detached + unref：父进程退出后脚本要继续活着
+  const child = spawn('cmd.exe', ['/c', cmdPath], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+    cwd: path.dirname(cmdPath),
+  });
+  child.unref();
+
+  setTimeout(() => {
+    app.quit();
+  }, 300);
+
+  return { ok: true, restarting: true, version: st.to, type: manifest ? manifest.type : 'app' };
+}
+
+ipcMain.handle('update:notice', () => {
+  const n = updateNotice;
+  updateNotice = null;
+  return n;
+});
+
+ipcMain.handle('update:check', () => checkForUpdate());
+
+ipcMain.handle('update:download', () => downloadUpdate());
+
+ipcMain.handle('update:install', () => installUpdate());
+
+ipcMain.handle('update:skip', (_e, version) => {
+  const v = String(version || '').trim();
+  if (!updater.parseVersion(v)) return { ok: false };
+  const prefs = readPrefsFile();
+  const list = Array.isArray(prefs.skippedVersions) ? prefs.skippedVersions : [];
+  if (!list.includes(v)) list.push(v);
+  // 只保留不低于当前目标的记录，避免历史越攒越多
+  prefs.skippedVersions = updater.pruneSkipped(v, list).concat(
+    updater.isSkipped(v, list) ? [v] : [],
+  );
+  writePrefsFile(prefs);
+  return { ok: true, skippedVersions: prefs.skippedVersions };
+});
+
+ipcMain.handle('update:open-releases', async (_e, url) => {
+  const target = /^https:\/\/github\.com\//i.test(String(url || ''))
+    ? String(url)
+    : updater.RELEASES_PAGE;
+  await shell.openExternal(target);
+  return { ok: true };
+});
+
 // ---------------------------------------------------------------- lifecycle
 
 // 单实例锁：多开会争抢同一份 userData 缓存与登录态分区，导致缓存损坏
@@ -980,6 +1356,8 @@ if (!gotLock) {
   app.whenReady().then(async () => {
     // Windows 任务栏图标与分组归属，需与快捷方式一致，否则会回落到 electron.exe 的图标
     app.setAppUserModelId('com.ciweimao.author.tool');
+    // 升级自检要尽早做：run-update.cmd 正在等新版本写 ok 标记，超过 15 秒它就会回滚
+    try { recoverUpdateState(); } catch (_) { /* 自检失败不阻断启动 */ }
     await ensureInitialStorageChoice();
     plugins.installBundled(dataDir(), path.join(app.getAppPath(), 'bundled-plugins'));
     createWindow();
@@ -1001,8 +1379,34 @@ if (!gotLock) {
   });
 
   app.on('before-quit', () => {
+    // 销毁窗口会再次触发 closed → app.quit()，这里挡住重入，避免在退出流程里绕圈
+    if (quitting) return;
+    quitting = true;
+
     // 端口不留在后台：进程要退了就把监听销毁
     try { aiApi.stop(); } catch (_) { /* ignore */ }
+
+    // 兜底收尾：把还挂着的窗口全部销毁。侧栏/喵语平时是 hide() 的，
+    // 不主动销毁的话它们会拖着渲染进程一起留在后台。
+    BrowserWindow.getAllWindows().forEach((w) => {
+      try { if (!w.isDestroyed()) w.destroy(); } catch (_) { /* ignore */ }
+    });
+
+    // 再兜一层：某些异步句柄（HTTP 连接、文件句柄）会让退出卡住，
+    // 2 秒还没走干净就强制结束，别让用户看到「关了但进程还在」。
+    if (!quitFallback) {
+      quitFallback = setTimeout(() => {
+        quitFallback = null;
+        app.exit(0);
+      }, 2000);
+    }
+  });
+
+  app.on('will-quit', () => {
+    if (quitFallback) {
+      clearTimeout(quitFallback);
+      quitFallback = null;
+    }
   });
 
   app.on('window-all-closed', () => {

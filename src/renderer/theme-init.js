@@ -11,20 +11,24 @@
  */
 (function () {
   var KEY = 'ciweimao.theme';
+  var MODES = ['light', 'pink', 'dark', 'auto'];
   var mode = 'light';
   try {
     var saved = localStorage.getItem(KEY);
-    if (saved === 'light' || saved === 'dark' || saved === 'auto') mode = saved;
+    if (MODES.indexOf(saved) >= 0) mode = saved;
   } catch (_) { /* 隐私模式等异常，按 light 处理 */ }
 
-  var dark = mode === 'dark';
+  // pink 是浅色系的配色变体，直接落到 data-theme 上，不参与明暗推导
+  var theme = mode;
   if (mode === 'auto') {
+    var dark = false;
     try {
       dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     } catch (_) { dark = false; }
+    theme = dark ? 'dark' : 'light';
   }
 
   var el = document.documentElement;
-  el.dataset.theme = dark ? 'dark' : 'light';
+  el.dataset.theme = theme;
   el.dataset.themeMode = mode;
 })();

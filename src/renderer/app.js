@@ -11,6 +11,8 @@ const $$ = (sel) => Array.from(document.querySelectorAll(sel));
  * 表现就是按钮点了完全没反应。这里改用页面内的遮罩层替代，
  * 返回 Promise<string|null>，取消时为 null，与 prompt 的语义保持一致。
  */
+window.askText = askText;
+
 function askText({ title = '请输入', hint = '', value = '', okText = '确定', cancelText = '取消' } = {}) {
   return new Promise((resolve) => {
     const overlay = $('#textPrompt');
@@ -133,7 +135,10 @@ function setActiveView(name) {
     refreshExecLog();
   }
 
-  if (name === 'writer' && !writerEditorBook) loadWriterBooks();
+  if (name === 'writer' && !writerEditorBook) {
+    // 先刷列表再对账：后台刚建的书会在这里补进来
+    loadWriterBooks().then(() => adoptNewPlatformBooks());
+  }
   if (name === 'writing-stats') loadWritingStats().then(renderWritingStats);
   // “插件中心”和插件贡献的导航项共用同一个 view。切回插件中心时也必须
   // 先退出当前插件页面，否则 pluginHost 仍会盖在插件列表上。
@@ -521,6 +526,10 @@ window.api.browser.onEvent((data) => {
     renderConn(data);
     updateNavButtons(data);
     updateVaultBar(data);
+    // 后台的书目页加载完就去对一次账：新建的书在这里被补进作品库
+    if (/author\.ciweimao\.com\/book_manage/i.test(String(data.url || ''))) {
+      scheduleAdoptNewBooks();
+    }
   } else if (data.type === 'browser-error') {
     $('#pageCrumb').textContent = `加载失败 ${data.code} ${data.desc || ''}`;
   } else if (data.type === 'miaoyu-state') {
@@ -2999,6 +3008,63 @@ function writerNotice(text, error) {
   el.hidden = !text;
   el.textContent = text || '';
   el.classList.toggle('is-error', !!error);
+}
+
+// -------------------------------------------------- 作品库自动补建（后台新书）
+
+/**
+ * 后台建了新书之后，本地作品库跟着建一本并绑定作品号，投递时不必再手动选。
+ *
+ * 触发点只有两个：切到创作中心、后台停在 book_manage 页面。都做去抖，
+ * 并且**静默失败** —— 未登录、网络不通、后台改版都属于正常情况，
+ * 不该在界面上弹错误去打断用户。
+ *
+ * 判定逻辑在主进程（library.adoptPlatformBooks），这里只负责把后台清单递过去：
+ * 只补「平台上还没有章节」的书，已有章节的老书仍留给「同步」按钮去拉正文。
+ */
+let writerAdoptTimer = null;
+let writerAdoptBusy = false;
+
+async function adoptNewPlatformBooks() {
+  if (writerAdoptBusy) return null;
+  if (!lastState || !lastState.url || lastState.isLoginPage) return null;
+
+  writerAdoptBusy = true;
+  try {
+    const remote = await window.Exporter.listBooks();
+    if (!remote || !remote.length) return null;
+
+    const res = await window.api.writer.adopt(remote.map((b) => ({
+      bookId: b.bookId,
+      name: b.name,
+      chapters: b.chapters || 0,
+      cover: b.cover || '',
+    })));
+
+    const created = (res && res.created) || [];
+    const linked = (res && res.linked) || [];
+    if (!created.length && !linked.length) return res;
+
+    await loadWriterBooks();
+    if (created.length === 1) {
+      writerNotice(`已在作品库创建《${created[0].name}》，并连到后台这本书`);
+    } else if (created.length > 1) {
+      writerNotice(`已在作品库创建 ${created.length} 本新书并全部连到后台`);
+    } else if (linked.length) {
+      writerNotice(`《${linked[0].name}》已连到后台作品 ${linked[0].platformBookId}`);
+    }
+    return res;
+  } catch (_) {
+    return null;
+  } finally {
+    writerAdoptBusy = false;
+  }
+}
+
+/** 后台页面一有跳转就会连发几次状态，去抖避免重复拉清单 */
+function scheduleAdoptNewBooks() {
+  clearTimeout(writerAdoptTimer);
+  writerAdoptTimer = setTimeout(() => { adoptNewPlatformBooks(); }, 1200);
 }
 
 async function loadWriterBooks() {

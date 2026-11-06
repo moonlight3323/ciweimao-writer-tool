@@ -424,3 +424,75 @@ html, body {
 
 /* 上下文缺失时的提示（不用行内样式：窗口有 CSP，行内样式会被拦） */
 .bw-none { color: var(--text-3); }
+
+/* ---------------------------------------------------------- 收集开关 */
+
+/* 放在词列表下方：它影响的是「以后要不要记」，而不是这一屏词怎么处理，
+   所以视觉上要和上面的处理选项分开 */
+.bw-collect {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 12px 0 0;
+  padding-top: 11px;
+  border-top: 1px dashed var(--border);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.bw-collect input {
+  margin: 2px 0 0;
+  flex: 0 0 auto;
+  accent-color: var(--accent-line);
+  cursor: pointer;
+}
+
+.bw-collect-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 9px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: var(--accent-weak);
+  color: var(--accent-ink);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.bw-hint-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.bw-hint-go {
+  flex: 0 0 auto;
+  appearance: none;
+  border: 1px solid var(--accent-line);
+  background: var(--surface);
+  color: var(--accent-ink);
+  border-radius: 999px;
+  padding: 1px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.bw-hint-go:hover { background: var(--surface-3); }
+
+.bw-hint-close {
+  flex: 0 0 auto;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--accent-ink);
+  opacity: .6;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 3px;
+  cursor: pointer;
+}
+
+.bw-hint-close:hover { opacity: 1; }

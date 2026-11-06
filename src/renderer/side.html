@@ -43,6 +43,16 @@
       <div class="ps-state" id="psBadword" hidden>
         <p class="ps-lead" id="bwLead"></p>
         <div class="bw-list" id="bwList"></div>
+        <!-- 收集开关：与「怎么处理这些词」无关，勾上就会在拿到结果时顺手记一份 -->
+        <label class="bw-collect" id="bwCollectRow">
+          <input type="checkbox" id="bwCollectOn" />
+          <span>把这些词加入我的敏感词库（只存词本身，不含正文）</span>
+        </label>
+        <div class="bw-collect-hint" id="bwCollectHint" hidden>
+          <span class="bw-hint-text" id="bwCollectHintText"></span>
+          <button class="bw-hint-go" id="bwCollectGo" type="button">去查看</button>
+          <button class="bw-hint-close" id="bwCollectClose" type="button" aria-label="关闭">×</button>
+        </div>
       </div>
     </div>
 

@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<title>敏感词库面板 · 渲染测试页</title>
+<link rel="stylesheet" href="../../src/renderer/style.css" />
+</head>
+<body>
+<!--
+  真实页面 + 桩：DOM 结构与 index.html 里 #panelWordlib 完全一致，
+  wordlib-ui.js 也是同一份文件，只有 window.api 与 window.Prefs 换成了桩。
+  场景由 ?scene= 决定，断言结果写进 #result 供命令行读取。
+-->
+<div style="padding:20px;max-width:760px;">
+  <div class="panel" id="panelWordlib">
+    <div class="panel-head">
+      <h3>敏感词库</h3>
+      <span class="tag" id="wordlibTag">0 条</span>
+    </div>
+    <p class="hint-line">这里只保存词本身，不含你的正文与账号信息</p>
+
+    <div class="wordlib-stats" id="wordlibStats">共 0 条 · 已提交 0 条</div>
+    <div class="wordlib-list" id="wordlibList"></div>
+    <div class="wordlib-more" id="wordlibMore" hidden>
+      <button class="link-btn" id="btnWordlibMore" type="button"></button>
+    </div>
+
+    <div class="wordlib-actions">
+      <button class="btn ghost" id="btnWordlibCopy" type="button">复制全部</button>
+      <button class="btn ghost" id="btnWordlibClear" type="button">清空</button>
+      <button class="btn ghost" id="btnWordlibDir" type="button">打开数据目录</button>
+    </div>
+
+    <label class="check-line wordlib-sub">
+      <input type="checkbox" id="chkSubscribeWordlib" />
+      接收作者后续更新的词库
+    </label>
+    <p class="hint-line">开启后，软件会定期从项目的发布地址获取作者整理的词库，用于本地预检。关闭也能正常使用，只是不会有新增的词。</p>
+  </div>
+</div>
+
+<pre id="result" hidden></pre>
+
+<script>
+(function () {
+  const scene = new URLSearchParams(location.search).get('scene') || 'render';
+
+  const now = '2026-11-06T09:00:00.000Z';
+  const mk = (w, hits, submitted) => ({
+    w, hits, first: now, last: now, submitted: !!submitted, submittedAt: '',
+  });
+
+  const SCENES = {
+    render: [mk('血腥', 12), mk('暴力', 5), mk('恐怖', 3)],
+    sort: [mk('少见的词', 1), mk('常见的词', 9), mk('中间词', 5)],
+    single: [mk('暴力', 4), mk('血腥', 2), mk('的', 7), mk('了', 6), mk('啊', 1)],
+    empty: [],
+    toggle: [],
+    many: Array.from({ length: 230 }, (_, i) => mk('词' + i, 230 - i)),
+  };
+
+  const words = SCENES[scene] || SCENES.render;
+
+  // ---- 桩：偏好走 localStorage，便于跨进程验证持久化
+  const prefsKey = 'ui-prefs';
+  const loadPrefs = () => {
+    try { return JSON.parse(localStorage.getItem(prefsKey) || '{}'); } catch (_) { return {}; }
+  };
+  window.Prefs = {
+    get(k, d) { const s = loadPrefs(); return s[k] === undefined ? d : s[k]; },
+    set(k, v) { const s = loadPrefs(); s[k] = v; localStorage.setItem(prefsKey, JSON.stringify(s)); },
+    ready() { return Promise.resolve(); },
+  };
+
+  // ---- 桩：badword 接口，返回结构照抄 src/main/badwordlib.js 的真实返回
+  window.__calls = [];
+  window.api = {
+    badword: {
+      list: () => Promise.resolve(words.map((x) => Object.assign({}, x))),
+      stats: () => Promise.resolve({
+        total: words.length,
+        submittable: words.filter((w) => !w.submitted).length,
+        submitted: words.filter((w) => w.submitted).length,
+      }),
+      add: (ws) => { window.__calls.push(['add', ws]); return Promise.resolve({ added: ws.length, merged: 0 }); },
+      remove: (w) => Promise.resolve({ removed: 1 }),
+      clear: () => { window.__calls.push(['clear']); return Promise.resolve({ ok: true }); },
+      dir: () => Promise.resolve('C:\\data\\badwords-local.json'),
+    },
+    app: { reveal: () => Promise.resolve(), openPath: () => Promise.resolve() },
+  };
+})();
+</script>
+
+<script src="../../src/renderer/wordlib-ui.js"></script>
+
+<script>
+(async function () {
+  const scene = new URLSearchParams(location.search).get('scene') || 'render';
+  const checks = [];
+  const check = (name, ok, got) => checks.push({ name, ok: !!ok, got: got === undefined ? '' : String(got) });
+  const $ = (s) => document.querySelector(s);
+
+  // 等 wordlib-ui 的异步 load() 落地
+  await new Promise((r) => setTimeout(r, 250));
+
+  // 只取直接子级：折叠组里的行也算 .wl-row，不能混进主列表的断言
+  const rows = () => Array.from(document.querySelectorAll('#wordlibList > .wl-row'));
+
+  if (scene === 'render') {
+    check('统计行数字与数据一致', $('#wordlibStats').textContent === '共 3 条 · 已提交 0 条', $('#wordlibStats').textContent);
+    check('标签显示条数', $('#wordlibTag').textContent === '3 条', $('#wordlibTag').textContent);
+    check('渲染 3 行', rows().length === 3, rows().length);
+    check('行内含命中次数', /命中 12 次/.test(rows()[0].textContent), rows()[0].textContent.replace(/\s+/g, ' '));
+    check('状态为未提交', rows()[0].querySelector('.wl-state').textContent === '未提交', rows()[0].querySelector('.wl-state').textContent);
+  }
+
+  if (scene === 'sort') {
+    const order = rows().map((r) => r.querySelector('.wl-word').textContent);
+    check('按 hits 降序', order[0] === '常见的词' && order[1] === '中间词' && order[2] === '少见的词', order.join(' > '));
+  }
+
+  if (scene === 'single') {
+    const words = rows().map((r) => r.querySelector('.wl-word').textContent);
+    check('正常词在列表里', words.includes('暴力') && words.includes('血腥'), words.join(','));
+    check('列表不含单字词', !words.includes('的') && !words.includes('了'), words.join(','));
+    const head = document.querySelector('.wl-group-title');
+    check('折叠组标题含数量', head && /疑似误报（3 条）/.test(head.textContent), head && head.textContent);
+    const note = document.querySelector('.wl-group-note');
+    check('分组注有误报提示', note && note.textContent.includes('单字词几乎都是误报'), note && note.textContent);
+    const body = document.querySelector('#wlGroupBody');
+    check('单字词在折叠组内', body && body.querySelectorAll('.wl-row').length === 3, body && body.querySelectorAll('.wl-row').length);
+    check('折叠组默认收起', body && body.hidden === true, body && body.hidden);
+  }
+
+  if (scene === 'empty') {
+    const t = $('#wordlibList').textContent;
+    check('空态文案正确', t.includes('还没有收集到敏感词') && t.includes('会自动记录在这里'), t.trim());
+    check('空态下无数据行', rows().length === 0, rows().length);
+    check('清空按钮禁用', $('#btnWordlibClear').disabled === true, $('#btnWordlibClear').disabled);
+  }
+
+  if (scene === 'many') {
+    check('只渲染前 200 条', rows().length === 200, rows().length);
+    check('给出显示全部入口', $('#wordlibMore').hidden === false && /显示全部（230 条）/.test($('#btnWordlibMore').textContent), $('#btnWordlibMore').textContent);
+  }
+
+  if (scene === 'toggle') {
+    const box = $('#chkSubscribeWordlib');
+    const before = box.checked;
+    box.checked = !before;
+    box.dispatchEvent(new Event('change'));
+    const saved = window.Prefs.get('subscribeWordlib', null);
+    check('切换后写入偏好', saved === !before, String(saved));
+    check('默认状态为关', before === false, String(before));
+  }
+
+  if (scene === 'toggle-read') {
+    // 复用同一个浏览器 profile：上一轮写进 localStorage 的值应在这里读到
+    check('重建后状态保持', $('#chkSubscribeWordlib').checked === true, $('#chkSubscribeWordlib').checked);
+  }
+
+  $('#result').textContent = JSON.stringify({ scene, checks });
+})();
+</script>
+</body>
+</html>

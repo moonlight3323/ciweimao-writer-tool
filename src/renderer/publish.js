@@ -36,6 +36,8 @@
     readyInfo: null,
     /** 最近一次推给侧栏的内容，点顶栏按钮重开时直接复用 */
     lastPayload: null,
+    /** 待侧栏展示的一次性收集提示 { count }，展示过就清空 */
+    pendingWordHint: null,
     sideOpen: false,
     /** 因为切页面被收起来的（回来时自动放出来） */
     sideParked: false,
@@ -82,12 +84,61 @@
 
   function sideApi() { return window.api && window.api.pubside; }
 
+  /** 收集开关：偏好里没表过态就按开处理（只存词本身，风险很低） */
+  function collectEnabled() {
+    try {
+      if (window.Prefs) return window.Prefs.get('wordCollectOn', true) !== false;
+    } catch (_) { /* 偏好读不到就按默认开 */ }
+    return true;
+  }
+
+  /**
+   * 把站点报出来的词记一份到本地库。
+   *
+   * 刻意**不**挂在任何按钮的回调里：收集与「怎么处理这些词」是两件事。
+   * 用户点「一键处理」、点「直接提交」、或者索性关掉侧栏，都不该改变是否记录 ——
+   * 所以调用点只有 checkNow() 一处，拿到响应就写。
+   *
+   * 任何失败都静默：写盘问题绝不能打断作者正在做的发布。
+   */
+  async function collectHintWords(res) {
+    try {
+      const raw = res && res.hintWords;
+      if (!raw) return;
+      if (!collectEnabled()) return;
+      const words = window.BadWords ? window.BadWords.parseHint(raw) : [];
+      if (!words || !words.length) return;
+
+      const r = await window.api.badword.add(words);
+      if (!r || !r.added) return; // 全是已有词，不用提示
+
+      const shown = window.Prefs ? window.Prefs.get('wordCollectHintShown', false) : false;
+      if (shown) return;
+
+      state.pendingWordHint = { count: r.added };
+      if (window.Prefs) window.Prefs.set('wordCollectHintShown', true);
+      // 侧栏正开着就立刻推一次，让它把提示条画出来
+      if (state.sideOpen && state.lastPayload) pushSide(state.lastPayload);
+    } catch (e) {
+      console.warn('[badword] 收集失败，已跳过：', e && e.message);
+    }
+  }
+
   /** 推给侧栏窗口；没开就打开它 */
   async function pushSide(payload, opts) {
     const o = opts || {};
     const api = sideApi();
     if (!api) return false;
-    const full = Object.assign({ theme: currentTheme(), version: versionText() }, payload);
+    const full = Object.assign(
+      {
+        theme: currentTheme(),
+        version: versionText(),
+        // 收集开关与一次性提示统一在这里补，避免每个 pushSide 调用点各写一遍
+        wordCollectOn: collectEnabled(),
+        bwHint: state.pendingWordHint || null,
+      },
+      payload,
+    );
     // transient = 只显示这一下，不进 lastPayload（否则关掉再打开还会看到旧错误）
     if (!o.transient) state.lastPayload = full;
     try {
@@ -407,6 +458,9 @@
     const res = await evalPage('pageCheckChapter', { buttonValue: 'dosubmit' });
     state.lastResult = res;
 
+    // 拿到响应就地收集：与后面怎么处理这些词无关（见 collectHintWords 注释）
+    await collectHintWords(res);
+
     // 站点返回的 hint_words 格式没有公开约定，留一份原文在 data/publish-debug.json，
     // 万一某天解析不出来，照这份改规则就行，不用再猜。
     try {
@@ -645,7 +699,30 @@
       applyToEditor(c.plan).finally(() => { state.busy = false; });
       return;
     }
-    if (c.type === 'force') { forceSubmit(); }
+    if (c.type === 'force') { forceSubmit(); return; }
+
+    if (c.type === 'wordcollect-toggle') {
+      if (window.Prefs) window.Prefs.set('wordCollectOn', !!c.on);
+      // 回推一次，让侧栏复选框与真实偏好对齐（比如偏好写入被拒的情况）
+      if (state.lastPayload) pushSide(state.lastPayload);
+      return;
+    }
+
+    if (c.type === 'wordhint-shown') {
+      state.pendingWordHint = null;
+      return;
+    }
+
+    if (c.type === 'open-wordlib') {
+      const nav = document.querySelector('.nav-item[data-view="settings"]');
+      if (nav) nav.click();
+      // 等视图切过去再滚，否则面板还是 hidden、滚动无效
+      setTimeout(() => {
+        const panel = document.querySelector('#panelWordlib');
+        if (panel) panel.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        document.dispatchEvent(new CustomEvent('wordlib:refresh'));
+      }, 80);
+    }
   }
 
   function bind() {
