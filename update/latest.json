@@ -1,20 +1,31 @@
 {
-  "version": "0.13.1",
-  "type": "full",
-  "size": 147243476,
-  "sha256": "ef017bf6a5fc91888cbceff4c5e89fdb8e53134550f030c43729b38bb00c4200",
+  "version": "0.13.2",
+  "type": "app",
+  "size": 1216348,
+  "sha256": "a5085e73e3c9d1272e98683df946a1b820ac1f843cbf12e5d0a4f309138343cb",
   "url": [
-    "https://github.com/moonlight3323/ciweimao-writer-tool/releases/download/v0.13.1/ciweimao-writer-tool-v0.13.1.zip"
+    "https://github.com/moonlight3323/ciweimao-writer-tool/releases/download/v0.13.2/ciweimao-writer-tool-v0.13.2-app.zip"
   ],
   "changes": [
+    {
+      "version": "0.13.2",
+      "date": "2026-11-06",
+      "items": [
+        "· 新增：自动更新，下载并校验通过后重启生效，安装失败会自动回到原版本",
+        "· 新增：敏感词库，发布校验时自动记下站点报出的词，可在设置里查看",
+        "· 新增：粉白主题，圆角更大、观感更柔和",
+        "· 新增：后台新建的书会自动出现在创作中心作品库，并连好作品号",
+        "· 修复：关闭窗口后进程残留在后台",
+        "· 调整：创作中心按钮改为「跳转后台并发布」，定时发布入口暂时收起"
+      ]
+    },
     {
       "version": "0.13.1",
       "date": "2026-11-06",
       "items": [
         "· 修复：新建书籍、新建分卷等按钮点击没反应",
         "· 新增：同步作者后台的书籍封面，按原图比例显示",
-        "· 修复：重复双击会堆积出一串空进程",
-        "· 新增：粉白主题，圆角更大、观感更柔和"
+        "· 修复：重复双击会堆积出一串空进程"
       ]
     },
     {
