@@ -1,12 +1,23 @@
 {
-  "version": "0.13.2",
+  "version": "0.14.0",
   "type": "app",
-  "size": 1216348,
-  "sha256": "a5085e73e3c9d1272e98683df946a1b820ac1f843cbf12e5d0a4f309138343cb",
+  "size": 1237659,
+  "sha256": "75e0d6ed44b7d01aae3ba14bd32b0d5b331788adf8705e64a708b96311456371",
   "url": [
-    "https://github.com/moonlight3323/ciweimao-writer-tool/releases/download/v0.13.2/ciweimao-writer-tool-v0.13.2-app.zip"
+    "https://github.com/moonlight3323/ciweimao-writer-tool/releases/download/v0.14.0/ciweimao-writer-tool-v0.14.0-app.zip"
   ],
   "changes": [
+    {
+      "version": "0.14.0",
+      "date": "2026-11-06",
+      "items": [
+        "· 新增：评论与间贴联合抓取，可按类型筛选并查看间贴对应段落",
+        "· 新增：评论阈值、自定义词、保护读者、跨作品读者历史与关注名单",
+        "· 新增：平台榜单扩展为点击、收藏、推荐、订阅、月票、吐槽、新书、刀片、更新九类",
+        "· 新增：稿费计算器作为内置插件随程序自动安装和更新",
+        "· 调整：项目采用 AGPL-3.0，成品包附带完整授权文件"
+      ]
+    },
     {
       "version": "0.13.2",
       "date": "2026-11-06",
