@@ -221,9 +221,9 @@ function getBook(dataDir, bookId) {
 /**
  * 把平台上新建的作品补进本地作品库，并直接建立连接。
  *
- * 只补「平台上还没有章节」的书：这类就是刚在后台建好的空壳，本地立刻能用，
- * 投递时也不用再手动选作品号。已经有章节的老书不在这里处理 —— 那样会用一本
- * 空书把「待同步」的入口顶掉，作者反而找不到拉正文的地方。
+ * 平台上还没有章节的书会直接建成可写的空壳；已经有章节的陌生作品则建成
+ * 「待同步」入口，交给渲染层读取完整目录和正文，避免作者在应用外先发章节后，
+ * 登录应用却完全看不到这本书。
  *
  * 另一种情况也一并接上：本地先写了同名作品、之后才去后台建书，
  * 这时把两者绑在一起，而不是在库里多出一本重名书。
@@ -231,7 +231,10 @@ function getBook(dataDir, bookId) {
 function adoptPlatformBooks(dataDir, books) {
   const list = Array.isArray(books) ? books : [];
   const idx = readIndex(dataDir);
-  const known = new Set(idx.books.map((b) => String(b.bookId)));
+  // 本地书号和后台作品号可能不同（例如先本地创作、之后再绑定后台），
+  // 两者都要视为已知，避免登录后又生成一张重复的待同步作品卡片。
+  const known = new Set(idx.books.flatMap((b) => [b.bookId, b.platformBookId]
+    .filter(Boolean).map(String)));
   const unbound = idx.books.filter((b) => !b.platformBookId);
   const created = [];
   const linked = [];
@@ -256,15 +259,15 @@ function adoptPlatformBooks(dataDir, books) {
       }
     }
 
-    if (hasChapters) continue;
-
+    // 后台已经有章节的陌生作品也要先放进本地，标为「待同步」；否则作者
+    // 在应用外先发了章节时，登录后会完全看不到这本书。
     saveBook(dataDir, {
       bookId: id,
       name: name || '未命名作品',
       platformBookId: id,
-      source: 'author',
+      source: hasChapters ? 'remote' : 'author',
       cover: String(raw.cover || ''),
-      chapters: [{ id: 'chapter_1', title: '第一章', volume: '正文', content: '' }],
+      chapters: hasChapters ? [] : [{ id: 'chapter_1', title: '第一章', volume: '正文', content: '' }],
     });
     known.add(id);
     created.push({ bookId: id, name: name || '未命名作品' });

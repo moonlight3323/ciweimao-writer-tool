@@ -243,8 +243,8 @@
                 <span class="btn-help-wrap">
                   <button class="btn ghost" id="btnWriterSync" type="button">同步作者库</button>
                   <span class="help-dot tip-below tip-right" tabindex="0" role="note" aria-label="同步作者库是什么">?
-                    <span class="help-tip">重新读一遍后台的作品列表，看有没有新书、书名或封面变了。
-                      这一步只看目录，<b>不会读章节正文</b>。</span>
+                    <span class="help-tip">重新读取后台作品列表，并检查已绑定作品有没有新增章节。
+                      新章节只会追加到本地，不会覆盖你已经写过的正文。</span>
                   </span>
                 </span>
                 <button class="btn ghost" id="btnWriterRefresh" type="button">刷新</button>
@@ -1166,8 +1166,9 @@
   <script src="dark-tone.js"></script>
   <script src="theme.js?v=20261106-1"></script>
   <script src="chapter-order.js"></script>
+  <script src="writer-sync.js?v=20261106-1"></script>
   <script src="writer-indent.js"></script>
-  <script src="app.js?v=20261106-27"></script>
+  <script src="app.js?v=20261106-28"></script>
   <script src="update-ui.js"></script>
   <script src="wordlib-ui.js?v=20261106-1"></script>
 </body>

@@ -56,13 +56,16 @@ test('重复对账不会重复建书', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('平台上已有章节的老书不在本地建空壳，留给「同步」去拉正文', () => {
+test('平台上已有章节的老书先建为待同步作品，避免登录后完全看不到', () => {
   const dir = tmpDir('old');
 
   const res = library.adoptPlatformBooks(dir, [remote('2002', '老书乙', 36)]);
-  assert.equal(res.created.length, 0);
+  assert.equal(res.created.length, 1);
   assert.equal(res.linked.length, 0);
-  assert.equal(library.listBooks(dir).length, 0, '不能用一个空壳把待同步入口顶掉');
+  const books = library.listBooks(dir);
+  assert.equal(books.length, 1);
+  assert.equal(books[0].source, 'remote');
+  assert.equal(books[0].chapters, 0, '待同步作品不应伪造一章空正文');
 
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -105,15 +108,15 @@ test('一次补多本：各自绑定各自的号，顺序不乱', () => {
   const res = library.adoptPlatformBooks(dir, [
     remote('5001', '甲', 0),
     remote('5002', '乙', 0),
-    remote('5003', '丙', 12), // 有章节，应跳过
+    remote('5003', '丙', 12), // 有章节，建为待同步作品
   ]);
 
-  assert.equal(res.created.length, 2);
+  assert.equal(res.created.length, 3);
   const books = library.listBooks(dir);
   const byName = new Map(books.map((b) => [b.name, b.platformBookId]));
   assert.equal(byName.get('甲'), '5001');
   assert.equal(byName.get('乙'), '5002');
-  assert.equal(byName.has('丙'), false);
+  assert.equal(byName.get('丙'), '5003');
 
   fs.rmSync(dir, { recursive: true, force: true });
 });

@@ -571,6 +571,7 @@ function renderConn(state) {
 
 window.api.browser.onEvent((data) => {
   if (data.type === 'browser-state') {
+    const wasLoginPage = !!(lastState && lastState.isLoginPage);
     lastState = data;
     renderConn(data);
     updateVaultBar(data);
@@ -580,6 +581,9 @@ window.api.browser.onEvent((data) => {
     if (/author\.ciweimao\.com\/book_manage/i.test(String(data.url || ''))) {
       scheduleAdoptNewBooks();
     }
+    // 应用启动时通常停在登录页。登录成功后即使没有跳到 book_manage，
+    // 也要检查已绑定作品的章节目录，不能只等用户手动点一次创作中心。
+    if (data.url && !data.isLoginPage && wasLoginPage) scheduleAdoptNewBooks();
   } else if (data.type === 'browser-error') {
     $('#pageCrumb').textContent = `加载失败 ${data.code} ${data.desc || ''}`;
   } else if (data.type === 'miaoyu-state') {
@@ -3359,23 +3363,30 @@ function writerNotice(text, error) {
 /**
  * 后台建了新书之后，本地作品库跟着建一本并绑定作品号，投递时不必再手动选。
  *
- * 触发点只有两个：切到创作中心、后台停在 book_manage 页面。都做去抖，
+ * 触发点包括登录成功、切到创作中心、后台停在 book_manage 页面。都做去抖，
  * 并且**静默失败** —— 未登录、网络不通、后台改版都属于正常情况，
  * 不该在界面上弹错误去打断用户。
  *
- * 判定逻辑在主进程（library.adoptPlatformBooks），这里只负责把后台清单递过去：
- * 只补「平台上还没有章节」的书，已有章节的老书仍留给「同步」按钮去拉正文。
+ * 判定逻辑在主进程（library.adoptPlatformBooks），这里只负责把后台清单递过去，
+ * 并对已绑定作品做新增章节增量同步。
  */
 let writerAdoptTimer = null;
 let writerAdoptBusy = false;
+let writerRemoteSyncBusy = false;
 
-async function adoptNewPlatformBooks() {
+function writerPlatformBookId(book) {
+  return String((book && (book.platformBookId || (book.source === 'author' ? book.bookId : ''))) || '').trim();
+}
+
+async function adoptNewPlatformBooks(remoteOverride) {
   if (writerAdoptBusy) return null;
   if (!lastState || !lastState.url || lastState.isLoginPage) return null;
 
   writerAdoptBusy = true;
   try {
-    const remote = await window.Exporter.listBooks();
+    const remote = Array.isArray(remoteOverride)
+      ? remoteOverride
+      : await window.Exporter.listBooks();
     if (!remote || !remote.length) return null;
 
     const res = await window.api.writer.adopt(remote.map((b) => ({
@@ -3387,17 +3398,23 @@ async function adoptNewPlatformBooks() {
 
     const created = (res && res.created) || [];
     const linked = (res && res.linked) || [];
-    if (!created.length && !linked.length) return res;
-
     await loadWriterBooks();
-    if (created.length === 1) {
+    const sync = await syncWriterBoundBooks(remote);
+    if (sync && sync.added) {
+      writerNotice(`作者库已更新：新增 ${sync.added} 章${sync.failed ? `，${sync.failed} 章读取失败` : ''}`,
+        sync.failed > 0);
+    } else if (created.length === 1) {
       writerNotice(`已在作品库创建《${created[0].name}》，并连到后台这本书`);
     } else if (created.length > 1) {
       writerNotice(`已在作品库创建 ${created.length} 本新书并全部连到后台`);
     } else if (linked.length) {
       writerNotice(`《${linked[0].name}》已连到后台作品 ${linked[0].platformBookId}`);
+    } else if (sync && sync.skipped) {
+      writerNotice(`作者库已检查，有 ${sync.skipped} 本正在编辑的作品将在保存后再检查`);
+    } else if (sync && sync.books) {
+      writerNotice('作者库已检查，没有新增章节');
     }
-    return res;
+    return { ...res, sync };
   } catch (_) {
     return null;
   } finally {
@@ -3408,7 +3425,11 @@ async function adoptNewPlatformBooks() {
 /** 后台页面一有跳转就会连发几次状态，去抖避免重复拉清单 */
 function scheduleAdoptNewBooks() {
   clearTimeout(writerAdoptTimer);
-  writerAdoptTimer = setTimeout(() => { adoptNewPlatformBooks(); }, 1200);
+  writerAdoptTimer = setTimeout(async () => {
+    // 登录完成后可能还没有进入创作中心，先把本地索引读出来，增量同步才有目标。
+    await loadWriterBooks();
+    await adoptNewPlatformBooks();
+  }, 1200);
 }
 
 async function loadWriterBooks() {
@@ -3416,7 +3437,8 @@ async function loadWriterBooks() {
     const res = await window.api.writer.list();
     const local = (res && res.books) || [];
     await reconcileSavedOutputBooks(local);
-    const ids = new Set(local.map((b) => String(b.bookId)));
+    const ids = new Set(local.flatMap((b) => [b.bookId, b.platformBookId]
+      .filter(Boolean).map(String)));
     writerRemoteBooks = writerRemoteBooks.filter((b) => !ids.has(String(b.bookId)));
     writerBooks = local.concat(writerRemoteBooks);
     renderWriterBooks();
@@ -3541,10 +3563,13 @@ async function pullWriterBookChapters(book, onStep) {
   const meta = new Map(listed.chapters.map((c) => [String(c.chapterId), c]));
   const fetched = result.chapters.map((c, i) => {
     const m = meta.get(String(c.chapterId)) || {};
+    const platformChapterId = String(c.chapterId || m.chapterId || '').trim();
     return {
-      id: `chapter_${c.chapterId || i + 1}`,
+      id: `chapter_${platformChapterId || i + 1}`,
+      platformChapterId,
       title: c.title || m.title || `第${i + 1}章`,
       volume: m.volume || '正文',
+      status: m.status || '',
       content: c.content || '',
     };
   });
@@ -3556,10 +3581,119 @@ async function pullWriterBookChapters(book, onStep) {
     name,
     cover: book.cover || '',
     source: 'author',
+    platformBookId: String(book.platformBookId || book.bookId || ''),
     chapters,
   });
   writerRemoteBooks = writerRemoteBooks.filter((b) => String(b.bookId) !== String(book.bookId));
   return { chapters: chapters.length, failed: result.failed.length };
+}
+
+/**
+ * 已经绑定到后台的本地作品只拉取新增章节，不覆盖作者在本地继续修改的正文。
+ * 章节正文读取仍复用 Exporter，后台只读目录与新增章节内容。
+ */
+async function pullWriterBookNewChapters(localEntry, remoteBook, onStep) {
+  const say = typeof onStep === 'function' ? onStep : () => {};
+  const platformBookId = writerPlatformBookId(localEntry);
+  if (!platformBookId) return { added: 0, failed: 0, total: 0 };
+
+  const opened = await window.api.writer.open(localEntry.bookId);
+  if (!opened || !opened.book) throw new Error(`本地作品《${localEntry.name || ''}》不存在`);
+  const localBook = normaliseWriterBook(opened.book);
+  const name = String(remoteBook.name || localBook.name || '未命名作品');
+
+  say(`正在检查《${name}》的章节目录…`);
+  const listed = await window.Exporter.listChapters(platformBookId, {
+    onProgress: (p) => say(`正在检查《${name}》目录：已找到 ${p.count || 0} 章`),
+  });
+  const remoteChapters = listed && listed.chapters || [];
+  if (!remoteChapters.length) return { added: 0, failed: 0, total: 0 };
+
+  const missing = window.WriterSync.missingRemoteChapters(localBook.chapters, remoteChapters);
+  if (!missing.length) return { added: 0, failed: 0, total: remoteChapters.length };
+
+  const result = await window.Exporter.readContents(
+    { bookId: platformBookId, name },
+    missing,
+    {
+      onProgress: (p) => {
+        if (p.phase === 'chapter') say(`正在同步《${name}》新增章节：${p.done}/${p.total} · ${p.title || ''}`);
+      },
+    }
+  );
+  if (!result.chapters.length) {
+    return { added: 0, failed: result.failed.length || missing.length, total: remoteChapters.length };
+  }
+
+  const meta = new Map(missing.map((c) => [String(c.chapterId), c]));
+  const fetched = result.chapters.map((c, i) => {
+    const m = meta.get(String(c.chapterId)) || {};
+    const platformChapterId = String(c.chapterId || m.chapterId || '').trim();
+    return {
+      id: `chapter_${platformChapterId || Date.now() + i}`,
+      platformChapterId,
+      title: c.title || m.title || `新增章节 ${i + 1}`,
+      volume: m.volume || '正文',
+      status: m.status || '',
+      content: c.content || '',
+    };
+  });
+  const chapters = window.ChapterOrder.displayChapters({
+    chapters: localBook.chapters.concat(fetched),
+  });
+  await window.api.writer.save({
+    ...localBook,
+    bookId: localBook.bookId,
+    name: localBook.name || name,
+    cover: remoteBook.cover || localBook.cover || '',
+    source: localBook.source === 'local' ? 'author' : (localBook.source || 'author'),
+    platformBookId,
+    chapters,
+  });
+  return {
+    added: fetched.length,
+    failed: result.failed.length,
+    total: remoteChapters.length,
+  };
+}
+
+/** 检查所有已经绑定的作品，逐本拉取新增章节。 */
+async function syncWriterBoundBooks(remoteBooks) {
+  if (writerRemoteSyncBusy) return { added: 0, failed: 0, books: 0, skipped: 0 };
+  const remote = Array.isArray(remoteBooks) ? remoteBooks : [];
+  const remoteById = new Map(remote.map((b) => [String(b && b.bookId || ''), b]));
+  const targets = writerBooks.filter((book) => {
+    const id = writerPlatformBookId(book);
+    return book.source !== 'remote' && id && remoteById.has(id);
+  });
+  if (!targets.length) return { added: 0, failed: 0, books: 0, skipped: 0 };
+
+  writerRemoteSyncBusy = true;
+  let added = 0;
+  let failed = 0;
+  let skipped = 0;
+  try {
+    for (const local of targets) {
+      // 编辑中的正文以用户当前内容为准，等保存后下一次同步再检查，避免后台刷新
+      // 把尚未落盘的本地修改悄悄覆盖掉。
+      if (writerEditorBook && String(writerEditorBook.bookId) === String(local.bookId) && writerDirty) {
+        skipped += 1;
+        continue;
+      }
+      const remoteBook = remoteById.get(writerPlatformBookId(local));
+      try {
+        const res = await pullWriterBookNewChapters(local, remoteBook, writerNotice);
+        added += res.added;
+        failed += res.failed;
+      } catch (_) {
+        failed += 1;
+      }
+    }
+  } finally {
+    writerRemoteSyncBusy = false;
+  }
+  if (added) await loadWriterBooks();
+  return { added, failed, books: targets.length, skipped };
 }
 
 async function syncWriterRemoteBook(remote) {
@@ -4129,10 +4263,18 @@ $('#btnWriterSync').addEventListener('click', async () => {
       chapters: b.chapters || 0,
       words: b.words || 0,
     }));
-    await loadWriterBooks();
-    writerNotice(writerRemoteBooks.length
-      ? `作者库中还有 ${writerRemoteBooks.length} 本作品未同步，点击作品即可读取正文并开始创作。`
-      : `作者库中的 ${remote.length} 本作品均已在本地。`);
+    const adopted = await adoptNewPlatformBooks(remote);
+    const sync = adopted && adopted.sync;
+    if (sync && (sync.added || sync.failed || sync.skipped)) {
+      writerNotice(`作者库已刷新：新增 ${sync.added} 章`
+        + (sync.failed ? `，${sync.failed} 章读取失败` : '')
+        + (sync.skipped ? `，${sync.skipped} 本正在编辑的作品稍后再检查` : ''), sync.failed > 0);
+    } else {
+      await loadWriterBooks();
+      writerNotice(writerRemoteBooks.length
+        ? `作者库中还有 ${writerRemoteBooks.length} 本作品未同步，点击作品即可读取正文并开始创作。`
+        : `作者库中的 ${remote.length} 本作品均已在本地。`);
+    }
   } catch (err) {
     writerNotice(`读取作者库失败：${err.message || err}。请先点右上角“打开作者后台”完成登录。`, true);
   } finally {
