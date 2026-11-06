@@ -103,10 +103,25 @@ jobs:
       RUN_ID: ${{ github.run_id }}
       TAG_NAME: ${{ github.ref_name }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Download verified package and publish
         run: |
+          set -e
           gh run download "$RUN_ID" --name windows-portable --dir release
-          cd release
-          sha256sum --check *.sha256
-          gh release create "$TAG_NAME" *.zip *.sha256 --verify-tag --generate-notes --draft --title "刺猬猫作家助手 $TAG_NAME"
+          (cd release && sha256sum --check *.sha256)
+
+          # 手写说明优先：docs/更新说明-<tag>.md 就是 Release 正文，格式与人读的一致。
+          # 没写就回退到 GitHub 自动生成的提交列表，至少不会是空白。
+          NOTES="docs/更新说明-${TAG_NAME}.md"
+          if [ -f "$NOTES" ]; then
+            echo "使用手写更新说明：$NOTES"
+            gh release create "$TAG_NAME" release/*.zip release/*.sha256 \
+              --verify-tag --notes-file "$NOTES" --draft \
+              --title "刺猬猫作家助手 $TAG_NAME"
+          else
+            echo "未找到 $NOTES，回退到自动生成的变更列表"
+            gh release create "$TAG_NAME" release/*.zip release/*.sha256 \
+              --verify-tag --generate-notes --draft \
+              --title "刺猬猫作家助手 $TAG_NAME"
+          fi
           gh release edit "$TAG_NAME" --draft=false
