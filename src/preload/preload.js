@@ -116,6 +116,8 @@ contextBridge.exposeInMainWorld('api', {
   },
   app: {
     userDataPath: () => ipcRenderer.invoke('app:user-data'),
+    /** 专注模式：true 时窗口最大化，false 时还原进之前的最大化状态 */
+    focusMode: (on) => ipcRenderer.invoke('window:focus-mode', !!on),
     openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
     openPath: (p) => ipcRenderer.invoke('app:open-path', p),
     /** 在文件管理器中定位到某个文件 */

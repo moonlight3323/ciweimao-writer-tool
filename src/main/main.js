@@ -22,6 +22,7 @@ const library = require('./library');
 const plugins = require('./plugins');
 const aiexportModule = require('./aiexport');
 const updater = require('./updater');
+const closeBehavior = require('./closebehavior');
 const badwordlib = require('./badwordlib');
 const adapter = require('../adapters/ciweimao');
 const { spawn } = require('child_process');
@@ -40,6 +41,9 @@ let win = null;
 let browserView = null;
 /** 当前平台页面是否已挂载到窗口上 */
 let attached = false;
+/** 进专注模式之前窗口是不是最大化的，退出时按它还原 */
+let focusRestoreMaximized = false;
+
 /** 退出兜底定时器：正常退出时会被 will-quit 清掉 */
 let quitFallback = null;
 /** 正在退出：防止 before-quit 里销毁窗口时重入 */
@@ -231,12 +235,18 @@ function createWindow() {
    * 第一次关闭时问一次并记住选择，之后可以在设置里改。
    */
   win.on('close', (e) => {
-    if (quitting) return;              // 正在走退出流程，放行
-    const behavior = readCloseBehavior();
-    if (behavior === 'quit') return;   // 用户选择的是直接退出
+    // 判定逻辑在 closebehavior.js，纯函数、有测试盯着（这块错过两次）
+    const action = closeBehavior.decide(quitting, readCloseBehavior());
+
+    if (action === 'pass') {
+      // 放行这次关闭。必须把 quitting 置位：否则窗口关了、进程还在，
+      // 托盘图标一直挂着，点一下又能把界面拉起来（用户实测就是这样）
+      quitting = true;
+      return;
+    }
 
     e.preventDefault();
-    if (behavior === 'minimize') {
+    if (action === 'hide') {
       win.hide();
       return;
     }
@@ -267,9 +277,10 @@ function createWindow() {
     pubSideApi.destroy();
     miaoyuApi.destroy();
     win = null;
-    // 只有真退出才结束进程；关闭按钮已经被 close 拦下改成 hide 了，
-    // 走不到这里。留着这个判断是为了托盘「退出」这条路径能收尾干净。
-    if (quitting && process.platform !== 'darwin') app.quit();
+    // 主窗口被真正销毁（不是 hide）就意味着没有界面了，进程留着也没用：
+    // 托盘点一下只会重建一个空壳窗口，还会拖着一堆后台进程。
+    // 「最小化到托盘」那条路是 hide()，不会走到这里。
+    if (process.platform !== 'darwin') app.quit();
   });
 }
 
@@ -725,6 +736,19 @@ ipcMain.handle('plugins:storage-get', (_e, id, key) => plugins.storageGet(dataDi
 ipcMain.handle('plugins:storage-set', (_e, id, key, value) => plugins.storageSet(dataDir(), id, key, value));
 
 ipcMain.handle('app:user-data', () => dataDir());
+
+// 专注模式：进的时候最大化，退出时还原「进之前是不是已经最大化」，
+// 否则用户本来就用着最大化窗口，退出专注反而被缩小了
+ipcMain.handle('window:focus-mode', (_e, on) => {
+  if (!win || win.isDestroyed()) return { maximized: false };
+  if (on) {
+    focusRestoreMaximized = win.isMaximized();
+    if (!focusRestoreMaximized) win.maximize();
+  } else if (!focusRestoreMaximized) {
+    win.unmaximize();
+  }
+  return { maximized: win.isMaximized() };
+});
 
 /**
  * 诊断包写盘。

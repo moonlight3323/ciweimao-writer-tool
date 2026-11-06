@@ -69,6 +69,39 @@
 
 /* 粉白：与主界面 style.css 的 pink 变量保持一致，
    否则切过来时侧栏会退回默认的暖黄，和主窗口明显不是一套 */
+/* 深蓝黑：和 style.css 的同名块保持一致，侧栏是独立文档，变量得自己带一份 */
+:root[data-theme="dark"][data-dark-tone="blue"] {
+  color-scheme: dark;
+
+  --bg: #0e1319;
+  --surface: #161d26;
+  --surface-2: #121922;
+  --surface-3: #1d2734;
+  --border: #24303e;
+  --border-strong: #34445a;
+  --text: #e0e8f4;
+  --text-2: #a6b5c9;
+  --text-3: #6d7c92;
+
+  --accent: #5aa9ff;
+  --accent-hover: #7cbcff;
+  --accent-weak: #17293d;
+  --accent-ink: #a9d5ff;
+  --accent-line: #3f88d8;
+
+  --ok-bg: #16291f;
+  --ok-ink: #7fc79a;
+
+  --danger-bg: #341d20;
+  --danger-ink: #f0a0a4;
+
+  --track: #1b242f;
+  --seg-active: #2b3a4d;
+  --seg-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --scroll: #2a3644;
+  --scroll-hover: #3a4a5d;
+}
+
 :root[data-theme="pink"] {
   color-scheme: light;
 

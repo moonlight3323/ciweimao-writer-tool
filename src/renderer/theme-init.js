@@ -28,7 +28,15 @@
     theme = dark ? 'dark' : 'light';
   }
 
+  // 深色的两套配色同理：必须在首帧就定下来，否则深蓝黑会先闪一下深黄黑
+  var tone = 'amber';
+  try {
+    var savedTone = localStorage.getItem('ciweimao.darkTone');
+    if (savedTone === 'blue' || savedTone === 'amber') tone = savedTone;
+  } catch (_) { /* ignore */ }
+
   var el = document.documentElement;
   el.dataset.theme = theme;
   el.dataset.themeMode = mode;
+  el.dataset.darkTone = tone;
 })();

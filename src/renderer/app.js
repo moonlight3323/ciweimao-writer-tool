@@ -74,6 +74,10 @@ const VIEW_TITLES = {
 let browserOpen = false;
 /** 进入平台页面之前停留的本地视图，退出后台时回到这里 */
 let lastView = 'overview';
+/** 进后台之前所在的界面：「回到…」按钮的落点 */
+let browserReturnView = 'writer';
+/** 专注模式：隐藏左侧导航/顶栏/右栏，只留目录与正文 */
+let writerFocusOn = false;
 let lastState = { isLoginPage: true, url: '' };
 let rafPending = false;
 
@@ -116,6 +120,8 @@ function setActiveNav(name, pluginId) {
 }
 
 function setActiveView(name) {
+  // 离开创作中心就退出专注模式，否则侧栏一直藏着、别的页面全被挤没
+  if (name !== 'writer' && writerFocusOn) setWriterFocus(false);
   lastView = name;
   setActiveNav(name, '');
   $$('.view').forEach((s) => s.classList.toggle('is-active', s.dataset.view === name));
@@ -139,7 +145,13 @@ function setActiveView(name) {
     // 先刷列表再对账：后台刚建的书会在这里补进来
     loadWriterBooks().then(() => adoptNewPlatformBooks());
   }
+  if (name === 'writer') {
+    // 词库可能在设置里加过词，进码字台时重读一遍再扫，避免用的是旧表
+    loadWriterBadwordWords().then(() => { if (writerEditorBook) scanWriterBadwords(); });
+  }
   if (name === 'writing-stats') loadWritingStats().then(renderWritingStats);
+  // 回到抓取页时按已有数据重算引导状态（读过列表 / 抓过没抓过）
+  if (name === 'sync') renderCrawlGuide();
   // “插件中心”和插件贡献的导航项共用同一个 view。切回插件中心时也必须
   // 先退出当前插件页面，否则 pluginHost 仍会盖在插件列表上。
   if (activePlugin) closePlugin();
@@ -175,9 +187,15 @@ function setBrowserChrome(open) {
   browserOpen = open;
   HOST.classList.toggle('is-browser', open);
   $('#btnOpenBrowser').hidden = open;
-  ['#btnCloseBrowser', '#btnReload', '#btnBack', '#btnForward', '#btnHome', '#btnClearInboxTop'].forEach((sel) => {
+  ['#btnCloseBrowser', '#btnReload', '#btnBackToView', '#btnHome', '#btnClearInboxTop'].forEach((sel) => {
     $(sel).hidden = !open;
   });
+  if (open) {
+    browserReturnView = lastView;
+    const back = $('#btnBackToView');
+    back.textContent = `← ${VIEW_TITLES[browserReturnView] || '上一界面'}`;
+    back.title = `回到「${VIEW_TITLES[browserReturnView] || '上一界面'}」继续修改，后台这一页不会丢`;
+  }
   if (!open) $('#vaultBar').hidden = true;
 
   // 浏览后台时标题跟着变成「作者后台」，退出后回到原来的页面，
@@ -199,7 +217,14 @@ async function openBrowser(url) {
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   setBrowserChrome(true);
   try {
-    await window.api.browser.open(currentRect(), url);
+    // 已经有一页在看着（比如刚从后台回创作中心改稿），就只把它挂回来，
+    // 不要重新 loadURL —— 否则「打开作者后台」会把停着的上传章节页冲回首页
+    const state = url ? null : await window.api.browser.state().catch(() => null);
+    if (state && state.ready && state.url) {
+      await window.api.browser.show(currentRect());
+    } else {
+      await window.api.browser.open(currentRect(), url);
+    }
   } catch (err) {
     console.error('打开平台页面失败', err);
     HOST.classList.remove('is-browser');
@@ -227,8 +252,12 @@ $('#btnOpenBrowser').addEventListener('click', () => openBrowser());
 $('#btnGoAuthor').addEventListener('click', () => openBrowser());
 $('#btnCloseBrowser').addEventListener('click', () => closeBrowser());
 $('#btnReload').addEventListener('click', () => window.api.browser.reload());
-$('#btnBack').addEventListener('click', () => window.api.browser.back());
-$('#btnForward').addEventListener('click', () => window.api.browser.forward());
+// 只把后台视图从窗口上摘下来，平台页面本身不销毁：再点「跳转后台并发布」还是刚才那张表单
+$('#btnBackToView').addEventListener('click', async () => {
+  const target = browserReturnView || 'writer';
+  if (browserOpen) await closeBrowser();
+  setActiveView(target);
+});
 $('#btnHome').addEventListener('click', () => window.api.browser.home());
 
 // ------------------------------------------------------------ AI 接入
@@ -524,8 +553,9 @@ window.api.browser.onEvent((data) => {
   if (data.type === 'browser-state') {
     lastState = data;
     renderConn(data);
-    updateNavButtons(data);
     updateVaultBar(data);
+    // 第一次连上后台（离开登录页）→ 引导去抓评论
+    maybeShowAfterLoginGuide(data);
     // 后台的书目页加载完就去对一次账：新建的书在这里被补进作品库
     if (/author\.ciweimao\.com\/book_manage/i.test(String(data.url || ''))) {
       scheduleAdoptNewBooks();
@@ -554,11 +584,6 @@ window.api.browser.onEvent((data) => {
     syncMiaoyuBounds();
   }
 });
-
-function updateNavButtons(state) {
-  $('#btnBack').disabled = !(state && state.canGoBack);
-  $('#btnForward').disabled = !(state && state.canGoForward);
-}
 
 // ------------------------------------------------------------ 密码本
 //
@@ -635,9 +660,49 @@ function updateVaultBar(state) {
   const bar = $('#vaultBar');
   if (bar.hidden === !show) return;
   bar.hidden = !show;
-  if (show) refreshVault(false);
+  if (show) {
+    refreshVault(false);
+    showVaultIntro(false);
+  } else if (!$('#vaultIntro').hidden) {
+    // 登录成功后工具条收起，说明也跟着收；下次再回到登录页由「怎么用」自己看
+    $('#vaultIntro').hidden = true;
+  }
   syncBounds();
 }
+
+// ------------------------------------------------------------ 密码本首次说明
+
+/**
+ * 密码本这条工具条只在登录页出现，第一次见面没人知道该先点哪个，所以自动展开一次用法。
+ * 说明放在工具条的第二行（不是全屏弹窗）：平台页面是原生视图、压在 HTML 之上，
+ * 全屏遮罩会被它挡住。展开后调 syncBounds() 把平台视图往下推，两者不会互相盖。
+ */
+function showVaultIntro(force) {
+  const row = $('#vaultIntro');
+  if (!row || !row.hidden) return;
+  const seen = !!(window.Prefs && window.Prefs.get('vaultIntroShown', false));
+  if (!force && seen) return;
+  row.hidden = false;
+  // 一展开就算「已经见过」：只自动出现这一次，之后想看就点「怎么用」
+  if (!seen && window.Prefs) window.Prefs.set('vaultIntroShown', true);
+  syncBounds();
+}
+
+function closeVaultIntro() {
+  const row = $('#vaultIntro');
+  if (!row || row.hidden) return;
+  row.hidden = true;
+  syncBounds();
+}
+
+$('#btnVaultIntroOk').addEventListener('click', closeVaultIntro);
+$('#btnVaultHelp').addEventListener('click', () => {
+  if ($('#vaultIntro').hidden) showVaultIntro(true);
+  else closeVaultIntro();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('#vaultIntro').hidden) closeVaultIntro();
+});
 
 $('#btnVaultFill').addEventListener('click', async () => {
   const id = $('#vaultPick').value;
@@ -924,6 +989,7 @@ $('#btnListBooks').addEventListener('click', async () => {
     bookList = books;
     if (!pickedBooks.size) books.forEach((b) => pickedBooks.add(b.bookId));
     renderBookPicker();
+    renderCrawlGuide();
   } catch (err) {
     $('#crawlProgress').hidden = true;
     showCrawlNotice('读取作品列表失败：' + escapeHtml(err.message || err), true);
@@ -938,6 +1004,42 @@ function showCrawlNotice(html, isError) {
   n.hidden = false;
   n.classList.toggle('is-error', !!isError);
   n.innerHTML = html;
+  // 完成提示里那个「去数据看板刷新」：跳过去之后把「刷新数据」闪一下，
+  // 否则到了新页面还是得自己找按钮在哪
+  const jump = n.querySelector('[data-jump]');
+  if (jump) {
+    jump.addEventListener('click', () => {
+      setTimeout(() => {
+        const btn = $('#btnRefreshStats');
+        if (!btn) return;
+        btn.classList.add('is-pulse');
+        btn.scrollIntoView({ block: 'nearest' });
+        setTimeout(() => btn.classList.remove('is-pulse'), 2400);
+      }, 80);
+    });
+  }
+}
+
+/**
+ * 抓取的三步引导：读列表 → 抓取 → 到数据看板刷新。
+ * 状态完全由已有数据推出来（有没有作品列表、有没有抓过），所以切回这个界面时
+ * 不用额外记忆，重新算一遍就是对的。
+ */
+function renderCrawlGuide() {
+  const crawled = !!(crawlData && Array.isArray(crawlData.items) && crawlData.items.length);
+  // 抓过就说明列表一定读过：重启后 bookList 是空的，不能因此把第一步又点亮
+  const listed = bookList.length > 0 || crawled;
+  const state = {
+    list: listed ? 'done' : 'active',
+    crawl: crawled ? 'done' : (listed ? 'active' : ''),
+    // 抓完才提示第三步；数据看板那边刷不刷新，这里无从得知，就不擅自打勾
+    refresh: crawled ? 'active' : '',
+  };
+  $$('#crawlGuide li').forEach((li) => {
+    const s = state[li.dataset.step] || '';
+    li.classList.toggle('is-done', s === 'done');
+    li.classList.toggle('is-active', s === 'active');
+  });
 }
 
 $('#btnCrawl').addEventListener('click', async () => {
@@ -986,10 +1088,15 @@ $('#btnCrawl').addEventListener('click', async () => {
     renderAll();
 
     $('#crawlBar').style.width = '100%';
+    renderCrawlGuide();
     const truncated = result.books.some((b) => Object.values(b.kinds || {}).some((x) => x.pages >= maxPages)) && maxPages < 999;
     showCrawlNotice(
       `抓取完成：${result.items.length} 条评论（含间贴/书评），来自 ${result.books.length} 部作品。` +
-      (truncated ? '<br>注意：已按「每本最多抓」限制截断，如需全量请调大页数。' : '')
+      (truncated ? '<br>注意：已按「每本最多抓」限制截断，如需全量请调大页数。' : '') +
+      '<div class="crawl-next">'
+      + '<b>下一步</b>：这批评论已经进「评论审查」；字数、收藏、订阅要去「数据看板」点一次「刷新数据」才会更新。'
+      + '<button class="btn primary btn-sm" type="button" data-jump="books">去数据看板刷新</button>'
+      + '</div>'
     );
   } catch (err) {
     showCrawlNotice('抓取失败：' + escapeHtml(err.message || err), true);
@@ -3003,6 +3110,8 @@ $('#btnExecLogRefresh').addEventListener('click', refreshExecLog);
 // ------------------------------------------------------------ 作者信箱小红点
 
 let inboxBusy = false;
+/** 用户点了「停止」：翻页循环与页面内逐行点击都会看这个标记 */
+let inboxStopFlag = false;
 
 function inboxNotice(html, isError) {
   const n = $('#inboxNotice');
@@ -3011,10 +3120,30 @@ function inboxNotice(html, isError) {
   n.innerHTML = html;
 }
 
+function setInboxStopEnabled(on) {
+  const b = $('#btnStopInbox');
+  if (!b) return;
+  b.disabled = !on;
+  b.textContent = '停止';
+}
+
+function stopInbox() {
+  if (!inboxBusy || inboxStopFlag) return;
+  inboxStopFlag = true;
+  setInboxStopEnabled(false);
+  $('#btnStopInbox').textContent = '正在停止…';
+  $('#inboxText').textContent = '正在停止，等当前这条点完…';
+  if (window.Inbox && typeof window.Inbox.requestStop === 'function') {
+    Promise.resolve(window.Inbox.requestStop()).catch(() => { /* ignore */ });
+  }
+}
+
 async function clearInbox() {
   if (inboxBusy) return;
   inboxBusy = true;
+  inboxStopFlag = false;
   ['#btnClearInbox', '#btnClearInboxTop'].forEach((sel) => { $(sel).disabled = true; });
+  setInboxStopEnabled(true);
   $('#inboxProgress').hidden = false;
   $('#inboxNotice').hidden = true;
   $('#inboxBar').style.width = '8%';
@@ -3024,13 +3153,27 @@ async function clearInbox() {
   try {
     const res = await window.Inbox.clearAll({
       allPages: $('#inboxAllPages').checked,
+      shouldStop: () => inboxStopFlag,
       onProgress: (p) => {
         $('#inboxText').textContent = p.text || '';
-        $('#inboxBar').style.width = p.phase === 'done' ? '100%' : '60%';
+        if (p.phase === 'done') $('#inboxBar').style.width = '100%';
+        else if (p.phase !== 'stopped') $('#inboxBar').style.width = '60%';
       },
     });
 
     const cleared = res.pages.reduce((s, p) => s + Math.max(0, (p.before || 0) - (p.after || 0)), 0);
+
+    // 中途停下：说清楚停了、清到哪、还能不能接着清，别让用户以为失败了
+    if (res.stopped) {
+      inboxNotice(`已停止：处理了 ${res.pages.length} 页，点开 ${res.clicked} 条消息，`
+        + (cleared ? `消掉 ${cleared} 个红点。` : '红点数量没有变化。')
+        + '<br>已经点过的不会恢复，剩下的再点一次「一键清除小红点」就能接着清。');
+      $('#inboxStatus').textContent = cleared ? `已清除 ${cleared} 个（已停止）` : '已停止';
+      $('#inboxBar').style.width = '100%';
+      $('#inboxText').textContent = '已停止';
+      return;
+    }
+
     const guessed = res.pages.some((p) => p.mode === 'all');
     const summary = `共处理 ${res.pages.length} 页，点开 ${res.clicked} 条消息，`
       + (cleared ? `消掉 ${cleared} 个红点。` : '红点数量没有变化。');
@@ -3045,17 +3188,25 @@ async function clearInbox() {
     $('#inboxBar').style.width = '100%';
     $('#inboxText').textContent = '完成';
   } catch (err) {
-    $('#inboxProgress').hidden = true;
-    inboxNotice('清除失败：' + escapeHtml(String(err.message || err))
-      + '<br>已把这一页的原始 HTML 存进诊断目录，若结构有变可按它修正。', true);
+    if (inboxStopFlag) {
+      // 停止时页面可能正处于半截状态，异常不该被当成「清除失败」
+      $('#inboxProgress').hidden = true;
+      inboxNotice('已停止。已经点过的不会恢复，剩下的可以再点一次继续清。');
+    } else {
+      $('#inboxProgress').hidden = true;
+      inboxNotice('清除失败：' + escapeHtml(String(err.message || err))
+        + '<br>已把这一页的原始 HTML 存进诊断目录，若结构有变可按它修正。', true);
+    }
   } finally {
     inboxBusy = false;
+    setInboxStopEnabled(false);
     ['#btnClearInbox', '#btnClearInboxTop'].forEach((sel) => { $(sel).disabled = false; });
   }
 }
 
 $('#btnClearInbox').addEventListener('click', clearInbox);
 $('#btnClearInboxTop').addEventListener('click', clearInbox);
+$('#btnStopInbox').addEventListener('click', stopInbox);
 
 // ------------------------------------------------------------ 创作中心
 
@@ -3309,7 +3460,10 @@ async function openWriterBook(bookId) {
     const res = await window.api.writer.open(bookId);
     if (!res || !res.book) throw new Error('没有找到这本书');
     writerEditorBook = normaliseWriterBook(res.book);
-    writerChapterId = writerEditorBook.chapters[0].id;
+    // 打开就停在最新一章：显示顺序里最后一个，而不是数组里的第一个
+    // （同步下来的书数组是新的在前，取第一个会停在最新章上「看着对、其实全靠巧合」）
+    const ordered = writerDisplayChapters(writerEditorBook);
+    writerChapterId = (ordered.length ? ordered[ordered.length - 1] : writerEditorBook.chapters[0]).id;
     writerCollapsedVolumes = new Set();
     $('#writerLibrary').hidden = true;
     $('#writerEditor').hidden = false;
@@ -3325,42 +3479,63 @@ async function openWriterBook(bookId) {
   }
 }
 
+/**
+ * 从作者后台把一本书的章节正文读下来并存进本地作品库。
+ * 单本同步和「读取全部章节」共用这一份，避免两处各写一遍读取逻辑。
+ *
+ * @param {Object} book { bookId, name, cover }
+ * @param {Function} [onStep] 进度回调，参数是给人看的一句话
+ * @returns {Promise<{chapters:number, failed:number}>}
+ */
+async function pullWriterBookChapters(book, onStep) {
+  const say = typeof onStep === 'function' ? onStep : () => {};
+  const name = book.name || '未命名作品';
+
+  say(`正在读取《${name}》的章节目录…`);
+  const listed = await window.Exporter.listChapters(book.bookId, {
+    onProgress: (p) => say(`正在读取《${name}》目录：已找到 ${p.count || 0} 章`),
+  });
+  if (!listed.chapters.length) throw new Error('没有读取到章节，请确认作品中已有章节');
+
+  const result = await window.Exporter.readContents(book, listed.chapters, {
+    onProgress: (p) => {
+      if (p.phase === 'chapter') say(`正在同步《${name}》：${p.done}/${p.total} · ${p.title || ''}`);
+    },
+  });
+  if (!result.chapters.length) throw new Error((result.failed[0] && result.failed[0].error) || '没有读取到正文');
+
+  const meta = new Map(listed.chapters.map((c) => [String(c.chapterId), c]));
+  const fetched = result.chapters.map((c, i) => {
+    const m = meta.get(String(c.chapterId)) || {};
+    return {
+      id: `chapter_${c.chapterId || i + 1}`,
+      title: c.title || m.title || `第${i + 1}章`,
+      volume: m.volume || '正文',
+      content: c.content || '',
+    };
+  });
+  // 站点目录是「新在前」，存盘前先排成正序：存盘顺序、导出 TXT、下次打开三者一致，
+  // 不用只靠显示层纠正
+  const chapters = window.ChapterOrder.displayChapters({ chapters: fetched });
+  await window.api.writer.save({
+    bookId: book.bookId,
+    name,
+    cover: book.cover || '',
+    source: 'author',
+    chapters,
+  });
+  writerRemoteBooks = writerRemoteBooks.filter((b) => String(b.bookId) !== String(book.bookId));
+  return { chapters: chapters.length, failed: result.failed.length };
+}
+
 async function syncWriterRemoteBook(remote) {
   const btn = $('#btnWriterSync');
   btn.disabled = true;
   try {
-    writerNotice(`正在读取《${remote.name}》的章节目录…`);
-    const listed = await window.Exporter.listChapters(remote.bookId, {
-      onProgress: (p) => writerNotice(`正在读取《${remote.name}》目录：已找到 ${p.count || 0} 章`),
-    });
-    if (!listed.chapters.length) throw new Error('没有读取到章节，请确认作品中已有章节');
-    const result = await window.Exporter.readContents(remote, listed.chapters, {
-      onProgress: (p) => {
-        if (p.phase === 'chapter') writerNotice(`正在同步《${remote.name}》：${p.done}/${p.total} · ${p.title || ''}`);
-      },
-    });
-    if (!result.chapters.length) throw new Error((result.failed[0] && result.failed[0].error) || '没有读取到正文');
-    const meta = new Map(listed.chapters.map((c) => [String(c.chapterId), c]));
-    const chapters = result.chapters.map((c, i) => {
-      const m = meta.get(String(c.chapterId)) || {};
-      return {
-        id: `chapter_${c.chapterId || i + 1}`,
-        title: c.title || m.title || `第${i + 1}章`,
-        volume: m.volume || '正文',
-        content: c.content || '',
-      };
-    });
-    await window.api.writer.save({
-      bookId: remote.bookId,
-      name: remote.name,
-      cover: remote.cover || '',
-      source: 'author',
-      chapters,
-    });
-    writerRemoteBooks = writerRemoteBooks.filter((b) => String(b.bookId) !== String(remote.bookId));
+    const res = await pullWriterBookChapters(remote, writerNotice);
     await loadWriterBooks();
-    writerNotice(`《${remote.name}》已同步 ${chapters.length} 章${result.failed.length ? `，${result.failed.length} 章读取失败` : ''}`,
-      result.failed.length > 0);
+    writerNotice(`《${remote.name}》已同步 ${res.chapters} 章${res.failed ? `，${res.failed} 章读取失败` : ''}`,
+      res.failed > 0);
     await openWriterBook(remote.bookId);
   } catch (err) {
     writerNotice(`同步失败：${err.message || err}。请先点右上角“打开作者后台”完成登录。`, true);
@@ -3369,11 +3544,62 @@ async function syncWriterRemoteBook(remote) {
   }
 }
 
+/**
+ * 作品库里那些只有空壳的书（0 字）批量补正文。
+ *
+ * 只补「本地还没有任何正文」的：本地写过的内容一律不覆盖——平台上的不一定比本地新，
+ * 真要从平台覆盖，逐本点开同步自己确认。
+ */
+$('#btnWriterPullAll').addEventListener('click', async () => {
+  const btn = $('#btnWriterPullAll');
+  const origin = btn.textContent;
+  const targets = writerBooks.filter((b) => b.source !== 'remote' && !Number(b.words));
+  if (!targets.length) {
+    writerNotice('所有作品都已经有正文了，不需要再读取。');
+    return;
+  }
+
+  btn.disabled = true;
+  let done = 0;
+  let total = 0;
+  const failed = [];
+  try {
+    for (const book of targets) {
+      done += 1;
+      btn.textContent = `读取中 ${done}/${targets.length}`;
+      try {
+        const res = await pullWriterBookChapters(book, (text) => {
+          writerNotice(`[${done}/${targets.length}] ${text}`);
+        });
+        total += res.chapters;
+        if (res.failed) failed.push(`《${book.name}》${res.failed} 章读取失败`);
+      } catch (err) {
+        failed.push(`《${book.name}》：${err.message || err}`);
+      }
+      await loadWriterBooks();
+    }
+    const skipped = writerBooks.filter((b) => b.source !== 'remote' && Number(b.words)).length;
+    // writerNotice 走 textContent，不能塞 HTML
+    writerNotice(
+      `读取完成：${targets.length - failed.length} 本共 ${total} 章`
+      + (skipped ? `；另有 ${skipped} 本本地已有正文，未覆盖` : '')
+      + (failed.length ? `。未成功：${failed.slice(0, 3).join('；')}${failed.length > 3 ? ' …' : ''}` : ''),
+      failed.length > 0
+    );
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origin;
+  }
+});
+
+/** 目录顺序在 chapter-order.js 里（纯函数，可在 Node 里直接测） */
+const writerDisplayChapters = (book) => window.ChapterOrder.displayChapters(book);
+
 function renderWriterChapterList() {
   if (!writerEditorBook) return;
   const query = $('#writerChapterSearch').value.trim().toLowerCase();
   const groups = new Map();
-  writerEditorBook.chapters.forEach((chapter) => {
+  writerDisplayChapters(writerEditorBook).forEach((chapter) => {
     if (query && !chapter.title.toLowerCase().includes(query)) return;
     if (!groups.has(chapter.volume)) groups.set(chapter.volume, []);
     groups.get(chapter.volume).push(chapter);
@@ -3421,8 +3647,246 @@ function loadWriterChapter() {
   writerBeforeMask = writerTypedMask.slice();
   updateWriterWordCount();
   renderWriterChapterList();
+  // 换章：上一章的「无视」不该带过来，重新扫一遍
+  writerBadwordIgnored.clear();
+  scanWriterBadwords();
+  // 目录长起来以后，当前章可能落在滚动区外：滚进视野。
+  // 用 nearest 而不是 center，已经可见时不滚动，免得每点一次就整屏跳一下。
+  const activeChapterEl = document.querySelector('#writerChapterList .writer-chapter-item.is-active');
+  if (activeChapterEl && typeof activeChapterEl.scrollIntoView === 'function') {
+    activeChapterEl.scrollIntoView({ block: 'nearest' });
+  }
   refreshBuiltInIncomeEditorStat().catch((err) => console.error('刷新本章稿费失败', err));
 }
+
+// 正文 textarea 要先拿到，后面的高亮层同步与输入监听都靠它
+const writerContent = $('#writerContent');
+
+// ------------------------------------------------------ 码字区：敏感词实时检测
+//
+// 高亮不是画在 textarea 里的（它只认纯文本），而是垫一层同样排版的 div，
+// 用 BadWords.highlightHtml 生成带 <mark> 的 HTML。两层共用 --writer-* 变量，
+// 字号行距怎么调都不会错位；滚动位置靠 scroll 事件同步。
+
+/** 词库里的词（只取 2 字以上：单字词几乎全是误报，会把整章刷红） */
+let writerBadwordWords = [];
+/** 本章被「无视」的词：换章就清空 */
+const writerBadwordIgnored = new Set();
+let writerBadwordHits = [];
+let writerBadwordTimer = null;
+
+async function loadWriterBadwordWords() {
+  try {
+    const list = await window.api.badword.list();
+    writerBadwordWords = (list || [])
+      .map((x) => String(x && x.w != null ? x.w : x))
+      .filter((w) => w.length >= 2);
+  } catch (_) {
+    writerBadwordWords = [];
+  }
+  return writerBadwordWords;
+}
+
+/** 高亮层：文字透明，只画命中词的底色 */
+function renderWriterHighlight(text, words) {
+  const layer = $('#writerHighlight');
+  if (!layer) return;
+  layer.innerHTML = words.length ? window.BadWords.highlightHtml(text, words) : window.BadWords.escapeHtml(text);
+  layer.scrollTop = writerContent.scrollTop;
+  layer.scrollLeft = writerContent.scrollLeft;
+}
+
+/** 右栏列表：按词聚合，同一个词只给一组处理按钮 */
+function renderWriterBadwordPanel(hits, text) {
+  const list = $('#wbpList');
+  if (!list) return;
+  $('#wbpCount').textContent = String(hits.length);
+  $('#wbpEmpty').hidden = hits.length > 0;
+
+  const byWord = new Map();
+  hits.forEach((h) => {
+    if (!byWord.has(h.word)) byWord.set(h.word, { word: h.word, count: 0, sample: null });
+    const it = byWord.get(h.word);
+    it.count += 1;
+    if (!it.sample) it.sample = window.BadWords.contextOf(text, h.start, h.end, 10);
+  });
+
+  list.innerHTML = [...byWord.values()].map((it) => {
+    const s = it.sample || { before: '', hit: it.word, after: '' };
+    const hasSyn = window.BadWords.synonyms(it.word).length > 0;
+    return `
+      <div class="wbp-item">
+        <div class="wbp-word">${escapeHtml(it.word)}${it.count > 1 ? ` ×${it.count}` : ''}</div>
+        <div class="wbp-ctx">${escapeHtml(s.before)}<mark>${escapeHtml(s.hit)}</mark>${escapeHtml(s.after)}</div>
+        <div class="wbp-acts">
+          <button type="button" data-wb-word="${escapeHtml(it.word)}" data-wb-mode="dot">加间隔号</button>
+          <button type="button" data-wb-word="${escapeHtml(it.word)}" data-wb-mode="synonym"
+                  ${hasSyn ? '' : 'disabled title="词库里没有这个词的近义候选"'}>换近义词</button>
+          <button type="button" data-wb-word="${escapeHtml(it.word)}" data-wb-mode="del">删掉</button>
+          <button type="button" class="is-skip" data-wb-word="${escapeHtml(it.word)}" data-wb-mode="skip">无视</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function scanWriterBadwords() {
+  const text = writerContent.value || '';
+  const words = writerBadwordWords.filter((w) => !writerBadwordIgnored.has(w));
+
+  // 区间合并交给 BadWords.hitRanges：高亮层和这里用同一份结果，
+  // 否则会出现「正文高亮 3 处、右栏说 4 处」这种对不上
+  const hits = window.BadWords.hitRanges(text, words);
+
+  writerBadwordHits = hits;
+  renderWriterHighlight(text, words);
+  renderWriterBadwordPanel(hits, text);
+}
+
+function scheduleBadwordScan() {
+  clearTimeout(writerBadwordTimer);
+  writerBadwordTimer = setTimeout(scanWriterBadwords, 260);
+}
+
+/**
+ * 处理一个命中词。模式与发布侧栏一致：dot 加间隔号 / synonym 换近义 / del 删掉 / skip 无视。
+ * 改的是整章里这个词的所有出现（和侧栏「一键处理」的行为相同）。
+ */
+function applyWriterBadwordFix(word, mode) {
+  if (!word) return;
+
+  if (mode === 'skip') {
+    writerBadwordIgnored.add(word);
+    scanWriterBadwords();
+    $('#writerBottomState').textContent = `已无视「${word}」，本章不再提示`;
+    return;
+  }
+
+  const before = writerContent.value;
+  const res = window.BadWords.applyPlan(before, [{ word, mode }]);
+  if (!res.text || res.text === before) {
+    $('#writerBottomState').textContent = mode === 'synonym'
+      ? `「${word}」没有可用的近义候选，可以改用「加间隔号」`
+      : `没能修改「${word}」`;
+    return;
+  }
+
+  const caret = writerContent.selectionStart;
+  writerContent.value = res.text;
+  // 直接改 value 会把输入掩码与撤销栈打断，按「一键排版」的老办法重置一次
+  writerTypedMask = writerContent.value.split('').map(() => 0);
+  const shift = res.text.length - before.length;
+  const pos = Math.max(0, Math.min(writerContent.value.length, caret + shift));
+  writerContent.setSelectionRange(pos, pos);
+
+  syncWriterChapterFromForm();
+  updateWriterWordCount();
+  markWriterDirty();
+  scanWriterBadwords();
+  writerContent.focus();
+  $('#writerBottomState').textContent = `已处理「${word}」`;
+}
+
+$('#wbpList').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-wb-word]');
+  if (!btn) return;
+  applyWriterBadwordFix(btn.dataset.wbWord, btn.dataset.wbMode);
+});
+
+// 设置页手动加词之后，码字台的词表要跟着换（不然得重启才生效）
+window.addEventListener('badwords:changed', () => {
+  loadWriterBadwordWords().then(() => {
+    if (writerEditorBook) scanWriterBadwords();
+  });
+});
+
+writerContent.addEventListener('scroll', () => {
+  const layer = $('#writerHighlight');
+  if (!layer) return;
+  layer.scrollTop = writerContent.scrollTop;
+  layer.scrollLeft = writerContent.scrollLeft;
+});
+
+// ------------------------------------------------------ 码字区：显示设置
+
+const WRITER_FONTS = {
+  yahei: '"Microsoft YaHei", "Noto Serif SC", sans-serif',
+  serif: '"Noto Serif SC", "Source Han Serif SC", SimSun, serif',
+  kai: 'KaiTi, "Kaiti SC", STKaiti, serif',
+  system: 'system-ui, "Segoe UI", "Microsoft YaHei", sans-serif',
+};
+const WRITER_DISPLAY_DEFAULT = { font: 'yahei', size: 16, line: 2.05, width: 760 };
+
+function writerDisplayPrefs() {
+  const saved = (window.Prefs && window.Prefs.get('writerDisplay', null)) || {};
+  return Object.assign({}, WRITER_DISPLAY_DEFAULT, saved);
+}
+
+function applyWriterDisplay(patch) {
+  const v = Object.assign(writerDisplayPrefs(), patch || {});
+  const host = $('#writerWorkspace');
+  if (host) {
+    // 四个变量挂在工作区上：纸张读 --writer-paper-width，正文与高亮层共用另外三个
+    host.style.setProperty('--writer-font', WRITER_FONTS[v.font] || WRITER_FONTS.yahei);
+    host.style.setProperty('--writer-size', `${v.size}px`);
+    host.style.setProperty('--writer-line', String(v.line));
+    host.style.setProperty('--writer-paper-width', `${v.width}px`);
+  }
+  $('#wdpFont').value = v.font;
+  $('#wdpSizeVal').textContent = `${v.size} px`;
+  $('#wdpLineVal').textContent = Number(v.line).toFixed(2);
+  $('#wdpWidthVal').textContent = `${v.width} px`;
+  // 换字号/行距后行高变了，高亮层要跟着重新对齐滚动位置
+  const layer = $('#writerHighlight');
+  if (layer) layer.scrollTop = writerContent.scrollTop;
+  return v;
+}
+
+/** 加减号的步长与上下限；页面宽度上限放到 1600，专注模式下才拉得开 */
+const WDP_LIMITS = {
+  size: { min: 12, max: 32, step: 1 },
+  line: { min: 1.2, max: 3.0, step: 0.05 },
+  width: { min: 620, max: 1600, step: 20 },
+};
+
+function clampWdp(key, value) {
+  const l = WDP_LIMITS[key];
+  if (!l) return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const stepped = Math.round(n / l.step) * l.step;
+  return Math.min(l.max, Math.max(l.min, Number(stepped.toFixed(2))));
+}
+
+function saveWriterDisplay(patch) {
+  const v = applyWriterDisplay(patch);
+  if (window.Prefs) window.Prefs.set('writerDisplay', v);
+  return v;
+}
+
+/**
+ * 专注模式：界面只留章节列表与正文，窗口同时最大化。
+ * 退出时按「进来之前是不是已经最大化」还原，不会把用户原本的窗口缩小。
+ */
+async function setWriterFocus(on) {
+  writerFocusOn = !!on;
+  document.body.classList.toggle('is-focus', writerFocusOn);
+  const btn = $('#btnWriterFocus');
+  if (btn) {
+    btn.classList.toggle('is-active', writerFocusOn);
+    btn.textContent = writerFocusOn ? '退出专注' : '专注模式';
+  }
+  // 专注模式左右都让出来了，页面默认给到 1100；退出时还原成偏好里的宽度
+  const saved = writerDisplayPrefs();
+  applyWriterDisplay({ width: writerFocusOn ? Math.max(1100, saved.width) : saved.width });
+  // 侧栏藏起来后内容区变宽，平台视图的矩形要重算
+  syncBounds();
+  try {
+    await window.api.app.focusMode(writerFocusOn);
+  } catch (_) { /* 最大化失败也不影响界面切换 */ }
+}
+
+$('#btnWriterFocus').addEventListener('click', () => setWriterFocus(!writerFocusOn));
+
 
 function markWriterDirty() {
   writerDirty = true;
@@ -3623,29 +4087,9 @@ $('#writerChapterList').addEventListener('click', async (e) => {
 
 $('#writerChapterSearch').addEventListener('input', renderWriterChapterList);
 
+/** 「101」「１２」「一百零一」「十二」→ 数字；认不出来返回 NaN。实现见 chapter-order.js */
 function writerChineseNumber(text) {
-  const normalized = String(text || '').replace(/[０-９]/g, (c) => String(c.charCodeAt(0) - 65296));
-  if (/^\d+$/.test(normalized)) return Number(normalized);
-  const digits = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
-  const units = { 十: 10, 百: 100, 千: 1000 };
-  let total = 0;
-  let section = 0;
-  let number = 0;
-  for (const char of normalized) {
-    if (Object.prototype.hasOwnProperty.call(digits, char)) {
-      number = digits[char];
-    } else if (char === '万') {
-      total += (section + number) * 10000;
-      section = 0;
-      number = 0;
-    } else if (units[char]) {
-      section += (number || 1) * units[char];
-      number = 0;
-    } else {
-      return NaN;
-    }
-  }
-  return total + section + number;
+  return window.ChapterOrder.numberFromText(text);
 }
 
 function writerChineseSection(value) {
@@ -3730,7 +4174,49 @@ $('#writerChapterTitle').addEventListener('input', () => {
   markWriterDirty();
 });
 
-const writerContent = $('#writerContent');
+/** 段首缩进：两个全角空格。计算逻辑在 writer-indent.js（纯函数，可在 Node 里测） */
+const WRITER_INDENT = window.WriterIndent.INDENT;
+
+/**
+ * 回车即带段首缩进。
+ *
+ * 以前要写完再点「一键排版」才把每段顶格的字推到两个字符，现在直接照排版后的样子写。
+ * 只影响回车产生的新段首：一行写满自动折行的那部分仍然顶格，和排版工具的观感一致。
+ * Shift+回车保留原本的纯换行，需要顶格续行时用它。
+ */
+writerContent.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+  // 输入法候选框里的回车是「上屏」，不能拦
+  if (e.isComposing || writerComposing || e.keyCode === 229) return;
+
+  const plan = window.WriterIndent.planEnter(
+    writerContent.value, writerContent.selectionStart, writerContent.selectionEnd
+  );
+
+  e.preventDefault();
+  writerContent.setSelectionRange(plan.from, plan.to);
+  try {
+    // 走原生输入路径：撤销栈、beforeinput/input 都是浏览器自己发的，
+    // 码字统计与自动保存不用另外通知
+    if (!document.execCommand('insertText', false, plan.text)) throw new Error('execCommand 未生效');
+  } catch (_) {
+    writerContent.setRangeText(plan.text, plan.from, plan.to, 'end');
+    writerContent.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+});
+
+/**
+ * 新章第一段：正文还空着时开始输入，先补上段首缩进。
+ * 不加这段的话整篇只有第一段顶格，得点一次「一键排版」才对齐。
+ * 只认手工输入的 insertText（粘贴、输入法上屏都不插），空文本以外的内容一律不碰。
+ */
+writerContent.addEventListener('beforeinput', (e) => {
+  if (writerContent.value !== '') return;
+  if (e.inputType !== 'insertText' || !e.data || e.data === '\n') return;
+  writerContent.value = WRITER_INDENT;
+  writerContent.setSelectionRange(WRITER_INDENT.length, WRITER_INDENT.length);
+});
+
 writerContent.addEventListener('beforeinput', (e) => {
   if (!writerComposing && e.inputType !== 'insertCompositionText') writerSuppressInput = false;
   writerBeforeText = writerContent.value;
@@ -3781,6 +4267,7 @@ writerContent.addEventListener('input', () => {
   updateWriterWordCount();
   markWriterDirty();
   renderWriterStats();
+  scheduleBadwordScan();
 });
 
 $('#btnWriterFormat').addEventListener('click', async () => {
@@ -3797,7 +4284,7 @@ $('#btnWriterFormat').addEventListener('click', async () => {
       return;
     }
     blank = false;
-    out.push(`　　${text.replace(/^[　 ]+/, '')}`);
+    out.push(`${WRITER_INDENT}${text.replace(/^[　 ]+/, '')}`);
   });
   writerContent.value = out.join('\n').trimEnd();
   writerTypedMask = writerContent.value.split('').map(() => 0);
@@ -3805,6 +4292,51 @@ $('#btnWriterFormat').addEventListener('click', async () => {
   updateWriterWordCount();
   markWriterDirty();
   $('#writerBottomState').textContent = '已完成段首缩进与空行整理';
+});
+
+// 显示设置面板：改动即生效，并写进偏好，下次打开还是这套观感
+$('#btnWriterDisplay').addEventListener('click', () => {
+  const panel = $('#writerDisplayPanel');
+  panel.hidden = !panel.hidden;
+  if (!panel.hidden) applyWriterDisplay();
+});
+$('#btnWdpClose').addEventListener('click', () => { $('#writerDisplayPanel').hidden = true; });
+
+$('#wdpFont').addEventListener('change', () => {
+  saveWriterDisplay({ font: $('#wdpFont').value });
+  scanWriterBadwords();
+});
+
+// 加减号：一次一格，改完即时生效
+$('#writerDisplayPanel').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-wdp-dir]');
+  if (!btn) return;
+  const key = btn.closest('[data-wdp]').dataset.wdp;
+  const limit = WDP_LIMITS[key];
+  if (!limit) return;
+  const dir = Number(btn.dataset.wdpDir) || 0;
+  const cur = Number(writerDisplayPrefs()[key]) || 0;
+  const next = clampWdp(key, cur + dir * limit.step);
+  if (next == null || next === cur) return;
+  saveWriterDisplay({ [key]: next });
+});
+
+// 点面板外面就收起：以前必须再点一次「收起」，多一下很别扭
+document.addEventListener('click', (e) => {
+  const panel = $('#writerDisplayPanel');
+  if (!panel || panel.hidden) return;
+  if (panel.contains(e.target) || e.target.closest('#btnWriterDisplay')) return;
+  panel.hidden = true;
+});
+
+document.addEventListener('keydown', (e) => {
+  const panel = $('#writerDisplayPanel');
+  if (e.key === 'Escape' && panel && !panel.hidden) panel.hidden = true;
+});
+
+$('#btnWdpReset').addEventListener('click', () => {
+  saveWriterDisplay(WRITER_DISPLAY_DEFAULT);
+  scanWriterBadwords();
 });
 
 function writerFindNext() {
@@ -4902,6 +5434,22 @@ $('#themeSeg').addEventListener('click', (e) => {
   window.Theme.set(btn.dataset.themeMode);
 });
 
+// 码字台工具栏：一键深色 + 旁边那枚配色切换（暗金 / 暗蓝）
+$('#btnWriterDark').addEventListener('click', () => window.Theme.toggle());
+$('#btnWriterDarkTone').addEventListener('click', () => {
+  const t = window.Theme;
+  // 浅色下点这枚按钮，多半是想看深蓝黑长什么样：先切深色再换配色，
+  // 否则点了没有任何视觉变化，看着像没反应
+  if (t.effective(t.mode()) !== 'dark') t.set('dark');
+  t.toggleDarkTone();
+});
+
+$('#darkToneSeg').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-dark-tone]');
+  if (!btn) return;
+  window.Theme.setDarkTone(btn.dataset.darkTone);
+});
+
 // 折线图的颜色取自 CSS 变量，换主题后得重画一次
 document.addEventListener('theme-changed', () => {
   const snap = currentSnapshot();
@@ -4947,6 +5495,11 @@ function closeFreeNotice(remember) {
   setTimeout(() => {
     el.hidden = true;
     el.classList.remove('is-closing');
+    // 开场引导排在声明之后，否则两张卡片会叠在一起
+    if (startGuidePending) {
+      startGuidePending = false;
+      setTimeout(maybeShowStartGuide, 260);
+    }
   }, 180);
 }
 
@@ -4957,7 +5510,118 @@ $('#btnShowFreeNotice').addEventListener('click', () => openFreeNotice());
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   closeFreeNotice(true);
+  closeGuideDialog(true);
 });
+
+// ------------------------------------------------------------ 首次使用引导
+//
+// 两次引导共用一张卡片：刚打开软件时告诉用户「先登录」，登录成功后再告诉「去抓评论」。
+// 都只出现一次，写进 ui-prefs.json。
+//
+// 注意：登录成功那次，平台页面是原生视图、压在所有 DOM 之上，弹窗会被整个盖住，
+// 所以先把视图从窗口上摘下来（页面本身不销毁），关掉弹窗再挂回去。
+
+/** 声明卡片还开着的时候先别弹，两张卡片叠一起很难看 */
+let startGuidePending = false;
+/** Esc 关弹窗时补跑的「次要动作」（比如把后台页面挂回去） */
+let guideFallback = null;
+
+function showGuideDialog(cfg) {
+  $('#guideBadge').textContent = cfg.badge || '第一次使用';
+  $('#guideTitle').textContent = cfg.title || '';
+  $('#guideLead').textContent = cfg.lead || '';
+  $('#guideSteps').innerHTML = (cfg.steps || []).map((s) => `<li>${escapeHtml(s)}</li>`).join('');
+
+  // Esc 关掉时按「次要按钮」处理：登录那次要把后台页面挂回去，
+  // 否则用户一按 Esc 就莫名其妙回到了概览
+  guideFallback = cfg.onDismiss || (cfg.secondary && cfg.secondary.onClick) || null;
+
+  const box = $('#guideActions');
+  box.innerHTML = '';
+  if (cfg.secondary) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn ghost';
+    btn.textContent = cfg.secondary.label;
+    btn.addEventListener('click', () => {
+      closeGuideDialog();
+      if (typeof cfg.secondary.onClick === 'function') cfg.secondary.onClick();
+    });
+    box.appendChild(btn);
+  }
+  if (cfg.primary) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn primary';
+    btn.textContent = cfg.primary.label;
+    btn.addEventListener('click', () => {
+      closeGuideDialog();
+      if (typeof cfg.primary.onClick === 'function') cfg.primary.onClick();
+    });
+    box.appendChild(btn);
+  }
+  $('#guideDialog').hidden = false;
+  const first = box.querySelector('.btn.primary') || box.querySelector('.btn');
+  if (first) first.focus();
+}
+
+function closeGuideDialog(runFallback) {
+  const el = $('#guideDialog');
+  if (!el || el.hidden) return;
+  el.hidden = true;
+  const fn = guideFallback;
+  guideFallback = null;
+  if (runFallback && typeof fn === 'function') fn();
+}
+
+/** 第一次打开软件（还没连过后台）→ 告诉用户先登录 */
+function maybeShowStartGuide() {
+  if (window.Prefs && window.Prefs.get('guideStartShown', false)) return;
+  if (browserOpen || lastState.url) return;
+  if (!$('#guideDialog').hidden) return;
+  if (window.Prefs) window.Prefs.set('guideStartShown', true);
+  showGuideDialog({
+    badge: '第一次使用',
+    title: '先连上作者后台',
+    lead: '软件的数据都从你的作者后台读出来。登录一次就够了，登录态会留在浏览器里，通常几周内不用再登。',
+    steps: [
+      '点下面「打开作者后台」，在弹出的页面里完成登录（滑块验证码要自己点）',
+      '登录成功后回到「抓取与同步」',
+      '先点「读取作品列表」，再点「开始抓取」',
+    ],
+    secondary: { label: '先自己看看' },
+    primary: { label: '打开作者后台', onClick: () => openBrowser() },
+  });
+}
+
+/** 第一次连上后台（不在登录页了）→ 告诉用户下一步去抓评论 */
+function maybeShowAfterLoginGuide(state) {
+  if (!state || state.isLoginPage || !state.url) return;
+  if (window.Prefs && window.Prefs.get('guideAfterLoginShown', false)) return;
+  if (!$('#freeNotice').hidden || !$('#guideDialog').hidden) return;
+  if (window.Prefs) window.Prefs.set('guideAfterLoginShown', true);
+
+  // 平台视图压在 DOM 之上，弹窗会被整个盖住，所以先退回本地界面（页面不销毁，
+  // 选「先看看后台」会原样挂回去），这样弹窗背后是正常界面而不是一片空白
+  closeBrowser().catch(() => {});
+
+  showGuideDialog({
+    badge: '登录成功',
+    title: '接下来抓一次评论',
+    lead: '现在能读你的作者后台了。抓一次评论，「评论审查」和「数据看板」才会有内容。',
+    steps: [
+      '去「抓取与同步」点「读取作品列表」',
+      '勾选作品后点「开始抓取」，等进度条走完',
+      '抓完到「数据看板」点一次「刷新数据」，字数与订阅才会更新',
+    ],
+    secondary: { label: '先看看后台', onClick: () => { showBrowserKeepPage(); } },
+    primary: {
+      label: '去抓取与同步',
+      onClick: () => { closeBrowser(); setActiveView('sync'); },
+    },
+  });
+}
+
 
 // ------------------------------------------------------------ 启动自检
 
@@ -5032,4 +5696,13 @@ document.addEventListener('keydown', (e) => {
 
   const state = await window.api.browser.state();
   if (state && state.ready) renderConn(state);
+
+  // 码字区：恢复上次的字体/字号/行距/宽度，并把敏感词库读进来待用
+  applyWriterDisplay();
+  await loadWriterBadwordWords();
+
+  // 开场引导放最后：等偏好、书目、状态都读完，用户点按钮过去才不会是空页面。
+  // 声明卡片还开着就先挂着，关掉之后由 closeFreeNotice 接上。
+  if ($('#freeNotice').hidden) setTimeout(maybeShowStartGuide, 700);
+  else startGuidePending = true;
 })();

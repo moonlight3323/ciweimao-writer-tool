@@ -8,7 +8,7 @@
   <title>刺猬猫作家助手</title>
   <!-- 先定主题再上色，避免深色模式下闪一下白底 -->
   <script src="theme-init.js"></script>
-  <link rel="stylesheet" href="style.css?v=20261106-8" />
+  <link rel="stylesheet" href="style.css?v=20261106-20" />
 </head>
 <body>
   <!-- 更新提示条：仅在有新版本时出现，固定 32px，关闭后本次运行不再出现 -->
@@ -52,7 +52,7 @@
           <span class="conn-dot"></span>
           <span class="conn-text">后台未打开</span>
         </div>
-        <div class="version">v0.14.1</div>
+        <div class="version">v1.0.0</div>
       </div>
     </aside>
 
@@ -63,13 +63,15 @@
           <span class="crumb" id="pageCrumb"></span>
         </div>
         <div class="topbar-right">
-          <button class="btn icon" id="btnBack" hidden title="后退">←</button>
-          <button class="btn icon" id="btnForward" hidden title="前进">→</button>
+          <!-- 原来这里是浏览器式的「后退 / 前进」。后台页是内嵌的，真正想回的是
+               刚才那个界面（改完章节 → 投到后台 → 再回去接着改），所以换成回本地视图。
+               后台页面只是从窗口上摘下来，不销毁，再开还是填了一半的那张表单。 -->
+          <button class="btn ghost" id="btnBackToView" hidden title="回到刚才的界面继续修改，后台这一页不会丢">← 创作中心</button>
           <button class="btn ghost" id="btnReload" hidden>刷新</button>
           <button class="btn ghost" id="btnHome" hidden>后台首页</button>
           <button class="btn ghost" id="btnClearInboxTop" hidden title="把作者信箱里的未读小红点一次清掉">清小红点</button>
           <button class="btn ghost" id="btnCloseBrowser" hidden>退出后台</button>
-          <button class="btn ghost" id="btnPubSide" hidden title="打开或收起敏感词处理侧栏">敏感词侧栏</button>
+          <button class="btn accent-soft" id="btnPubSide" hidden title="打开或收起敏感词处理侧栏">敏感词侧栏</button>
           <button class="btn primary" id="btnOpenBrowser">打开作者后台</button>
         </div>
       </header>
@@ -82,7 +84,26 @@
           <button class="btn primary btn-sm" id="btnVaultFill">填入</button>
           <button class="btn ghost btn-sm" id="btnVaultCapture" title="把页面里已经填好的账号密码存进密码本">记住这次输入</button>
           <button class="btn ghost btn-sm" id="btnVaultDelete" title="删除选中的记录">删除</button>
+          <button class="btn ghost btn-sm" id="btnVaultHelp" title="再看一次密码本的用法">怎么用</button>
           <span class="vault-hint" id="vaultHint"></span>
+
+          <!-- 首次使用说明：做成工具条里的第二行，而不是全屏弹窗。
+               平台页面是原生视图、盖在 HTML 之上，全屏遮罩会被它挡住；
+               展开这一行则会把平台视图往下推（currentRect 按工具条实际高度让位）。 -->
+          <div class="vault-intro" id="vaultIntro" hidden>
+            <div class="vault-steps">
+              <span><b>1</b>先在登录页正常登录一次</span>
+              <span><b>2</b>登录成功后点「记住这次输入」存下来</span>
+              <span><b>3</b>以后到登录页选账号点「填入」</span>
+            </div>
+            <p class="vault-note">
+              验证码（滑块 / 点击验证）不会被代填，仍需你自己点一下；
+              密码用系统加密后只存这台电脑，不发往任何服务器。
+            </p>
+            <div class="vault-intro-actions">
+              <button class="btn primary btn-sm" id="btnVaultIntroOk" type="button">知道了</button>
+            </div>
+          </div>
         </div>
 
         <section class="view is-active" data-view="overview">
@@ -138,6 +159,7 @@
             </p>
             <div class="actions">
               <button class="btn primary" id="btnClearInbox">一键清除小红点</button>
+              <button class="btn" id="btnStopInbox" type="button" disabled title="清理过程中可随时停下，已清掉的部分不会回退">停止</button>
               <label class="check-line"><input type="checkbox" id="inboxAllPages" checked /> 连同其他分页一起清</label>
               <span class="hint-line" id="inboxStatus"></span>
             </div>
@@ -204,8 +226,27 @@
               </div>
               <div class="writer-actions">
                 <button class="btn primary" id="btnWriterCreate" type="button">＋ 新建书籍</button>
-                <button class="btn ghost" id="btnWriterImport" type="button">⇩ 导入书籍</button>
-                <button class="btn ghost" id="btnWriterSync" type="button">同步作者库</button>
+                <span class="btn-help-wrap">
+                  <button class="btn ghost" id="btnWriterImport" type="button">⇩ 导入书籍</button>
+                  <span class="help-dot tip-below tip-right" tabindex="0" role="note" aria-label="导入书籍是什么">?
+                    <span class="help-tip">把本机的 <b>TXT / JSON</b> 文件导入成一本新书，导入后就直接在这里编辑。
+                      适合从别的地方搬稿子过来的情况。</span>
+                  </span>
+                </span>
+                <span class="btn-help-wrap">
+                  <button class="btn ghost" id="btnWriterPullAll" type="button">读取全部章节</button>
+                  <span class="help-dot tip-below tip-right" tabindex="0" role="note" aria-label="读取全部章节是什么">?
+                    <span class="help-tip">把<b>还是空的</b>那些书（0 字）的章节正文，从作者后台逐本读下来。
+                      已经有正文的书不会覆盖，要覆盖请打开那本书单独同步。</span>
+                  </span>
+                </span>
+                <span class="btn-help-wrap">
+                  <button class="btn ghost" id="btnWriterSync" type="button">同步作者库</button>
+                  <span class="help-dot tip-below tip-right" tabindex="0" role="note" aria-label="同步作者库是什么">?
+                    <span class="help-tip">重新读一遍后台的作品列表，看有没有新书、书名或封面变了。
+                      这一步只看目录，<b>不会读章节正文</b>。</span>
+                  </span>
+                </span>
                 <button class="btn ghost" id="btnWriterRefresh" type="button">刷新</button>
               </div>
             </div>
@@ -226,12 +267,59 @@
               <button class="writer-tool" id="btnWriterSave" type="button">保存</button>
               <span class="writer-save-state" id="writerSaveState">已保存</span>
               <span class="writer-toolbar-space"></span>
-              <button class="writer-tool" id="btnWriterFormat" type="button">一键排版</button>
+              <button class="writer-tool" id="btnWriterDark" type="button" title="一键切到深色">☾ 深色</button>
+              <button class="writer-tool writer-tool-tone" id="btnWriterDarkTone" type="button" title="切换深色配色">暗金</button>
+              <button class="writer-tool" id="btnWriterFocus" type="button"
+                      title="隐藏左侧导航与右侧统计，只留目录和正文；窗口同时最大化，再点一次退出">专注模式</button>
+              <button class="writer-tool" id="btnWriterFormat" type="button" title="整理多余空行；回车时已自动缩进两格，这里主要用来收拾从别处粘进来的正文">一键排版</button>
               <button class="writer-tool" id="btnWriterFind" type="button">查找替换</button>
               <button class="writer-tool is-active" id="btnWriterStats" type="button">码字统计</button>
+              <button class="writer-tool" id="btnWriterDisplay" type="button" title="字体、字号、行距与页面宽度">显示设置</button>
               <!-- 定时/立即发布设置暂时收起：等下个版本重做发布流程再放出来 -->
               <button class="writer-tool" id="btnWriterSchedule" type="button" title="设置立即发布或定时发布时间" hidden>立即发布</button>
               <button class="btn primary btn-sm" id="btnWriterPublish" type="button">跳转后台并发布</button>
+            </div>
+
+            <!-- 显示设置：只影响编辑区观感，不改稿件内容 -->
+            <div class="writer-display-panel" id="writerDisplayPanel" hidden>
+              <div class="wdp-row">
+                <label for="wdpFont">字体</label>
+                <select class="select select-sm" id="wdpFont">
+                  <option value="yahei">微软雅黑</option>
+                  <option value="serif">思源宋体 / 宋体</option>
+                  <option value="kai">楷体</option>
+                  <option value="system">系统默认</option>
+                </select>
+              </div>
+              <!-- 用加减号而不是滑块：滑块一拖就过头，想从 16 调到 17 很难对准 -->
+              <div class="wdp-row">
+                <label>字号</label>
+                <div class="wdp-step" data-wdp="size">
+                  <button type="button" data-wdp-dir="-1" aria-label="减小字号">−</button>
+                  <span class="wdp-val" id="wdpSizeVal">16 px</span>
+                  <button type="button" data-wdp-dir="1" aria-label="增大字号">＋</button>
+                </div>
+              </div>
+              <div class="wdp-row">
+                <label>行距</label>
+                <div class="wdp-step" data-wdp="line">
+                  <button type="button" data-wdp-dir="-1" aria-label="减小行距">−</button>
+                  <span class="wdp-val" id="wdpLineVal">2.05</span>
+                  <button type="button" data-wdp-dir="1" aria-label="增大行距">＋</button>
+                </div>
+              </div>
+              <div class="wdp-row">
+                <label>页面宽度</label>
+                <div class="wdp-step" data-wdp="width">
+                  <button type="button" data-wdp-dir="-1" aria-label="减小页面宽度">−</button>
+                  <span class="wdp-val" id="wdpWidthVal">760 px</span>
+                  <button type="button" data-wdp-dir="1" aria-label="增大页面宽度">＋</button>
+                </div>
+              </div>
+              <div class="wdp-foot">
+                <button class="link-btn" id="btnWdpReset" type="button">恢复默认</button>
+                <button class="link-btn" id="btnWdpClose" type="button">收起</button>
+              </div>
             </div>
 
             <div class="writer-findbar" id="writerFindbar" hidden>
@@ -258,7 +346,12 @@
               <main class="writer-paper-wrap">
                 <div class="writer-paper">
                   <input class="writer-title-input" id="writerChapterTitle" placeholder="章节标题" maxlength="100" />
-                  <textarea class="writer-textarea" id="writerContent" placeholder="从这里开始写正文……" spellcheck="false"></textarea>
+                  <!-- 高亮层垫在 textarea 底下：textarea 负责输入，这层只画敏感词的底色。
+                       两者共用同一套字体/字号/行距/内边距变量，换显示设置也不会错位。 -->
+                  <div class="writer-text-wrap">
+                    <div class="writer-highlight" id="writerHighlight" aria-hidden="true"></div>
+                    <textarea class="writer-textarea" id="writerContent" placeholder="从这里开始写正文……" spellcheck="false"></textarea>
+                  </div>
                 </div>
                 <div class="writer-statusbar">
                   <span id="writerBottomState">本地自动保存</span>
@@ -279,6 +372,16 @@
                 <div class="plugin-editor-stats" id="pluginEditorStats" hidden></div>
                 <p>粘贴内容不计入本次码字与速率。</p>
                 <button class="btn ghost btn-sm" id="btnWriterResetStats" type="button">重新计时</button>
+
+                <!-- 实时敏感词检测：命中的词在正文里高亮，这里逐词给出处理方式 -->
+                <div class="writer-badwords" id="writerBadwords">
+                  <div class="wbp-head">
+                    <b>敏感词</b>
+                    <span class="wbp-count" id="wbpCount">0</span>
+                  </div>
+                  <div class="wbp-empty" id="wbpEmpty">本章没有命中词库里的词</div>
+                  <div class="wbp-list" id="wbpList"></div>
+                </div>
               </aside>
             </div>
 
@@ -332,6 +435,12 @@
             <label class="check-line" style="margin:0">
               <input type="checkbox" id="batchDryRun" checked /> 演练
             </label>
+            <span class="help-dot" tabindex="0" role="note" aria-label="演练是什么意思">?
+              <span class="help-tip">
+                演练只把流程走一遍，<b>不向站点发出任何请求</b>：不会删除评论，也不会禁言任何人。
+                用来先看清这批操作会怎么执行。取消勾选后点「执行选中」，才是真的动手。
+              </span>
+            </span>
             <button class="btn primary" id="btnBatchRun">执行选中</button>
             <button class="btn ghost" id="btnBatchSelectHigh">全选高风险</button>
             <button class="btn ghost" id="btnBatchSelectMid">全选中风险</button>
@@ -611,6 +720,14 @@
               读取你名下作品的间贴（段评）和普通书评。全程只做页面浏览，不点赞、不删除。
             </p>
 
+            <!-- 三步引导：新人不知道「谁先点、点完还要干什么」，这里直接按顺序摆出来，
+                 当前该做哪一步会高亮，做完的打个勾 -->
+            <ol class="crawl-guide" id="crawlGuide">
+              <li data-step="list"><b>1</b>点「读取作品列表」</li>
+              <li data-step="crawl"><b>2</b>点「开始抓取」等进度走完</li>
+              <li data-step="refresh"><b>3</b>到「数据看板」点「刷新数据」</li>
+            </ol>
+
             <div class="field">
               <div class="field-label">抓取类型</div>
               <label class="check-line"><input type="checkbox" id="crawlTsukkomi" checked /> 间贴（段评）</label>
@@ -760,6 +877,12 @@
               <button class="link-btn" id="btnWordlibMore" type="button"></button>
             </div>
 
+            <div class="wordlib-add">
+              <input class="input" id="wordlibAddInput" type="text" autocomplete="off" spellcheck="false"
+                     placeholder="手动添加：输入词，多个用逗号或换行分隔" />
+              <button class="btn primary btn-sm" id="btnWordlibAdd" type="button">添加</button>
+            </div>
+
             <div class="wordlib-actions">
               <button class="btn ghost" id="btnWordlibCopy" type="button">复制全部</button>
               <button class="btn ghost" id="btnWordlibClear" type="button">清空</button>
@@ -840,6 +963,15 @@
               </div>
             </div>
             <p class="hint-line">「粉白」是樱粉配色，按钮与卡片圆角更大、观感更柔和；深色适合夜间使用；选「跟随系统」会随 Windows 的浅色 / 深色设置自动切换。</p>
+
+            <div class="scope-bar">
+              <span class="scope-label">深色配色</span>
+              <div class="segmented" id="darkToneSeg">
+                <button type="button" data-dark-tone="amber">深黄黑</button>
+                <button type="button" data-dark-tone="blue">深蓝黑</button>
+              </div>
+            </div>
+            <p class="hint-line">只影响深色模式。深黄黑保留原来的暖夜观感；深蓝黑整体偏冷蓝，主色从品牌金换成青蓝。切换时不用退出设置，直接生效。</p>
           </div>
 
           <div class="panel">
@@ -891,6 +1023,17 @@
   </div>
 
   <div class="plugin-background-host" id="pluginBackgrounds" aria-hidden="true"></div>
+
+  <!-- 首次使用引导：「刚打开」「刚登录」两次共用这张卡片，标题与步骤由 JS 填 -->
+  <div class="notice-overlay" id="guideDialog" hidden>
+    <div class="notice-card guide-card" role="dialog" aria-modal="true" aria-labelledby="guideTitle">
+      <div class="notice-badge" id="guideBadge">第一次使用</div>
+      <h2 class="notice-title" id="guideTitle">先做这一件事</h2>
+      <p class="notice-lead" id="guideLead"></p>
+      <ol class="guide-steps" id="guideSteps"></ol>
+      <div class="guide-actions" id="guideActions"></div>
+    </div>
+  </div>
 
   <!-- 首次启动声明：点过「我已知悉」之后不再出现，设置里可重新打开 -->
   <div class="notice-overlay" id="freeNotice" hidden>
@@ -991,12 +1134,15 @@
   <script src="executor.js"></script>
   <script src="inbox.js"></script>
   <script src="probe.js"></script>
-  <script src="badwords.js"></script>
-  <script src="publish.js"></script>
+  <script src="badwords.js?v=20261106-1"></script>
+  <script src="publish.js?v=20261106-2"></script>
   <script src="prefs.js"></script>
-  <script src="theme.js"></script>
-  <script src="app.js?v=20261106-14"></script>
+  <script src="dark-tone.js"></script>
+  <script src="theme.js?v=20261106-1"></script>
+  <script src="chapter-order.js"></script>
+  <script src="writer-indent.js"></script>
+  <script src="app.js?v=20261106-27"></script>
   <script src="update-ui.js"></script>
-  <script src="wordlib-ui.js"></script>
+  <script src="wordlib-ui.js?v=20261106-1"></script>
 </body>
 </html>

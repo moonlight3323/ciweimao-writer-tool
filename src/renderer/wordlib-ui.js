@@ -211,6 +211,36 @@
     }
   }
 
+  /**
+   * 手动加词。
+   * 站点返回的词不一定全，作者自己知道哪些词会被拦，得能直接写进去；
+   * 逗号 / 顿号 / 分号 / 空白 / 换行都当分隔符，可以一次贴一串。
+   */
+  async function addWords() {
+    const input = $('#wordlibAddInput');
+    const raw = String((input && input.value) || '');
+    const words = raw.split(/[,，、;；\s]+/).map((s) => s.trim()).filter(Boolean);
+    if (!words.length) {
+      toast('没有可添加的词', '先在输入框里写一个词，再点「添加」');
+      return;
+    }
+    try {
+      const res = await window.api.badword.add(words);
+      if (input) input.value = '';
+      await load();
+      const added = (res && res.added) || 0;
+      const merged = (res && res.merged) || 0;
+      toast(
+        added ? `已添加 ${added} 个词` : '这些词之前就在库里',
+        merged ? `其中 ${merged} 个已存在，只累加了命中次数` : '码字台会立刻按新词表检测',
+      );
+      // 码字台的实时检测要换表，不然得重启才生效
+      window.dispatchEvent(new CustomEvent('badwords:changed'));
+    } catch (err) {
+      toast('添加失败', String((err && err.message) || err));
+    }
+  }
+
   // ---------------------------------------------------------------- 绑定
 
   function bind() {
@@ -219,6 +249,13 @@
     $('#btnWordlibCopy').addEventListener('click', copyAll);
     $('#btnWordlibClear').addEventListener('click', clearAll);
     $('#btnWordlibDir').addEventListener('click', openDir);
+    $('#btnWordlibAdd').addEventListener('click', addWords);
+    // 输入框里按回车等同点「添加」，一次写一个词时不用去够按钮
+    $('#wordlibAddInput').addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      addWords();
+    });
     $('#btnWordlibMore').addEventListener('click', () => {
       showAll = !showAll;
       render();

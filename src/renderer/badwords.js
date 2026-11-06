@@ -264,29 +264,49 @@
   }
 
   /**
+   * 命中区间：把词表在正文里扫一遍，合并重叠，同一位置只留最长的那一个。
+   *
+   * 高亮渲染和右栏列表都要用这份结果，放一起免得两处各写一遍合并逻辑，
+   * 最后出现「正文高亮 3 处、列表说 4 处」这种对不上的情况。
+   *
+   * @param {string} text
+   * @param {Array<string>} words
+   * @returns {Array<{word:string,start:number,end:number}>} 按位置升序
+   */
+  function hitRanges(text, words) {
+    const t = String(text || '');
+    const list = (words || []).map(clean).filter(Boolean).sort((a, b) => b.length - a.length);
+    if (!list.length) return [];
+
+    const marks = [];
+    list.forEach((w) => {
+      occurrences(t, w).forEach((p) => marks.push({ word: w, start: p.start, end: p.end }));
+    });
+    if (!marks.length) return [];
+
+    // 长的先来：同一位置被「血腥」和「血腥横飞」同时命中时，保留后者整段
+    marks.sort((a, b) => a.start - b.start || b.end - a.end);
+    const merged = [];
+    marks.forEach((p) => {
+      const last = merged[merged.length - 1];
+      if (last && p.start < last.end) {
+        if (p.end > last.end) last.end = p.end;
+        return;
+      }
+      merged.push({ word: p.word, start: p.start, end: p.end });
+    });
+    return merged;
+  }
+
+  /**
    * 把正文渲染成带高亮的 HTML（只用于只读预览）。
    * @param {Object} opts { fixed: boolean } 处理后的预览用另一种配色
    */
   function highlightHtml(text, words, opts) {
     const o = opts || {};
     const t = String(text || '');
-    const list = (words || []).map(clean).filter(Boolean).sort((a, b) => b.length - a.length);
-    if (!list.length) return escapeHtml(t);
-
-    const marks = [];
-    list.forEach((w) => {
-      occurrences(t, w).forEach((p) => marks.push(p));
-    });
-    if (!marks.length) return escapeHtml(t);
-
-    // 合并重叠区间，避免嵌套 mark
-    marks.sort((a, b) => a.start - b.start || b.end - a.end);
-    const merged = [];
-    marks.forEach((p) => {
-      const last = merged[merged.length - 1];
-      if (last && p.start < last.end) last.end = Math.max(last.end, p.end);
-      else merged.push({ start: p.start, end: p.end });
-    });
+    const merged = hitRanges(t, words);
+    if (!merged.length) return escapeHtml(t);
 
     const cls = o.fixed ? ' class="is-fixed"' : '';
     let out = '';
@@ -320,6 +340,7 @@
     synonyms,
     applyPlan,
     highlightHtml,
+    hitRanges,
     textToHtml,
     escapeHtml,
     squash,

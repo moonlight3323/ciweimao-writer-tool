@@ -14,6 +14,9 @@
 
   const mq = window.matchMedia('(prefers-color-scheme: dark)');
 
+  // 深色配色模块（dark-tone.js 必须在本文件之前加载，见 index.html 的脚本顺序）
+  const Tone = root.DarkTone;
+
   function mode() {
     const m = document.documentElement.dataset.themeMode;
     return MODES.indexOf(m) >= 0 ? m : 'light';
@@ -31,10 +34,37 @@
     const el = document.documentElement;
     el.dataset.theme = eff;
     el.dataset.themeMode = m;
+    // 深色两套配色：切明暗时把已选的配色重新打一次。
+    // 只在 dark 下有意义，但一直挂着没有副作用（浅色块不读这个属性）。
+    Tone.apply(darkTone());
     try { localStorage.setItem(KEY, m); } catch (_) { /* ignore */ }
     document.dispatchEvent(new CustomEvent('theme-changed', {
-      detail: { mode: m, effective: eff },
+      detail: { mode: m, effective: eff, darkTone: darkTone() },
     }));
+  }
+
+  /** 当前深色配色（amber / blue） */
+  function darkTone() {
+    return Tone.current();
+  }
+
+  /**
+   * 切深色配色。
+   * 这里故意**不**顺手切到深色模式：用户可能正在浅色下先挑好配色再切深色，
+   * 突然变黑会让人以为点错了按钮。
+   */
+  function setDarkTone(v) {
+    const tone = Tone.apply(v);
+    try { localStorage.setItem(Tone.KEY, tone); } catch (_) { /* ignore */ }
+    if (window.Prefs) window.Prefs.set('darkTone', tone);
+    document.dispatchEvent(new CustomEvent('theme-changed', {
+      detail: { mode: mode(), effective: effective(mode()), darkTone: tone },
+    }));
+    return tone;
+  }
+
+  function toggleDarkTone() {
+    return setDarkTone(Tone.next(darkTone()));
   }
 
   function set(m) {
@@ -75,6 +105,36 @@
         b.classList.toggle('is-active', b.dataset.themeMode === m);
       });
     }
+
+    // 创作中心工具栏的「深色」一键开关
+    const wb = document.getElementById('btnWriterDark');
+    if (wb) {
+      const on = eff === 'dark';
+      wb.classList.toggle('is-active', on);
+      wb.textContent = on ? '☀ 浅色' : '☾ 深色';
+      wb.title = on ? '切回浅色' : '一键切到深色（夜间码字更省眼）';
+    }
+
+    // 旁边那枚配色切换：只有深色下才有意义
+    const tb = document.getElementById('btnWriterDarkTone');
+    if (tb) {
+      const tone = darkTone();
+      tb.textContent = Tone.label(tone);
+      tb.dataset.tone = tone;
+      // 不用 disabled：淡显但仍可点，点下去会自动切到深色（见 app.js），
+      // 否则浅色下看到一枚灰按钮，会以为这功能坏了
+      tb.classList.toggle('is-dim', eff !== 'dark');
+      tb.title = eff === 'dark'
+        ? `当前是${Tone.desc(tone)}，点击换成${Tone.desc(Tone.next(tone))}`
+        : `当前是${Tone.desc(tone)}，点击会切到深色并换成另一套`;
+    }
+
+    const toneSeg = document.getElementById('darkToneSeg');
+    if (toneSeg) {
+      Array.prototype.forEach.call(toneSeg.children, (b) => {
+        b.classList.toggle('is-active', b.dataset.darkTone === darkTone());
+      });
+    }
   }
 
   document.addEventListener('theme-changed', syncUi);
@@ -90,10 +150,16 @@
     if (MODES.indexOf(saved) >= 0 && !local) set(saved);
     else if (MODES.indexOf(saved) >= 0 && saved !== local) paint(saved);
     else window.Prefs.set('theme', mode());
+
+    // 配色的权威值在 ui-prefs.json；localStorage 只是为了首帧不闪
+    const savedTone = window.Prefs.get('darkTone', null);
+    if (Tone.TONES.indexOf(savedTone) >= 0) setDarkTone(savedTone);
+    else window.Prefs.set('darkTone', darkTone());
+
     syncUi();
   }
 
-  const api = { set, toggle, mode, effective, boot, LABEL, MODES };
+  const api = { set, toggle, mode, effective, boot, LABEL, MODES, darkTone, setDarkTone, toggleDarkTone };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.Theme = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

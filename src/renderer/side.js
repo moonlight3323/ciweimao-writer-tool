@@ -192,6 +192,7 @@
   function render(payload) {
     if (!payload) return;
     if (payload.theme) document.documentElement.dataset.theme = payload.theme;
+    if (payload.darkTone) document.documentElement.dataset.darkTone = payload.darkTone;
     if (payload.version) document.title = `敏感词侧栏 · v${payload.version}`;
 
     if (payload.mode === 'bad') {

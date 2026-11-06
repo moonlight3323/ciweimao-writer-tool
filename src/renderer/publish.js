@@ -52,15 +52,24 @@
 
   // ---------------------------------------------------------------- 小工具
 
+  /** 右下角发布提示的自动收起定时器 */
+  let toastTimer = null;
+
   function toast(title, html) {
     const box = $('#publishToast');
     if (!box) return;
     box.hidden = false;
     $('#publishToastTitle').textContent = title;
     $('#publishToastBody').innerHTML = html || '';
+    // 以前这个提示不会自己消失，切回创作中心还挂在右下角。
+    // 现在给个上限，并且离开码字台时立刻收掉（见 view-changed）。
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(toastHide, 8000);
   }
 
   function toastHide() {
+    clearTimeout(toastTimer);
+    toastTimer = null;
     const box = $('#publishToast');
     if (box) box.hidden = true;
   }
@@ -78,6 +87,11 @@
    */
   function currentTheme() {
     return document.documentElement.dataset.theme || 'light';
+  }
+
+  /** 深色配色也一起传，否则主界面切成深蓝黑、侧栏还停在深黄黑 */
+  function currentDarkTone() {
+    return document.documentElement.dataset.darkTone || 'amber';
   }
 
   function versionText() {
@@ -138,6 +152,7 @@
     const full = Object.assign(
       {
         theme: currentTheme(),
+        darkTone: currentDarkTone(),
         version: versionText(),
         // 收集开关与一次性提示统一在这里补，避免每个 pushSide 调用点各写一遍
         wordCollectOn: collectEnabled(),
@@ -150,11 +165,22 @@
     try {
       const btn = $('#btnPubSide');
       if (btn) btn.hidden = false;
-      if (o.open || !state.sideOpen) {
+      // 侧栏窗口可能被作者自己点 × 收掉了，而本地 sideOpen 还停在 true。
+      // 只凭本地状态判断就会「给一个看不见的窗口推内容」——表现为点了
+      // 「跳转后台并发布」侧栏不出现在，顶栏按钮也要点两下才有反应。
+      // 所以每次推之前问一次真实可见性。
+      let visible = state.sideOpen;
+      try {
+        const st = await api.isOpen();
+        if (st) visible = !!st.visible;
+      } catch (_) { /* 拿不到就按本地状态 */ }
+      if (o.open || !visible) {
         await api.open(full);
         state.sideOpen = true;
+        state.sideParked = false;
       } else {
         await api.setState(full);
+        state.sideOpen = true;
       }
       return true;
     } catch (_) {
@@ -754,25 +780,39 @@
 
     // 侧栏只服务于码字台投递：切到别的页面就收起，回到码字台再放出来
     // （不然一个小窗一直浮在「概览/设置」上面挡视线）
-    document.addEventListener('view-changed', (e) => {
+    document.addEventListener('view-changed', async (e) => {
       const name = (e && e.detail && e.detail.name) || '';
       if (name === 'writer') {
-        if (state.sideParked && state.lastPayload && !state.sideOpen) {
+        if (state.sideParked && state.lastPayload) {
           state.sideParked = false;
           pushSide(state.lastPayload, { open: true });
         }
         return;
       }
-      if (state.sideOpen) {
+      // 离开码字台：右下角的发布提示也跟着收掉，别留在别的界面上
+      toastHide();
+      // 真去问一次窗口在不在——作者可能已经自己点 × 收掉了，
+      // 这时不该记成「停放」，否则回到码字台会把它又弹出来
+      let visible = state.sideOpen;
+      try {
+        const st = sideApi() && sideApi().isOpen ? await sideApi().isOpen() : null;
+        if (st) visible = !!st.visible;
+      } catch (_) { /* 拿不到就按本地状态 */ }
+      if (visible) {
         state.sideParked = true;
-        hideSide();
+        await hideSide();
+      } else {
+        state.sideOpen = false;
       }
     });
 
     // 侧栏是独立窗口，主界面换主题时把主题推过去，别一半深一半浅
     document.addEventListener('theme-changed', () => {
       if (!state.lastPayload) return;
-      pushSide(Object.assign({}, state.lastPayload, { theme: currentTheme() }));
+      pushSide(Object.assign({}, state.lastPayload, {
+        theme: currentTheme(),
+        darkTone: currentDarkTone(),
+      }));
     });
 
     const api = sideApi();

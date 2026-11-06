@@ -1474,7 +1474,13 @@
     }
 
     async function run() {
+      // 上一次「停止」留下的旗标不能带到这一次，否则一开始就退出
+      try { window.__wbInboxStop = false; } catch (e) { /* ignore */ }
+      var stopped = false;
+
       for (var step = 0; step < maxRows; step += 1) {
+        // 主界面点了「停止」：在这里断，粒度是「一行」，最多再等一次点击后的 2 秒
+        if (window.__wbInboxStop) { stopped = true; break; }
         var btn = pick();
         if (!btn) break;
         var row = inboxRowOf(btn) || btn.parentElement;
@@ -1517,6 +1523,7 @@
         after: after,
         clicked: clicked,
         mode: mode,
+        stopped: stopped,
         failed: failed,
         url: location.href,
       };

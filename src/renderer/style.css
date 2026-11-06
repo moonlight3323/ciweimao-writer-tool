@@ -116,6 +116,63 @@
   --chevron: #8a7f66;
 }
 
+/* 深色 · 深蓝黑：底色走冷蓝，主色从品牌金换成青蓝。
+   和上面的「深黄黑」是同一档深色的两套配色，靠 data-dark-tone 选择，
+   值域只有 amber / blue（见 dark-tone.js）。
+   注意：这里必须写全 dark 块里的每一个变量 —— 漏一个就会从 amber 那套
+   继承过来，表现是「整体变蓝了，但某块还是黄」这种很难看出来的错色。 */
+:root[data-theme="dark"][data-dark-tone="blue"] {
+  color-scheme: dark;
+
+  --bg: #0e1319;
+  --surface: #161d26;
+  --surface-2: #121922;
+  --surface-3: #1d2734;
+  --surface-4: #1a2532;
+  --border: #24303e;
+  --border-strong: #34445a;
+  --text: #e0e8f4;
+  --text-2: #a6b5c9;
+  --text-3: #6d7c92;
+
+  --accent: #5aa9ff;
+  --accent-hover: #7cbcff;
+  --accent-weak: #17293d;
+  --accent-ink: #a9d5ff;
+  --accent-line: #3f88d8;
+
+  --ok-bg: #16291f;
+  --ok-ink: #7fc79a;
+  --warn-bg: #2b2412;
+  --warn-ink: #e3bb6d;
+
+  --up: #f08a80;
+  --down: #7fc79a;
+
+  --danger-bg: #341d20;
+  --danger-ink: #f0a0a4;
+  --danger-line: #c9555f;
+
+  --chip-bg: #1c2735;
+  --chip-ink: #a9b8cc;
+  --hl-bg: #1c3450;
+  --hl-ink: #b7d9ff;
+
+  --track: #1b242f;
+  --seg-active: #2b3a4d;
+  --step-bg: #1e2834;
+  --seg-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+
+  --chart-line: #5aa9ff;
+  --chart-grid: #24303e;
+  --chart-ink: #6d7c92;
+  --chart-dot: #161d26;
+
+  --scroll: #2a3644;
+  --scroll-hover: #3a4a5d;
+  --chevron: #7c8ba0;
+}
+
 /* 粉白主题：浅色底换成粉调，主色从品牌金改为樱粉。
    整体圆角比浅色更大（--radius 提到 16px），配合文末的圆润增强规则使用。 */
 :root[data-theme="pink"] {
@@ -457,6 +514,22 @@ body {
 .btn.ghost:hover { background: var(--surface-3); color: var(--text); border-color: var(--accent-line); }
 .btn.ghost:disabled { opacity: 0.55; cursor: default; }
 
+/* 常用入口的「浅强调」样式：比 ghost 明显，又不到 primary 那种实色块。
+   后台工具栏上的「敏感词侧栏」用它——发布时最常点的一个，白底太容易看漏。 */
+.btn.accent-soft {
+  background: var(--accent-weak);
+  border-color: var(--accent-line);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.btn.accent-soft:hover {
+  border-color: var(--accent-ink);
+  filter: brightness(0.93);
+}
+
+.btn.accent-soft:disabled { opacity: 0.55; cursor: default; }
+
 /* 会改动平台数据的按钮：底色不刺眼，靠描边和字色表达「危险」 */
 .btn.danger {
   background: var(--surface);
@@ -717,6 +790,10 @@ body {
   padding: 4px 11px;
   border-radius: 6px;
   cursor: pointer;
+  /* 工具栏挤窄时按钮会被压到最小宽度，中文就会一个字一行竖着排，
+     再配上圆角就成了「竖着的胶囊」——这里禁止换行，宁可让工具栏换行 */
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .segmented button.is-active {
@@ -2542,12 +2619,14 @@ body.is-locked { overflow: hidden; }
   box-shadow: 0 4px 18px rgba(226, 140, 172, 0.10);
 }
 
+/* 分段控件不做胶囊：原来给的是 999px，配上被挤窄的按钮就成了竖椭圆。
+   统一成小圆角矩形，外框与内项保持同一套半径关系（外 10 / 内 7）。 */
 :root[data-theme="pink"] .segmented {
-  border-radius: 999px;
+  border-radius: 10px;
   padding: 3px;
 }
 
-:root[data-theme="pink"] .segmented button { border-radius: 999px; }
+:root[data-theme="pink"] .segmented button { border-radius: 7px; }
 
 :root[data-theme="pink"] .input,
 :root[data-theme="pink"] select,
@@ -2903,3 +2982,607 @@ body.is-locked { overflow: hidden; }
   font-size: 12px;
   color: var(--text-3);
 }
+
+/* ---------------------------------------------------------- 行内说明（问号） */
+
+/* 批量条上的「演练」需要一句解释，但常驻说明会把这行挤乱，
+   所以做成一个浅色小问号：悬停或键盘 Tab 到它时才浮出气泡。 */
+.help-dot {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  margin-left: -4px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-3);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: help;
+  outline: none;
+  user-select: none;
+}
+
+.help-dot:hover,
+.help-dot:focus-visible {
+  border-color: var(--accent-line);
+  background: var(--accent-weak);
+  color: var(--accent-ink);
+}
+
+.help-tip {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  z-index: 60;
+  width: 252px;
+  max-width: 62vw;
+  padding: 9px 11px;
+  border-radius: 9px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .13);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.7;
+  color: var(--text-2);
+  text-align: left;
+  white-space: normal;
+  /* 不接指针事件：否则气泡会挡住下面的控件，鼠标一移开就闪 */
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(-50%) translateY(3px);
+  transition: opacity .14s ease-out, transform .14s ease-out;
+}
+
+.help-tip b { font-weight: 600; color: var(--text); }
+
+/* 气泡下沿的小尖角，指向问号 */
+.help-tip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-left: -5px;
+  border: 5px solid transparent;
+  border-top-color: var(--border-strong);
+}
+
+.help-dot:hover .help-tip,
+.help-dot:focus-visible .help-tip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ---------------------------------------------------------- 抓取三步引导 */
+
+/* 这个页面的操作有先后顺序，但三个按钮摆在下面看不出先后。
+   顶上一排小胶囊把顺序直说了，当前该做哪步高亮、做完的打勾。 */
+.crawl-guide {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin: 10px 0 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.crawl-guide li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 5px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 12px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.crawl-guide b {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text-3);
+  font-size: 10px;
+  font-weight: 600;
+  flex: 0 0 16px;
+}
+
+.crawl-guide li.is-active {
+  border-color: var(--accent-line);
+  background: var(--accent-weak);
+  color: var(--accent-ink);
+  font-weight: 500;
+}
+
+.crawl-guide li.is-active b { background: var(--accent); color: var(--accent-ink); }
+
+.crawl-guide li.is-done { color: var(--text-2); border-color: var(--border); }
+.crawl-guide li.is-done b { background: var(--ok-bg); color: var(--ok-ink); }
+
+/* 完成提示里的「下一步」：和上面的条数统计分开，否则会被当成同一句话读完 */
+.crawl-next {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  line-height: 1.8;
+}
+
+.crawl-next b { color: var(--accent-ink); }
+
+/* 「刷新数据」被指引过去时闪两下：用户刚切到数据看板，得一眼看到该点哪儿 */
+@keyframes btnPulse {
+  0% { box-shadow: 0 0 0 0 var(--accent-line); }
+  70% { box-shadow: 0 0 0 7px rgba(0, 0, 0, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
+}
+
+.btn.is-pulse { animation: btnPulse 1.2s ease-out 2; }
+
+/* ---------------------------------------------------------- 密码本首次说明 */
+
+/* 工具条里的第二行：占满一行折到下面，展开时把平台视图往下推 */
+.vault-intro {
+  flex: 1 0 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.vault-steps {
+  display: flex;
+  align-items: center;
+  gap: 6px 12px;
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.7;
+}
+
+.vault-steps span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.vault-steps b {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--accent-weak);
+  color: var(--accent-ink);
+  font-size: 10px;
+  font-weight: 600;
+  flex: 0 0 15px;
+}
+
+.vault-note {
+  flex: 1 0 100%;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--text-3);
+}
+
+.vault-intro-actions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+/* ---------------------------------------------------------- 首次使用引导 */
+
+.guide-card { max-width: 520px; }
+
+.guide-steps {
+  counter-reset: guide;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 14px 0 2px;
+  padding: 0;
+  list-style: none;
+}
+
+.guide-steps li {
+  counter-increment: guide;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-2);
+}
+
+.guide-steps li::before {
+  content: counter(guide);
+  flex: 0 0 18px;
+  height: 18px;
+  margin-top: 2px;
+  border-radius: 50%;
+  background: var(--accent-weak);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.guide-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+  flex-wrap: wrap;
+}
+
+/* ---------------------------------------------------------- 按钮旁的问号 */
+
+/* 作品库工具栏：问号要贴着按钮，所以和按钮包在一个 inline-flex 里；
+   这一排在页面顶部，气泡得往下弹，往上会被滚动容器边缘切掉 */
+.btn-help-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.btn-help-wrap .help-dot { margin-left: 0; }
+
+.help-dot.tip-below .help-tip {
+  top: calc(100% + 9px);
+  bottom: auto;
+  transform: translateX(-50%) translateY(-3px);
+}
+
+.help-dot.tip-below .help-tip::after {
+  top: auto;
+  bottom: 100%;
+  border-top-color: transparent;
+  border-bottom-color: var(--border-strong);
+}
+
+.help-dot.tip-below:hover .help-tip,
+.help-dot.tip-below:focus-visible .help-tip {
+  transform: translateX(-50%) translateY(0);
+}
+
+/* 工具栏靠右的问号：气泡右对齐，否则居中会溢出内容区被切掉 */
+.help-dot.tip-right .help-tip {
+  left: auto;
+  right: -3px;
+  transform: translateY(-3px);
+}
+
+.help-dot.tip-right .help-tip::after {
+  left: auto;
+  right: 7px;
+  margin-left: 0;
+}
+
+.help-dot.tip-right:hover .help-tip,
+.help-dot.tip-right:focus-visible .help-tip {
+  transform: translateY(0);
+}
+
+/* ---------------------------------------------------------- 文字选择 */
+
+/* 桌面软件的手感：按住鼠标拖动不应该把整片界面文字刷成蓝色。
+   全局关掉，再把「确实需要复制」的地方逐个放行：
+   输入框、正文编辑器、评论与原文、执行日志、路径、说明类文案。 */
+body {
+  user-select: none;
+}
+
+input,
+textarea,
+select,
+[contenteditable="true"],
+.mono,
+.notice,
+.writer-notice,
+.exec-log,
+.review-body,
+.review-paragraph,
+.review-meta-line,
+.update-changes,
+.update-status,
+.update-meta,
+.guide-steps,
+.help-tip,
+.vault-note,
+.crawl-next,
+.credit {
+  user-select: text;
+}
+
+/* ============================================================
+   码字区：显示设置（字体 / 字号 / 行距 / 页面宽度）
+   四个值都落在 CSS 变量上，textarea 与高亮层共用同一套，
+   所以调完不会出现「字换了、高亮还按旧字号画」的错位。
+   ============================================================ */
+.writer-editor { position: relative; }
+
+.writer-display-panel {
+  position: absolute;
+  top: 42px;
+  right: 14px;
+  z-index: 30;
+  width: 268px;
+  padding: 12px 14px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .12);
+}
+
+.wdp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 9px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.wdp-row label { flex: 0 0 58px; }
+.wdp-row select { flex: 1; min-width: 0; }
+.wdp-row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent-line); }
+.wdp-val { flex: 0 0 52px; text-align: right; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+.wdp-foot {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+/* 正文与高亮层共用排版参数 */
+.writer-text-wrap { position: relative; flex: 1; min-height: 0; display: flex; }
+
+.writer-textarea,
+.writer-highlight {
+  font-family: var(--writer-font, "Microsoft YaHei", "Noto Serif SC", sans-serif);
+  font-size: var(--writer-size, 16px);
+  line-height: var(--writer-line, 2.05);
+  letter-spacing: .2px;
+  padding: 22px 38px 48px;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  box-sizing: border-box;
+}
+
+.writer-textarea {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  /* 滚动条会占掉宽度，导致高亮层和正文换行位置不一致，索性不显示
+     （滚轮、PgUp/PgDn、Ctrl+End 都照常） */
+  scrollbar-width: none;
+}
+
+.writer-textarea::-webkit-scrollbar { display: none; }
+
+.writer-highlight {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  color: transparent;
+  pointer-events: none;
+  user-select: none;
+}
+
+.writer-highlight mark {
+  background: rgba(255, 120, 120, .32);
+  color: transparent;
+  border-radius: 3px;
+  box-shadow: inset 0 -1px 0 rgba(226, 76, 76, .55);
+}
+
+:root[data-theme="dark"] .writer-highlight mark { background: rgba(255, 110, 110, .26); }
+
+.writer-paper { width: min(var(--writer-paper-width, 760px), calc(100% - 42px)); }
+
+/* ---------------------------------------------------------- 右栏敏感词面板 */
+
+.writer-badwords {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.wbp-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.wbp-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--danger-bg);
+  color: var(--danger-ink);
+  font-size: 10px;
+  text-align: center;
+}
+
+.wbp-empty { margin-top: 7px; font-size: 11px; line-height: 1.7; color: var(--text-3); }
+
+.wbp-item {
+  margin-top: 9px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.wbp-word {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--danger-ink);
+  word-break: break-all;
+}
+
+.wbp-ctx { margin-top: 3px; font-size: 10px; line-height: 1.6; color: var(--text-3); word-break: break-all; }
+.wbp-ctx mark { background: rgba(255, 120, 120, .3); color: inherit; border-radius: 2px; }
+
+.wbp-acts { display: flex; flex-wrap: wrap; gap: 2px 8px; margin-top: 6px; }
+
+.wbp-acts button {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--accent-ink);
+  cursor: pointer;
+}
+
+.wbp-acts button:hover { text-decoration: underline; }
+.wbp-acts button.is-skip { color: var(--text-3); }
+
+/* 手动加词：输入框 + 按钮一行，排在统计与操作按钮之间 */
+.wordlib-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 10px;
+}
+
+.wordlib-add .input { flex: 1; min-width: 0; }
+
+/* ---------------------------------------------------------- 专注模式 */
+
+/* 只留章节列表 + 正文：左侧导航、顶栏全部让出空间。窗口最大化由主进程负责。 */
+body.is-focus .sidebar,
+body.is-focus .topbar { display: none; }
+
+/* 内容区原本靠 padding:24px 让位、编辑器再 margin:-24px 反向贴边；
+   专注模式下 padding 归零，编辑器高度也要按「没有顶栏」重算 ——
+   否则顶部被切掉一截、底下空一块（第一版就是这样）。 */
+body.is-focus .content { padding: 0; overflow: hidden; }
+body.is-focus .writer-editor { height: 100vh; margin: 0; }
+
+/* 码字统计不再是右栏，改成贴在窗口右侧中间的悬浮卡片：
+   既不占正文宽度，专注模式下也还能点开看 */
+body.is-focus .writer-stats {
+  position: fixed;
+  right: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 208px;
+  flex: 0 0 auto;
+  max-height: 78vh;
+  overflow-y: auto;
+  padding: 16px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .16);
+  z-index: 45;
+}
+
+body.is-focus .writer-stats-mascot { width: 56px; height: 56px; font-size: 28px; margin-bottom: 9px; }
+
+/* 纸张再宽也不压到悬浮卡片：窄屏时自动收窄 */
+body.is-focus .writer-paper { width: min(var(--writer-paper-width, 1100px), calc(100% - 260px)); }
+
+body.is-focus .writer-tool.is-active#btnWriterFocus {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent-line);
+}
+
+/* 显示设置的加减号：一次一格，比滑块好对准 */
+.wdp-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  justify-content: flex-end;
+}
+
+.wdp-step button {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.wdp-step button:hover {
+  border-color: var(--accent-line);
+  background: var(--surface-3);
+  color: var(--accent-ink);
+}
+
+.wdp-step button:active { transform: translateY(1px); }
+
+.wdp-step .wdp-val { flex: 0 0 56px; text-align: center; }
+
+/* ---------------------------------------------------------- 码字台：深色一键切换 */
+
+/* 两枚按钮挨着放：左边切明暗，右边切深色里的配色。
+   配色按钮前面加一个小色点，不用读文字也能看出当前是哪套。 */
+.writer-tool-tone {
+  padding: 5px 8px;
+  font-size: 11px;
+}
+
+.writer-tool-tone::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  border-radius: 50%;
+  vertical-align: 1px;
+  background: #f9bf03;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .12) inset;
+}
+
+.writer-tool-tone[data-tone="blue"]::before { background: #5aa9ff; }
+
+/* 浅色下淡一点表示「现在还用不上」，但仍可点（点下去会切到深色） */
+.writer-tool-tone.is-dim { opacity: .55; }
