@@ -4,7 +4,7 @@
  * 平台榜单
  *
  * 与作者后台无关，抓的是公开页 www.ciweimao.com/rank-index，无需登录。
- * 精简版只保留两个榜：点击榜、收藏榜，各取周榜与月榜前 10。
+ * 读取公开页面上的九类榜单，各取周榜与月榜前 10。
  *
  * 页面结构（实测 2026-11-04）：
  *   div.title-box > h3.title(榜名) + ol(周榜/月榜切换)
@@ -12,7 +12,12 @@
  *   第 1 名是 li.top1 > div.info（含作者），第 2 名起是 li > a[title]
  */
 (function (root) {
-  const WANTED = { 点击榜: 'click', 收藏榜: 'collect' };
+  const WANTED = {
+    点击榜: 'click', 收藏榜: 'collect', 推荐榜: 'recommend', 推荐票榜: 'recommend',
+    订阅榜: 'subscribe', 月票榜: 'monthly', 吐槽榜: 'tsukkomi', 间贴榜: 'tsukkomi',
+    新书榜: 'newbook', 刀片榜: 'blade', 更新榜: 'update',
+  };
+  const RANK_KEYS = ['click', 'collect', 'recommend', 'subscribe', 'monthly', 'tsukkomi', 'newbook', 'blade', 'update'];
   const TOP_N = 10;
 
   /** '31.0万' → 310000；'5507' → 5507 */
@@ -62,16 +67,18 @@
 
   /**
    * 解析榜单页 HTML。
-   * @returns {{click:{week:Array,month:Array}, collect:{week:Array,month:Array}}}
+   * @returns {Object<string,{week:Array,month:Array}>}
    */
   function parseRankHtml(html) {
     const doc = new DOMParser().parseFromString(html, 'text/html');
-    const out = { click: { week: [], month: [] }, collect: { week: [], month: [] } };
+    const out = {};
+    RANK_KEYS.forEach((key) => { out[key] = { week: [], month: [] }; });
 
     const heads = doc.querySelectorAll('h3.title');
     for (let i = 0; i < heads.length; i += 1) {
-      const name = heads[i].textContent.trim();
-      const key = WANTED[name];
+      const name = heads[i].textContent.replace(/\s+/g, '').trim();
+      const alias = Object.keys(WANTED).find((x) => name === x || name.includes(x));
+      const key = alias ? WANTED[alias] : '';
       if (!key) continue;
 
       const titleBox = heads[i].closest('.title-box');
@@ -109,7 +116,7 @@
    */
   function annotate(current, previous) {
     const result = {};
-    ['click', 'collect'].forEach((key) => {
+    RANK_KEYS.forEach((key) => {
       result[key] = {};
       ['week', 'month'].forEach((period) => {
         const cur = (current[key] && current[key][period]) || [];
@@ -146,7 +153,7 @@
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   }
 
-  const api = { parseRankHtml, parseNum, previousRecord, annotate, mergeRecord, today, TOP_N };
+  const api = { parseRankHtml, parseNum, previousRecord, annotate, mergeRecord, today, TOP_N, RANK_KEYS };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.Rank = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

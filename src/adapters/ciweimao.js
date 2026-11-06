@@ -88,7 +88,9 @@
       var speakHref = speakA ? speakA.href : '';
 
       out.push({
-        id: id,
+        id: 'tsukkomi:' + id,
+        platformId: id,
+        kind: 'tsukkomi',
         content: normx(contentEl ? contentEl.textContent : ''),
         nickname: firstTextNodeX(h5),
         time: firstTextNodeX(op),
@@ -127,21 +129,115 @@
     return res;
   }
 
-  /** 提取书评（长评 / 讨论）列表。结构未稳定，先做宽松抓取 */
+  /**
+   * 提取普通书评（作品评论区）。
+   *
+   * 作者后台的书评与间贴都以 h5.mail-title 为标题节点，但书评页的
+   * 外层 id 不始终稳定。因此先用标题节点定位，再从操作链接里取评论/读者编号。
+   * 返回字段与 extractTsukkomi 对齐，让审查引擎能同时处理两种评论。
+   */
   function extractReview() {
     function normx(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
+    function qpx(url, key) {
+      var m = String(url || '').match(new RegExp('[?&]' + key + '=([^&#]+)'));
+      return m ? decodeURIComponent(m[1]) : '';
+    }
+    function firstText(el) {
+      if (!el) return '';
+      for (var n = 0; n < el.childNodes.length; n += 1) {
+        if (el.childNodes[n].nodeType === 3 && normx(el.childNodes[n].textContent)) {
+          return normx(el.childNodes[n].textContent);
+        }
+      }
+      return '';
+    }
     var out = [];
-    var nodes = document.querySelectorAll('div[id^="review"], div[id^="review_"]');
-    for (var i = 0; i < nodes.length; i += 1) {
-      var div = nodes[i];
-      var id = div.id.replace(/^review_?/, '');
+    var titles = document.querySelectorAll('h5.mail-title');
+    for (var i = 0; i < titles.length; i += 1) {
+      var h5 = titles[i];
+      var scope = h5.closest('li') || h5.parentElement || h5;
+      var contentEl = scope.querySelector('p.fold, .review-content, .reply-content, p');
+      if (!contentEl) {
+        var sib = h5.nextElementSibling;
+        while (sib && !normx(sib.textContent)) sib = sib.nextElementSibling;
+        contentEl = sib;
+      }
+      var content = normx(contentEl ? contentEl.textContent : '');
+      if (!content) continue;
+
+      var links = scope.querySelectorAll('a[href]');
+      var reviewId = '';
+      var readerId = '';
+      var bookId = '';
+      var actions = { delete: '', speak: '', top: '', hide: '', transparent: false };
+      for (var j = 0; j < links.length; j += 1) {
+        var href = links[j].href || links[j].getAttribute('href') || '';
+        var text = normx(links[j].textContent);
+        reviewId = reviewId || qpx(href, 'review_id') || qpx(href, 'id');
+        readerId = readerId || qpx(href, 'speak') || qpx(href, 'reader_id');
+        bookId = bookId || qpx(href, 'book_id');
+        if (/\u53d6\u6d88\u7f6e\u9876|\u7f6e\u9876/.test(text)) actions.top = href;
+        else if (/\u5220\u9664|\u79fb\u9664/.test(text)) actions.delete = href;
+        else if (/\u7981\u8a00|\u89e3\u7981/.test(text)) actions.speak = href;
+        else if (/\u9690\u85cf|\u5c4f\u853d/.test(text)) actions.hide = href;
+        else if (/\u900f\u660e/.test(text)) actions.transparent = true;
+      }
+      var meta = scope.querySelector('[data-reader-id]');
+      readerId = readerId || (meta ? meta.getAttribute('data-reader-id') : '');
+      var op = h5.querySelector('span.mail-operate');
+      var rawId = reviewId || (readerId + ':' + content.slice(0, 40)) || String(i + 1);
       out.push({
-        id: id,
-        content: normx(div.innerText).slice(0, 4000),
-        html: div.innerHTML.slice(0, 2000),
+        id: 'review:' + rawId,
+        platformId: reviewId,
+        kind: 'review',
+        content: content.slice(0, 4000),
+        nickname: firstText(h5) || normx(h5.textContent).split(' ')[0],
+        time: firstText(op),
+        bookId: bookId,
+        bookName: '',
+        chapterName: '',
+        paraPos: '',
+        chapterId: '',
+        readerId: readerId,
+        isTop: /\u53d6\u6d88\u7f6e\u9876/.test(normx(scope.textContent)),
+        actions: actions,
       });
     }
-    return { count: out.length, items: out };
+    return out;
+  }
+
+  /** 以后台读者管理的查询表单只读查询粉丝值。 */
+  async function queryFanValue(args) {
+    function normx(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
+    var o = args || {};
+    var nickname = String(o.nickname || '').trim();
+    if (!nickname) return { ok: false, error: '缺少读者昵称' };
+    var body = new URLSearchParams();
+    body.set('subItem', 'all');
+    body.set('book_id', String(o.bookId || ''));
+    body.set('content', nickname);
+    body.set('select_book', '查看');
+    body.set('condition', 'on');
+    body.set('tabType', 'fans');
+    var res = await fetch('/review_manage/manage_reader', {
+      method: 'POST', credentials: 'include', body: body,
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    var html = await res.text();
+    var doc = new DOMParser().parseFromString(html, 'text/html');
+    var levelEl = doc.querySelector('.reader-info p.level');
+    var fanEl = doc.querySelector('.info-box.fans');
+    var text = normx(fanEl ? fanEl.textContent : '');
+    var m = text.replace(/,/g, '').match(/([\d.]+)\s*(\u4e07)?/);
+    var value = null;
+    if (m) value = Math.round(parseFloat(m[1]) * (m[2] ? 10000 : 1));
+    return {
+      ok: !!fanEl,
+      status: res.status,
+      value: value,
+      fansText: text,
+      level: normx(levelEl ? levelEl.textContent : ''),
+    };
   }
 
   /** 提取作品列表（book_manage/view_list） */
@@ -1871,6 +1967,7 @@
     extractTsukkomi: extractTsukkomi,
     extractPager: extractPager,
     extractReview: extractReview,
+    queryFanValue: queryFanValue,
     extractBooks: extractBooks,
     extractBookOptions: extractBookOptions,
     extractBookStats: extractBookStats,
