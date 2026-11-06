@@ -964,7 +964,10 @@ ipcMain.handle('rank:fetch', async () => {
 const gotLock = app.requestSingleInstanceLock();
 
 if (!gotLock) {
-  app.quit();
+  // 第二实例必须立即结束：app.quit() 会排队等到 ready 之后才真正退出，
+  // 期间进程挂起不销毁，用户反复双击就会堆出一串空壳进程占内存。
+  // 此处尚未创建窗口、未启动服务，直接 exit 不会有任何清理遗漏。
+  app.exit(0);
 } else {
   app.on('second-instance', () => {
     if (win && !win.isDestroyed()) {
