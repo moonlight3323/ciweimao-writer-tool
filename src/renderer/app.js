@@ -4502,6 +4502,14 @@ $('#btnWriterTypos').addEventListener('click', () => {
   panel.hidden = !panel.hidden;
   $('#btnWriterTypos').classList.toggle('is-active', !panel.hidden);
 });
+$('#btnWriterTyposCollapse').addEventListener('click', () => {
+  const body = $('#writerTypoBody');
+  const collapsed = body.hidden;
+  body.hidden = !collapsed;
+  const button = $('#btnWriterTyposCollapse');
+  button.textContent = collapsed ? '收起⌃' : '展开⌄';
+  button.setAttribute('aria-expanded', String(collapsed));
+});
 $('#btnWriterResetStats').addEventListener('click', writerResetSession);
 
 function setWriterChaptersHidden(hidden, remember) {

@@ -362,17 +362,17 @@
               </main>
 
               <aside class="writer-stats" id="writerStatsPanel">
-                <div class="writer-stats-mascot">✍</div>
-                <h3>本次码字</h3>
-                <dl>
-                  <dt>本次码字</dt><dd><b id="writerTyped">0</b> 字</dd>
-                  <dt>码字速率</dt><dd><b id="writerSpeed">0</b> 字/时</dd>
-                  <dt>码字时间</dt><dd id="writerActiveTime">00:00:00</dd>
-                  <dt>空闲时间</dt><dd id="writerIdleTime">00:00:00</dd>
-                </dl>
-                <div class="plugin-editor-stats" id="pluginEditorStats" hidden></div>
-                <p>粘贴内容不计入本次码字与速率。</p>
-                <button class="btn ghost btn-sm" id="btnWriterResetStats" type="button">重新计时</button>
+                <!-- 错别字单独放在右栏顶部；候选较多时只在此卡片内部滚动。 -->
+                <div class="writer-typos" id="writerTypos">
+                  <div class="wtp-head">
+                    <div class="wtp-title"><b>错别字提示</b><span class="wtp-count" id="wtpCount">0</span></div>
+                    <button class="wtp-toggle" id="btnWriterTyposCollapse" type="button" aria-expanded="true">收起⌃</button>
+                  </div>
+                  <div class="wtp-body" id="writerTypoBody">
+                    <div class="wtp-empty" id="wtpEmpty">本章暂未发现明确的常见错写</div>
+                    <div class="wtp-list" id="wtpList"></div>
+                  </div>
+                </div>
 
                 <!-- 实时敏感词检测：命中的词在正文里高亮，这里逐词给出处理方式 -->
                 <div class="writer-badwords" id="writerBadwords">
@@ -383,13 +383,20 @@
                   <div class="wbp-empty" id="wbpEmpty">本章没有命中词库里的词</div>
                   <div class="wbp-list" id="wbpList"></div>
                 </div>
-                <div class="writer-typos" id="writerTypos">
-                  <div class="wtp-head">
-                    <b>错别字提示</b>
-                    <span class="wtp-count" id="wtpCount">0</span>
-                  </div>
-                  <div class="wtp-empty" id="wtpEmpty">本章暂未发现明确的常见错写</div>
-                  <div class="wtp-list" id="wtpList"></div>
+
+                <!-- 码字统计固定为右栏底部区域，避免与错别字提示混在一起。 -->
+                <div class="writer-writing-stats" id="writerWritingStats">
+                  <div class="writer-stats-mascot">✍</div>
+                  <h3>本次码字</h3>
+                  <dl>
+                    <dt>本次码字</dt><dd><b id="writerTyped">0</b> 字</dd>
+                    <dt>码字速率</dt><dd><b id="writerSpeed">0</b> 字/时</dd>
+                    <dt>码字时间</dt><dd id="writerActiveTime">00:00:00</dd>
+                    <dt>空闲时间</dt><dd id="writerIdleTime">00:00:00</dd>
+                  </dl>
+                  <div class="plugin-editor-stats" id="pluginEditorStats" hidden></div>
+                  <p>粘贴内容不计入本次码字与速率。</p>
+                  <button class="btn ghost btn-sm" id="btnWriterResetStats" type="button">重新计时</button>
                 </div>
               </aside>
             </div>
