@@ -273,6 +273,7 @@
                       title="隐藏左侧导航与右侧统计，只留目录和正文；窗口同时最大化，再点一次退出">专注模式</button>
               <button class="writer-tool" id="btnWriterFormat" type="button" title="整理多余空行；回车时已自动缩进两格，这里主要用来收拾从别处粘进来的正文">一键排版</button>
               <button class="writer-tool" id="btnWriterFind" type="button">查找替换</button>
+              <button class="writer-tool is-active" id="btnWriterTypos" type="button" title="打开或收起本地错别字提示">错别字 <span id="writerTypoToolbarCount">0</span></button>
               <button class="writer-tool is-active" id="btnWriterStats" type="button">码字统计</button>
               <button class="writer-tool" id="btnWriterDisplay" type="button" title="字体、字号、行距与页面宽度">显示设置</button>
               <!-- 定时/立即发布设置暂时收起：等下个版本重做发布流程再放出来 -->
@@ -381,6 +382,14 @@
                   </div>
                   <div class="wbp-empty" id="wbpEmpty">本章没有命中词库里的词</div>
                   <div class="wbp-list" id="wbpList"></div>
+                </div>
+                <div class="writer-typos" id="writerTypos">
+                  <div class="wtp-head">
+                    <b>错别字提示</b>
+                    <span class="wtp-count" id="wtpCount">0</span>
+                  </div>
+                  <div class="wtp-empty" id="wtpEmpty">本章暂未发现明确的常见错写</div>
+                  <div class="wtp-list" id="wtpList"></div>
                 </div>
               </aside>
             </div>
@@ -1144,6 +1153,7 @@
   <script src="inbox.js"></script>
   <script src="probe.js"></script>
   <script src="badwords.js?v=20261106-1"></script>
+  <script src="typos.js?v=20261106-1"></script>
   <script src="publish.js?v=20261106-2"></script>
   <script src="prefs.js"></script>
   <script src="dark-tone.js"></script>

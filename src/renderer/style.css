@@ -3411,6 +3411,14 @@ select,
   box-shadow: inset 0 -1px 0 rgba(226, 76, 76, .55);
 }
 
+.writer-highlight mark.is-typo {
+  background: rgba(245, 191, 0, .24);
+  color: transparent;
+  box-shadow: inset 0 -2px 0 rgba(211, 143, 0, .85);
+}
+
+:root[data-theme="dark"] .writer-highlight mark.is-typo { background: rgba(245, 191, 0, .2); }
+
 :root[data-theme="dark"] .writer-highlight mark { background: rgba(255, 110, 110, .26); }
 
 .writer-paper { width: min(var(--writer-paper-width, 760px), calc(100% - 42px)); }
@@ -3476,6 +3484,52 @@ select,
 
 .wbp-acts button:hover { text-decoration: underline; }
 .wbp-acts button.is-skip { color: var(--text-3); }
+
+/* ---------------------------------------------------------- 右栏错别字提示 */
+
+.writer-typos {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.wtp-head { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); }
+.wtp-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent-weak);
+  color: var(--accent-ink);
+  font-size: 10px;
+  text-align: center;
+}
+.wtp-empty { margin-top: 7px; font-size: 11px; line-height: 1.7; color: var(--text-3); }
+.wtp-item {
+  margin-top: 9px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.wtp-word { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-2); }
+.wtp-word span { color: var(--danger-ink); text-decoration: underline wavy var(--danger-ink); }
+.wtp-word b { color: var(--text-3); }
+.wtp-word strong { color: var(--accent-ink); }
+.wtp-ctx { margin-top: 3px; font-size: 10px; line-height: 1.6; color: var(--text-3); word-break: break-all; }
+.wtp-ctx mark { background: rgba(245, 191, 0, .3); color: inherit; border-radius: 2px; }
+.wtp-reason { margin-top: 3px; color: var(--text-3); font-size: 10px; line-height: 1.5; }
+.wtp-acts { display: flex; flex-wrap: wrap; gap: 2px 8px; margin-top: 6px; }
+.wtp-acts button {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--accent-ink);
+  cursor: pointer;
+}
+.wtp-acts button:hover { text-decoration: underline; }
 
 /* 手动加词：输入框 + 按钮一行，排在统计与操作按钮之间 */
 .wordlib-add {

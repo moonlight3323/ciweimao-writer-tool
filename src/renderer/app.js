@@ -3663,6 +3663,7 @@ function loadWriterChapter() {
   renderWriterChapterList();
   // 换章：上一章的「无视」不该带过来，重新扫一遍
   writerBadwordIgnored.clear();
+  writerTypoIgnored.clear();
   scanWriterBadwords();
   // 目录长起来以后，当前章可能落在滚动区外：滚进视野。
   // 用 nearest 而不是 center，已经可见时不滚动，免得每点一次就整屏跳一下。
@@ -3702,10 +3703,36 @@ async function loadWriterBadwordWords() {
 }
 
 /** 高亮层：文字透明，只画命中词的底色 */
-function renderWriterHighlight(text, words) {
+function renderWriterHighlight(text, words, typoHits) {
   const layer = $('#writerHighlight');
   if (!layer) return;
-  layer.innerHTML = words.length ? window.BadWords.highlightHtml(text, words) : window.BadWords.escapeHtml(text);
+  const marks = [];
+  window.BadWords.hitRanges(text, words).forEach((hit) => {
+    marks.push({ start: hit.start, end: hit.end, type: 'badword', priority: 2 });
+  });
+  (typoHits || []).forEach((hit) => {
+    marks.push({ start: hit.start, end: hit.end, type: 'typo', priority: 1 });
+  });
+  marks.sort((a, b) => a.start - b.start || b.priority - a.priority || b.end - a.end);
+  const visible = [];
+  marks.forEach((mark) => {
+    const previous = visible[visible.length - 1];
+    if (previous && mark.start < previous.end) return;
+    visible.push(mark);
+  });
+  if (!visible.length) layer.innerHTML = window.BadWords.escapeHtml(text);
+  else {
+    let html = '';
+    let cursor = 0;
+    visible.forEach((mark) => {
+      html += window.BadWords.escapeHtml(text.slice(cursor, mark.start));
+      const cls = mark.type === 'typo' ? ' class="is-typo"' : '';
+      html += `<mark${cls}>${window.BadWords.escapeHtml(text.slice(mark.start, mark.end))}</mark>`;
+      cursor = mark.end;
+    });
+    html += window.BadWords.escapeHtml(text.slice(cursor));
+    layer.innerHTML = html;
+  }
   layer.scrollTop = writerContent.scrollTop;
   layer.scrollLeft = writerContent.scrollLeft;
 }
@@ -3743,6 +3770,33 @@ function renderWriterBadwordPanel(hits, text) {
   }).join('');
 }
 
+let writerTypoIgnoredWords = new Set();
+/** 本章临时忽略：换章清空，避免误把一次性文学表达带到下一章。 */
+const writerTypoIgnored = new Set();
+let writerTypoHits = [];
+
+function renderWriterTypoPanel(hits, text) {
+  const list = $('#wtpList');
+  if (!list) return;
+  $('#wtpCount').textContent = String(hits.length);
+  $('#writerTypoToolbarCount').textContent = String(hits.length);
+  $('#wtpEmpty').hidden = hits.length > 0;
+  list.innerHTML = hits.map((hit, index) => {
+    const c = hit.context || { before: '', hit: hit.word, after: '' };
+    return `
+      <div class="wtp-item">
+        <div class="wtp-word"><span>${escapeHtml(hit.word)}</span><b>→</b><strong>${escapeHtml(hit.suggestion)}</strong></div>
+        <div class="wtp-ctx">${escapeHtml(c.before)}<mark>${escapeHtml(c.hit)}</mark>${escapeHtml(c.after)}</div>
+        <div class="wtp-reason">${escapeHtml(hit.reason)}</div>
+        <div class="wtp-acts">
+          <button type="button" data-typo-index="${index}" data-typo-mode="replace">替换</button>
+          <button type="button" data-typo-index="${index}" data-typo-mode="ignore">本章忽略</button>
+          <button type="button" data-typo-index="${index}" data-typo-mode="save-ignore">加入忽略词库</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
 function scanWriterBadwords() {
   const text = writerContent.value || '';
   const words = writerBadwordWords.filter((w) => !writerBadwordIgnored.has(w));
@@ -3752,8 +3806,12 @@ function scanWriterBadwords() {
   const hits = window.BadWords.hitRanges(text, words);
 
   writerBadwordHits = hits;
-  renderWriterHighlight(text, words);
+  writerTypoHits = window.Typos
+    ? window.Typos.find(text, { ignoredWords: [...writerTypoIgnoredWords, ...writerTypoIgnored] })
+    : [];
+  renderWriterHighlight(text, words, writerTypoHits);
   renderWriterBadwordPanel(hits, text);
+  renderWriterTypoPanel(writerTypoHits, text);
 }
 
 function scheduleBadwordScan() {
@@ -3804,6 +3862,41 @@ $('#wbpList').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-wb-word]');
   if (!btn) return;
   applyWriterBadwordFix(btn.dataset.wbWord, btn.dataset.wbMode);
+});
+
+function applyWriterTypoFix(index, mode) {
+  const hit = writerTypoHits[Number(index)];
+  if (!hit) return;
+  if (mode === 'ignore') {
+    writerTypoIgnored.add(hit.word);
+    scanWriterBadwords();
+    $('#writerBottomState').textContent = `本章已无视「${hit.word}」的错别字提示`;
+    return;
+  }
+  if (mode === 'save-ignore') {
+    writerTypoIgnoredWords.add(hit.word);
+    if (window.Prefs) window.Prefs.set('typoIgnoredWords', [...writerTypoIgnoredWords]);
+    scanWriterBadwords();
+    $('#writerBottomState').textContent = `已将「${hit.word}」加入错别字忽略词库`;
+    return;
+  }
+  const current = writerContent.value.slice(hit.start, hit.end);
+  if (current !== hit.word) { scanWriterBadwords(); return; }
+  writerContent.focus();
+  writerContent.setSelectionRange(hit.start, hit.end);
+  writerContent.setRangeText(hit.suggestion, hit.start, hit.end, 'end');
+  writerTypedMask = writerContent.value.split('').map(() => 0);
+  syncWriterChapterFromForm();
+  updateWriterWordCount();
+  markWriterDirty();
+  scanWriterBadwords();
+  $('#writerBottomState').textContent = `已将「${hit.word}」替换为「${hit.suggestion}」`;
+}
+
+$('#wtpList').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-typo-index]');
+  if (!btn) return;
+  applyWriterTypoFix(btn.dataset.typoIndex, btn.dataset.typoMode);
 });
 
 // 设置页手动加词之后，码字台的词表要跟着换（不然得重启才生效）
@@ -4403,6 +4496,11 @@ $('#btnWriterStats').addEventListener('click', () => {
   const panel = $('#writerStatsPanel');
   panel.hidden = !panel.hidden;
   $('#btnWriterStats').classList.toggle('is-active', !panel.hidden);
+});
+$('#btnWriterTypos').addEventListener('click', () => {
+  const panel = $('#writerTypos');
+  panel.hidden = !panel.hidden;
+  $('#btnWriterTypos').classList.toggle('is-active', !panel.hidden);
 });
 $('#btnWriterResetStats').addEventListener('click', writerResetSession);
 
@@ -5668,6 +5766,9 @@ function maybeShowAfterLoginGuide(state) {
   // 主题与偏好：theme-init.js 已完成首帧上色，这里只做运行时同步
   try {
     if (window.Prefs) await window.Prefs.ready();
+    writerTypoIgnoredWords = new Set(
+      (window.Prefs && window.Prefs.get('typoIgnoredWords', [])) || [],
+    );
     reviewStrict = !!(window.Prefs && window.Prefs.get('reviewStrict', false));
     renderReviewStrict();
     window.Theme.boot();
