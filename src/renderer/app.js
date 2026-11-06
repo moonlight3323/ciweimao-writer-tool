@@ -91,6 +91,26 @@ function currentRect() {
   return { x: r.x, y: r.y + off, width: r.width, height: Math.max(1, r.height - off) };
 }
 
+/**
+ * 创作中心的右栏需要根据「编辑器实际可用高度」而不是固定窗口尺寸布局。
+ * 系统最大化时顶栏、边距和缩放比例都可能改变，单靠 100vh 会让错别字面板
+ * 或底部码字统计被挤出可视区域。给高编辑区加一个状态类，由 CSS 分配两个
+ * 独立的滚动区域；窗口还原时自动恢复普通布局。
+ */
+function syncWriterViewportLayout() {
+  const editor = $('#writerEditor');
+  if (!editor) return;
+  const height = editor.getBoundingClientRect().height;
+  document.body.classList.toggle('is-writer-tall', height >= 820);
+}
+
+if (typeof ResizeObserver !== 'undefined') {
+  const editor = $('#writerEditor');
+  if (editor) new ResizeObserver(syncWriterViewportLayout).observe(editor);
+}
+window.addEventListener('resize', syncWriterViewportLayout);
+syncWriterViewportLayout();
+
 /** 把平台视图的矩形与 #content 对齐（窗口变化、侧栏切换都会触发） */
 function syncBounds() {
   if (!browserOpen) return;
@@ -551,6 +571,7 @@ function renderConn(state) {
 
 window.api.browser.onEvent((data) => {
   if (data.type === 'browser-state') {
+    const wasLoginPage = !!(lastState && lastState.isLoginPage);
     lastState = data;
     renderConn(data);
     updateVaultBar(data);
@@ -560,6 +581,9 @@ window.api.browser.onEvent((data) => {
     if (/author\.ciweimao\.com\/book_manage/i.test(String(data.url || ''))) {
       scheduleAdoptNewBooks();
     }
+    // 应用启动时通常停在登录页。登录成功后即使没有跳到 book_manage，
+    // 也要检查已绑定作品的章节目录，不能只等用户手动点一次创作中心。
+    if (data.url && !data.isLoginPage && wasLoginPage) scheduleAdoptNewBooks();
   } else if (data.type === 'browser-error') {
     $('#pageCrumb').textContent = `加载失败 ${data.code} ${data.desc || ''}`;
   } else if (data.type === 'miaoyu-state') {
@@ -3339,23 +3363,30 @@ function writerNotice(text, error) {
 /**
  * 后台建了新书之后，本地作品库跟着建一本并绑定作品号，投递时不必再手动选。
  *
- * 触发点只有两个：切到创作中心、后台停在 book_manage 页面。都做去抖，
+ * 触发点包括登录成功、切到创作中心、后台停在 book_manage 页面。都做去抖，
  * 并且**静默失败** —— 未登录、网络不通、后台改版都属于正常情况，
  * 不该在界面上弹错误去打断用户。
  *
- * 判定逻辑在主进程（library.adoptPlatformBooks），这里只负责把后台清单递过去：
- * 只补「平台上还没有章节」的书，已有章节的老书仍留给「同步」按钮去拉正文。
+ * 判定逻辑在主进程（library.adoptPlatformBooks），这里只负责把后台清单递过去，
+ * 并对已绑定作品做新增章节增量同步。
  */
 let writerAdoptTimer = null;
 let writerAdoptBusy = false;
+let writerRemoteSyncBusy = false;
 
-async function adoptNewPlatformBooks() {
+function writerPlatformBookId(book) {
+  return String((book && (book.platformBookId || (book.source === 'author' ? book.bookId : ''))) || '').trim();
+}
+
+async function adoptNewPlatformBooks(remoteOverride) {
   if (writerAdoptBusy) return null;
   if (!lastState || !lastState.url || lastState.isLoginPage) return null;
 
   writerAdoptBusy = true;
   try {
-    const remote = await window.Exporter.listBooks();
+    const remote = Array.isArray(remoteOverride)
+      ? remoteOverride
+      : await window.Exporter.listBooks();
     if (!remote || !remote.length) return null;
 
     const res = await window.api.writer.adopt(remote.map((b) => ({
@@ -3367,17 +3398,25 @@ async function adoptNewPlatformBooks() {
 
     const created = (res && res.created) || [];
     const linked = (res && res.linked) || [];
-    if (!created.length && !linked.length) return res;
-
     await loadWriterBooks();
-    if (created.length === 1) {
+    const sync = await syncWriterBoundBooks(remote);
+    if (sync && sync.added) {
+      writerNotice(`作者库已更新：新增 ${sync.added} 章`
+        + (sync.conflicts ? `，发现 ${sync.conflicts} 个同章冲突` : '')
+        + (sync.failed ? `，${sync.failed} 章读取失败` : ''),
+        sync.failed > 0);
+    } else if (created.length === 1) {
       writerNotice(`已在作品库创建《${created[0].name}》，并连到后台这本书`);
     } else if (created.length > 1) {
       writerNotice(`已在作品库创建 ${created.length} 本新书并全部连到后台`);
     } else if (linked.length) {
       writerNotice(`《${linked[0].name}》已连到后台作品 ${linked[0].platformBookId}`);
+    } else if (sync && sync.skipped) {
+      writerNotice(`作者库已检查，有 ${sync.skipped} 本正在编辑的作品将在保存后再检查`);
+    } else if (sync && sync.books) {
+      writerNotice('作者库已检查，没有新增章节');
     }
-    return res;
+    return { ...res, sync };
   } catch (_) {
     return null;
   } finally {
@@ -3388,7 +3427,11 @@ async function adoptNewPlatformBooks() {
 /** 后台页面一有跳转就会连发几次状态，去抖避免重复拉清单 */
 function scheduleAdoptNewBooks() {
   clearTimeout(writerAdoptTimer);
-  writerAdoptTimer = setTimeout(() => { adoptNewPlatformBooks(); }, 1200);
+  writerAdoptTimer = setTimeout(async () => {
+    // 登录完成后可能还没有进入创作中心，先把本地索引读出来，增量同步才有目标。
+    await loadWriterBooks();
+    await adoptNewPlatformBooks();
+  }, 1200);
 }
 
 async function loadWriterBooks() {
@@ -3396,7 +3439,8 @@ async function loadWriterBooks() {
     const res = await window.api.writer.list();
     const local = (res && res.books) || [];
     await reconcileSavedOutputBooks(local);
-    const ids = new Set(local.map((b) => String(b.bookId)));
+    const ids = new Set(local.flatMap((b) => [b.bookId, b.platformBookId]
+      .filter(Boolean).map(String)));
     writerRemoteBooks = writerRemoteBooks.filter((b) => !ids.has(String(b.bookId)));
     writerBooks = local.concat(writerRemoteBooks);
     renderWriterBooks();
@@ -3458,13 +3502,25 @@ function renderWriterBooks() {
 
 function normaliseWriterBook(book) {
   const b = book || {};
-  b.chapters = (Array.isArray(b.chapters) ? b.chapters : []).map((c, i) => ({
-    ...c,
-    id: String(c.id || `chapter_${i + 1}`),
-    title: String(c.title || `第${i + 1}章`),
-    volume: String(c.volume || '正文'),
-    content: String(c.content || ''),
-  }));
+  b.chapters = (Array.isArray(b.chapters) ? b.chapters : []).map((c, i) => {
+    const platformChapterId = String(c.platformChapterId
+      || (window.WriterSync ? window.WriterSync.remoteChapterId(c) : '') || '');
+    const isPlatform = String(c.origin || '').toLowerCase() === 'platform'
+      || String(c.status || '').toLowerCase() === 'published'
+      || !!platformChapterId;
+    return {
+      ...c,
+      id: String(c.id || `chapter_${i + 1}`),
+      title: String(c.title || `第${i + 1}章`),
+      volume: String(c.volume || '正文'),
+      content: String(c.content || ''),
+      platformChapterId,
+      origin: isPlatform ? 'platform' : 'local',
+      status: isPlatform ? 'published' : 'unpublished',
+      conflict: !!c.conflict,
+      conflictKey: String(c.conflictKey || ''),
+    };
+  });
   if (!b.chapters.length) b.chapters.push({ id: 'chapter_1', title: '第一章', volume: '正文', content: '' });
   return b;
 }
@@ -3521,10 +3577,14 @@ async function pullWriterBookChapters(book, onStep) {
   const meta = new Map(listed.chapters.map((c) => [String(c.chapterId), c]));
   const fetched = result.chapters.map((c, i) => {
     const m = meta.get(String(c.chapterId)) || {};
+    const platformChapterId = String(c.chapterId || m.chapterId || '').trim();
     return {
-      id: `chapter_${c.chapterId || i + 1}`,
+      id: `chapter_${platformChapterId || i + 1}`,
+      platformChapterId,
       title: c.title || m.title || `第${i + 1}章`,
       volume: m.volume || '正文',
+      origin: 'platform',
+      status: 'published',
       content: c.content || '',
     };
   });
@@ -3536,10 +3596,134 @@ async function pullWriterBookChapters(book, onStep) {
     name,
     cover: book.cover || '',
     source: 'author',
+    platformBookId: String(book.platformBookId || book.bookId || ''),
     chapters,
   });
   writerRemoteBooks = writerRemoteBooks.filter((b) => String(b.bookId) !== String(book.bookId));
   return { chapters: chapters.length, failed: result.failed.length };
+}
+
+/**
+ * 已经绑定到后台的本地作品只拉取新增章节，不覆盖作者在本地继续修改的正文。
+ * 章节正文读取仍复用 Exporter，后台只读目录与新增章节内容。
+ */
+async function pullWriterBookNewChapters(localEntry, remoteBook, onStep) {
+  const say = typeof onStep === 'function' ? onStep : () => {};
+  const platformBookId = writerPlatformBookId(localEntry);
+  if (!platformBookId) return { added: 0, failed: 0, total: 0 };
+
+  const opened = await window.api.writer.open(localEntry.bookId);
+  if (!opened || !opened.book) throw new Error(`本地作品《${localEntry.name || ''}》不存在`);
+  const localBook = normaliseWriterBook(opened.book);
+  const name = String(remoteBook.name || localBook.name || '未命名作品');
+
+  say(`正在检查《${name}》的章节目录…`);
+  const listed = await window.Exporter.listChapters(platformBookId, {
+    onProgress: (p) => say(`正在检查《${name}》目录：已找到 ${p.count || 0} 章`),
+  });
+  const remoteChapters = listed && listed.chapters || [];
+  if (!remoteChapters.length) return { added: 0, failed: 0, total: 0 };
+
+  const missing = window.WriterSync.missingRemoteChapters(localBook.chapters, remoteChapters);
+  if (!missing.length) return { added: 0, failed: 0, total: remoteChapters.length };
+
+  const conflicts = new Map();
+  missing.forEach((chapter) => {
+    const hit = window.WriterSync.findChapterConflict(localBook.chapters, chapter);
+    if (!hit) return;
+    hit.chapter.conflict = true;
+    hit.chapter.conflictKey = hit.key;
+    conflicts.set(String(chapter.chapterId), hit);
+  });
+
+  const result = await window.Exporter.readContents(
+    { bookId: platformBookId, name },
+    missing,
+    {
+      onProgress: (p) => {
+        if (p.phase === 'chapter') say(`正在同步《${name}》新增章节：${p.done}/${p.total} · ${p.title || ''}`);
+      },
+    }
+  );
+  if (!result.chapters.length) {
+    return { added: 0, failed: result.failed.length || missing.length, total: remoteChapters.length };
+  }
+
+  const meta = new Map(missing.map((c) => [String(c.chapterId), c]));
+  const fetched = result.chapters.map((c, i) => {
+    const m = meta.get(String(c.chapterId)) || {};
+    const platformChapterId = String(c.chapterId || m.chapterId || '').trim();
+    return {
+      id: `chapter_${platformChapterId || Date.now() + i}`,
+      platformChapterId,
+      title: c.title || m.title || `新增章节 ${i + 1}`,
+      volume: m.volume || '正文',
+      origin: 'platform',
+      status: 'published',
+      conflict: conflicts.has(platformChapterId),
+      conflictKey: conflicts.get(platformChapterId)?.key || '',
+      content: c.content || '',
+    };
+  });
+  const chapters = window.ChapterOrder.displayChapters({
+    chapters: localBook.chapters.concat(fetched),
+  });
+  await window.api.writer.save({
+    ...localBook,
+    bookId: localBook.bookId,
+    name: localBook.name || name,
+    cover: remoteBook.cover || localBook.cover || '',
+    source: localBook.source === 'local' ? 'author' : (localBook.source || 'author'),
+    platformBookId,
+    chapters,
+  });
+  return {
+    added: fetched.length,
+    failed: result.failed.length,
+    conflicts: conflicts.size,
+    total: remoteChapters.length,
+  };
+}
+
+/** 检查所有已经绑定的作品，逐本拉取新增章节。 */
+async function syncWriterBoundBooks(remoteBooks) {
+  if (writerRemoteSyncBusy) return { added: 0, failed: 0, conflicts: 0, books: 0, skipped: 0 };
+  const remote = Array.isArray(remoteBooks) ? remoteBooks : [];
+  const remoteById = new Map(remote.map((b) => [String(b && b.bookId || ''), b]));
+  const targets = writerBooks.filter((book) => {
+    const id = writerPlatformBookId(book);
+    return book.source !== 'remote' && id && remoteById.has(id);
+  });
+  if (!targets.length) return { added: 0, failed: 0, conflicts: 0, books: 0, skipped: 0 };
+
+  writerRemoteSyncBusy = true;
+  let added = 0;
+  let failed = 0;
+  let conflicts = 0;
+  let skipped = 0;
+  try {
+    for (const local of targets) {
+      // 编辑中的正文以用户当前内容为准，等保存后下一次同步再检查，避免后台刷新
+      // 把尚未落盘的本地修改悄悄覆盖掉。
+      if (writerEditorBook && String(writerEditorBook.bookId) === String(local.bookId) && writerDirty) {
+        skipped += 1;
+        continue;
+      }
+      const remoteBook = remoteById.get(writerPlatformBookId(local));
+      try {
+        const res = await pullWriterBookNewChapters(local, remoteBook, writerNotice);
+        added += res.added;
+        failed += res.failed;
+        conflicts += res.conflicts || 0;
+      } catch (_) {
+        failed += 1;
+      }
+    }
+  } finally {
+    writerRemoteSyncBusy = false;
+  }
+  if (added) await loadWriterBooks();
+  return { added, failed, conflicts, books: targets.length, skipped };
 }
 
 async function syncWriterRemoteBook(remote) {
@@ -3609,6 +3793,13 @@ $('#btnWriterPullAll').addEventListener('click', async () => {
 /** 目录顺序在 chapter-order.js 里（纯函数，可在 Node 里直接测） */
 const writerDisplayChapters = (book) => window.ChapterOrder.displayChapters(book);
 
+function writerChapterStatus(chapter) {
+  return String(chapter && chapter.status || '').toLowerCase() === 'published'
+    || String(chapter && chapter.origin || '').toLowerCase() === 'platform'
+    || !!(chapter && chapter.platformChapterId)
+    ? '已发布' : '未发布';
+}
+
 function renderWriterChapterList() {
   if (!writerEditorBook) return;
   const query = $('#writerChapterSearch').value.trim().toLowerCase();
@@ -3630,7 +3821,9 @@ function renderWriterChapterList() {
         <div class="writer-chapter-row">
           <button class="writer-chapter-item ${String(chapter.id) === String(writerChapterId) ? 'is-active' : ''}"
                   data-writer-chapter="${escapeHtml(String(chapter.id))}" type="button">
-            <span>${escapeHtml(chapter.title)}</span><small>${writerFormatNumber(writerWordCount(chapter.content))}</small>
+            <span class="writer-chapter-title" title="${escapeHtml(chapter.title)}">${escapeHtml(chapter.title)}</span>
+            <em class="writer-chapter-status${chapter.conflict ? ' is-conflict' : ''}">${writerChapterStatus(chapter)}${chapter.conflict ? '·冲突' : ''}</em>
+            <small>${writerFormatNumber(writerWordCount(chapter.content))}</small>
           </button>
           <button class="writer-chapter-remove" data-writer-chapter-delete="${escapeHtml(String(chapter.id))}"
                   type="button" title="删除章节" aria-label="删除 ${escapeHtml(chapter.title)}">×</button>
@@ -3653,6 +3846,15 @@ function loadWriterChapter() {
   if (!chapter) return;
   $('#writerChapterTitle').value = chapter.title;
   $('#writerContent').value = chapter.content;
+  const statusEl = $('#writerChapterStatus');
+  if (statusEl) {
+    const published = writerChapterStatus(chapter) === '已发布';
+    statusEl.textContent = published
+      ? (chapter.conflict ? '已发布 · 同章冲突' : '已发布')
+      : (chapter.conflict ? '未发布 · 同章冲突' : '未发布');
+    statusEl.classList.toggle('is-published', published && !chapter.conflict);
+    statusEl.classList.toggle('is-conflict', !!chapter.conflict);
+  }
   writerBeforeText = chapter.content;
   writerSavedWordBaseline = writerWordCount(chapter.content);
   writerSavedBaselineChapterId = String(chapter.id);
@@ -3663,6 +3865,7 @@ function loadWriterChapter() {
   renderWriterChapterList();
   // 换章：上一章的「无视」不该带过来，重新扫一遍
   writerBadwordIgnored.clear();
+  writerTypoIgnored.clear();
   scanWriterBadwords();
   // 目录长起来以后，当前章可能落在滚动区外：滚进视野。
   // 用 nearest 而不是 center，已经可见时不滚动，免得每点一次就整屏跳一下。
@@ -3702,10 +3905,36 @@ async function loadWriterBadwordWords() {
 }
 
 /** 高亮层：文字透明，只画命中词的底色 */
-function renderWriterHighlight(text, words) {
+function renderWriterHighlight(text, words, typoHits) {
   const layer = $('#writerHighlight');
   if (!layer) return;
-  layer.innerHTML = words.length ? window.BadWords.highlightHtml(text, words) : window.BadWords.escapeHtml(text);
+  const marks = [];
+  window.BadWords.hitRanges(text, words).forEach((hit) => {
+    marks.push({ start: hit.start, end: hit.end, type: 'badword', priority: 2 });
+  });
+  (typoHits || []).forEach((hit) => {
+    marks.push({ start: hit.start, end: hit.end, type: 'typo', priority: 1 });
+  });
+  marks.sort((a, b) => a.start - b.start || b.priority - a.priority || b.end - a.end);
+  const visible = [];
+  marks.forEach((mark) => {
+    const previous = visible[visible.length - 1];
+    if (previous && mark.start < previous.end) return;
+    visible.push(mark);
+  });
+  if (!visible.length) layer.innerHTML = window.BadWords.escapeHtml(text);
+  else {
+    let html = '';
+    let cursor = 0;
+    visible.forEach((mark) => {
+      html += window.BadWords.escapeHtml(text.slice(cursor, mark.start));
+      const cls = mark.type === 'typo' ? ' class="is-typo"' : '';
+      html += `<mark${cls}>${window.BadWords.escapeHtml(text.slice(mark.start, mark.end))}</mark>`;
+      cursor = mark.end;
+    });
+    html += window.BadWords.escapeHtml(text.slice(cursor));
+    layer.innerHTML = html;
+  }
   layer.scrollTop = writerContent.scrollTop;
   layer.scrollLeft = writerContent.scrollLeft;
 }
@@ -3743,6 +3972,33 @@ function renderWriterBadwordPanel(hits, text) {
   }).join('');
 }
 
+let writerTypoIgnoredWords = new Set();
+/** 本章临时忽略：换章清空，避免误把一次性文学表达带到下一章。 */
+const writerTypoIgnored = new Set();
+let writerTypoHits = [];
+
+function renderWriterTypoPanel(hits, text) {
+  const list = $('#wtpList');
+  if (!list) return;
+  $('#wtpCount').textContent = String(hits.length);
+  $('#writerTypoToolbarCount').textContent = String(hits.length);
+  $('#wtpEmpty').hidden = hits.length > 0;
+  list.innerHTML = hits.map((hit, index) => {
+    const c = hit.context || { before: '', hit: hit.word, after: '' };
+    return `
+      <div class="wtp-item">
+        <div class="wtp-word"><span>${escapeHtml(hit.word)}</span><b>→</b><strong>${escapeHtml(hit.suggestion)}</strong></div>
+        <div class="wtp-ctx">${escapeHtml(c.before)}<mark>${escapeHtml(c.hit)}</mark>${escapeHtml(c.after)}</div>
+        <div class="wtp-reason">${escapeHtml(hit.reason)}</div>
+        <div class="wtp-acts">
+          <button type="button" data-typo-index="${index}" data-typo-mode="replace">替换</button>
+          <button type="button" data-typo-index="${index}" data-typo-mode="ignore">本章忽略</button>
+          <button type="button" data-typo-index="${index}" data-typo-mode="save-ignore">加入忽略词库</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
 function scanWriterBadwords() {
   const text = writerContent.value || '';
   const words = writerBadwordWords.filter((w) => !writerBadwordIgnored.has(w));
@@ -3752,8 +4008,12 @@ function scanWriterBadwords() {
   const hits = window.BadWords.hitRanges(text, words);
 
   writerBadwordHits = hits;
-  renderWriterHighlight(text, words);
+  writerTypoHits = window.Typos
+    ? window.Typos.find(text, { ignoredWords: [...writerTypoIgnoredWords, ...writerTypoIgnored] })
+    : [];
+  renderWriterHighlight(text, words, writerTypoHits);
   renderWriterBadwordPanel(hits, text);
+  renderWriterTypoPanel(writerTypoHits, text);
 }
 
 function scheduleBadwordScan() {
@@ -3804,6 +4064,41 @@ $('#wbpList').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-wb-word]');
   if (!btn) return;
   applyWriterBadwordFix(btn.dataset.wbWord, btn.dataset.wbMode);
+});
+
+function applyWriterTypoFix(index, mode) {
+  const hit = writerTypoHits[Number(index)];
+  if (!hit) return;
+  if (mode === 'ignore') {
+    writerTypoIgnored.add(hit.word);
+    scanWriterBadwords();
+    $('#writerBottomState').textContent = `本章已无视「${hit.word}」的错别字提示`;
+    return;
+  }
+  if (mode === 'save-ignore') {
+    writerTypoIgnoredWords.add(hit.word);
+    if (window.Prefs) window.Prefs.set('typoIgnoredWords', [...writerTypoIgnoredWords]);
+    scanWriterBadwords();
+    $('#writerBottomState').textContent = `已将「${hit.word}」加入错别字忽略词库`;
+    return;
+  }
+  const current = writerContent.value.slice(hit.start, hit.end);
+  if (current !== hit.word) { scanWriterBadwords(); return; }
+  writerContent.focus();
+  writerContent.setSelectionRange(hit.start, hit.end);
+  writerContent.setRangeText(hit.suggestion, hit.start, hit.end, 'end');
+  writerTypedMask = writerContent.value.split('').map(() => 0);
+  syncWriterChapterFromForm();
+  updateWriterWordCount();
+  markWriterDirty();
+  scanWriterBadwords();
+  $('#writerBottomState').textContent = `已将「${hit.word}」替换为「${hit.suggestion}」`;
+}
+
+$('#wtpList').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-typo-index]');
+  if (!btn) return;
+  applyWriterTypoFix(btn.dataset.typoIndex, btn.dataset.typoMode);
 });
 
 // 设置页手动加词之后，码字台的词表要跟着换（不然得重启才生效）
@@ -4016,10 +4311,19 @@ $('#btnWriterSync').addEventListener('click', async () => {
       chapters: b.chapters || 0,
       words: b.words || 0,
     }));
-    await loadWriterBooks();
-    writerNotice(writerRemoteBooks.length
-      ? `作者库中还有 ${writerRemoteBooks.length} 本作品未同步，点击作品即可读取正文并开始创作。`
-      : `作者库中的 ${remote.length} 本作品均已在本地。`);
+    const adopted = await adoptNewPlatformBooks(remote);
+    const sync = adopted && adopted.sync;
+    if (sync && (sync.added || sync.failed || sync.skipped)) {
+      writerNotice(`作者库已刷新：新增 ${sync.added} 章`
+        + (sync.conflicts ? `，发现 ${sync.conflicts} 个同章冲突` : '')
+        + (sync.failed ? `，${sync.failed} 章读取失败` : '')
+        + (sync.skipped ? `，${sync.skipped} 本正在编辑的作品稍后再检查` : ''), sync.failed > 0);
+    } else {
+      await loadWriterBooks();
+      writerNotice(writerRemoteBooks.length
+        ? `作者库中还有 ${writerRemoteBooks.length} 本作品未同步，点击作品即可读取正文并开始创作。`
+        : `作者库中的 ${remote.length} 本作品均已在本地。`);
+    }
   } catch (err) {
     writerNotice(`读取作者库失败：${err.message || err}。请先点右上角“打开作者后台”完成登录。`, true);
   } finally {
@@ -4404,6 +4708,19 @@ $('#btnWriterStats').addEventListener('click', () => {
   panel.hidden = !panel.hidden;
   $('#btnWriterStats').classList.toggle('is-active', !panel.hidden);
 });
+$('#btnWriterTypos').addEventListener('click', () => {
+  const panel = $('#writerTypos');
+  panel.hidden = !panel.hidden;
+  $('#btnWriterTypos').classList.toggle('is-active', !panel.hidden);
+});
+$('#btnWriterTyposCollapse').addEventListener('click', () => {
+  const body = $('#writerTypoBody');
+  const collapsed = body.hidden;
+  body.hidden = !collapsed;
+  const button = $('#btnWriterTyposCollapse');
+  button.textContent = collapsed ? '收起⌃' : '展开⌄';
+  button.setAttribute('aria-expanded', String(collapsed));
+});
 $('#btnWriterResetStats').addEventListener('click', writerResetSession);
 
 function setWriterChaptersHidden(hidden, remember) {
@@ -4493,6 +4810,7 @@ window.Writer = {
   async markPublished(info) {
     const chapter = writerCurrentChapter();
     if (!chapter) return;
+    chapter.origin = 'platform';
     chapter.status = 'published';
     chapter.platformChapterId = String((info && info.chapterId) || '');
     chapter.publishedAt = new Date().toISOString();
@@ -5668,6 +5986,9 @@ function maybeShowAfterLoginGuide(state) {
   // 主题与偏好：theme-init.js 已完成首帧上色，这里只做运行时同步
   try {
     if (window.Prefs) await window.Prefs.ready();
+    writerTypoIgnoredWords = new Set(
+      (window.Prefs && window.Prefs.get('typoIgnoredWords', [])) || [],
+    );
     reviewStrict = !!(window.Prefs && window.Prefs.get('reviewStrict', false));
     renderReviewStrict();
     window.Theme.boot();

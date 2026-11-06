@@ -2478,7 +2478,9 @@ body.is-locked { overflow: hidden; }
   text-align: left;
   cursor: pointer;
 }
-.writer-chapter-item span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.writer-chapter-item .writer-chapter-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.writer-chapter-status { flex: 0 0 auto; color: var(--text-3); font-size: 9px; font-style: normal; }
+.writer-chapter-status.is-conflict { color: var(--danger-ink); }
 .writer-chapter-item small { color: var(--text-3); }
 .writer-chapter-item:hover { background: var(--surface-3); color: var(--text); }
 .writer-chapter-item.is-active { background: var(--accent-weak); color: var(--accent-ink); }
@@ -2500,6 +2502,7 @@ body.is-locked { overflow: hidden; }
 
 .writer-paper-wrap { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
 .writer-paper {
+  position: relative;
   width: min(760px, calc(100% - 42px));
   flex: 1;
   min-height: 0;
@@ -2512,6 +2515,19 @@ body.is-locked { overflow: hidden; }
   background: var(--surface);
   box-shadow: 0 8px 28px rgba(40, 35, 25, .06);
 }
+.writer-title-status {
+  position: absolute;
+  top: 31px;
+  right: 38px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-3);
+  font-size: 10px;
+  line-height: 1.2;
+}
+.writer-title-status.is-published { color: var(--ok-ink); background: var(--ok-bg); }
+.writer-title-status.is-conflict { color: var(--danger-ink); background: var(--danger-bg); }
 .writer-title-input {
   margin: 0 38px;
   padding: 26px 0 15px;
@@ -2545,9 +2561,16 @@ body.is-locked { overflow: hidden; }
   padding: 22px 16px;
   border-left: 1px solid var(--border);
   background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
 }
+.writer-writing-stats { order: 3; margin-top: auto; padding-top: 16px; }
+.writer-stats > .writer-typos { order: 1; }
+.writer-stats > .writer-badwords { order: 2; }
 .writer-stats-mascot { width: 74px; height: 74px; display: grid; place-items: center; margin: 2px auto 11px; border-radius: 50%; background: var(--accent-weak); color: var(--accent-line); font-size: 36px; }
-.writer-stats h3 { margin: 0 0 16px; text-align: center; font-size: 14px; }
+.writer-writing-stats h3 { margin: 0 0 16px; text-align: center; font-size: 14px; }
 .writer-stats dl { display: grid; grid-template-columns: 1fr auto; gap: 11px 6px; margin: 0; font-size: 12px; }
 .writer-stats dt { color: var(--text-3); }
 .writer-stats dd { margin: 0; color: var(--text); font-family: ui-monospace, Consolas, monospace; }
@@ -2570,6 +2593,31 @@ body.is-locked { overflow: hidden; }
   .writer-chapters { width: 205px; flex-basis: 205px; }
   .writer-textarea { padding-left: 28px; padding-right: 28px; }
   .writer-title-input { margin-left: 28px; margin-right: 28px; }
+}
+
+/* ---------------------------------------------------------- 最大化/高窗口布局
+   系统最大化并不等于「专注模式」：顶栏和目录仍然保留，但右栏必须在
+   编辑器高度内完成排布。错别字列表和码字统计各自滚动，避免一侧内容
+   把另一侧推到窗口之外。这个状态由 app.js 按编辑器实际高度切换。 */
+body.is-writer-tall .writer-editor { min-height: 0; }
+body.is-writer-tall .writer-stats {
+  height: 100%;
+  max-height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  scrollbar-gutter: stable;
+}
+body.is-writer-tall .writer-typos {
+  flex: 0 1 auto;
+  max-height: min(46%, 520px);
+}
+body.is-writer-tall .wtp-body { max-height: min(34vh, 420px); }
+body.is-writer-tall .writer-badwords { flex: 0 0 auto; }
+body.is-writer-tall .writer-writing-stats {
+  min-height: 0;
+  max-height: 100%;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -3411,6 +3459,14 @@ select,
   box-shadow: inset 0 -1px 0 rgba(226, 76, 76, .55);
 }
 
+.writer-highlight mark.is-typo {
+  background: rgba(245, 191, 0, .24);
+  color: transparent;
+  box-shadow: inset 0 -2px 0 rgba(211, 143, 0, .85);
+}
+
+:root[data-theme="dark"] .writer-highlight mark.is-typo { background: rgba(245, 191, 0, .2); }
+
 :root[data-theme="dark"] .writer-highlight mark { background: rgba(255, 110, 110, .26); }
 
 .writer-paper { width: min(var(--writer-paper-width, 760px), calc(100% - 42px)); }
@@ -3477,6 +3533,67 @@ select,
 .wbp-acts button:hover { text-decoration: underline; }
 .wbp-acts button.is-skip { color: var(--text-3); }
 
+/* ---------------------------------------------------------- 右栏错别字提示 */
+
+.writer-typos {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  max-height: 46%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.wtp-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12px; color: var(--text-2); }
+.wtp-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.wtp-toggle {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+.wtp-toggle:hover { color: var(--accent-ink); }
+.wtp-body { min-height: 0; max-height: 260px; overflow-y: auto; padding-right: 2px; }
+.wtp-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent-weak);
+  color: var(--accent-ink);
+  font-size: 10px;
+  text-align: center;
+}
+.wtp-empty { margin-top: 7px; font-size: 11px; line-height: 1.7; color: var(--text-3); }
+.wtp-item {
+  margin-top: 9px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.wtp-word { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-2); }
+.wtp-word span { color: var(--danger-ink); text-decoration: underline wavy var(--danger-ink); }
+.wtp-word b { color: var(--text-3); }
+.wtp-word strong { color: var(--accent-ink); }
+.wtp-ctx { margin-top: 3px; font-size: 10px; line-height: 1.6; color: var(--text-3); word-break: break-all; }
+.wtp-ctx mark { background: rgba(245, 191, 0, .3); color: inherit; border-radius: 2px; }
+.wtp-reason { margin-top: 3px; color: var(--text-3); font-size: 10px; line-height: 1.5; }
+.wtp-acts { display: flex; flex-wrap: wrap; gap: 2px 8px; margin-top: 6px; }
+.wtp-acts button {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--accent-ink);
+  cursor: pointer;
+}
+.wtp-acts button:hover { text-decoration: underline; }
+
 /* 手动加词：输入框 + 按钮一行，排在统计与操作按钮之间 */
 .wordlib-add {
   display: flex;
@@ -3504,11 +3621,13 @@ body.is-focus .writer-editor { height: 100vh; margin: 0; }
 body.is-focus .writer-stats {
   position: fixed;
   right: 20px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 208px;
+  top: 10vh;
+  bottom: 10vh;
+  transform: none;
+  width: min(292px, calc(100vw - 40px));
   flex: 0 0 auto;
-  max-height: 78vh;
+  height: 80vh;
+  max-height: none;
   overflow-y: auto;
   padding: 16px 14px;
   border: 1px solid var(--border);
@@ -3519,8 +3638,25 @@ body.is-focus .writer-stats {
 
 body.is-focus .writer-stats-mascot { width: 56px; height: 56px; font-size: 28px; margin-bottom: 9px; }
 
+/* 全屏时错别字卡片也有独立的可视高度，列表过长只在卡片内部滚动，
+   底部码字统计不会被候选项挤出屏幕。 */
+body.is-focus .writer-typos { max-height: 48%; }
+body.is-focus .wtp-body { max-height: min(34vh, 360px); }
+body.is-focus .writer-writing-stats { padding-top: 18px; }
+
 /* 纸张再宽也不压到悬浮卡片：窄屏时自动收窄 */
-body.is-focus .writer-paper { width: min(var(--writer-paper-width, 1100px), calc(100% - 260px)); }
+body.is-focus .writer-paper { width: min(var(--writer-paper-width, 1100px), calc(100% - 340px)); }
+
+@media (max-height: 760px) {
+  body.is-focus .writer-stats { top: 6vh; bottom: 6vh; height: 88vh; }
+  body.is-focus .writer-typos { max-height: 44%; }
+  body.is-focus .wtp-body { max-height: 28vh; }
+}
+
+@media (max-width: 900px) {
+  body.is-focus .writer-stats { right: 10px; width: min(252px, calc(100vw - 20px)); }
+  body.is-focus .writer-paper { width: min(var(--writer-paper-width, 900px), calc(100% - 292px)); }
+}
 
 body.is-focus .writer-tool.is-active#btnWriterFocus {
   background: var(--accent);

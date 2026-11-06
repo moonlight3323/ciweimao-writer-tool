@@ -52,7 +52,7 @@
           <span class="conn-dot"></span>
           <span class="conn-text">后台未打开</span>
         </div>
-        <div class="version">v1.0.2</div>
+        <div class="version">v1.0.3</div>
       </div>
     </aside>
 
@@ -243,8 +243,8 @@
                 <span class="btn-help-wrap">
                   <button class="btn ghost" id="btnWriterSync" type="button">同步作者库</button>
                   <span class="help-dot tip-below tip-right" tabindex="0" role="note" aria-label="同步作者库是什么">?
-                    <span class="help-tip">重新读一遍后台的作品列表，看有没有新书、书名或封面变了。
-                      这一步只看目录，<b>不会读章节正文</b>。</span>
+                    <span class="help-tip">重新读取后台作品列表，并检查已绑定作品有没有新增章节。
+                      新章节只会追加到本地，不会覆盖你已经写过的正文。</span>
                   </span>
                 </span>
                 <button class="btn ghost" id="btnWriterRefresh" type="button">刷新</button>
@@ -273,6 +273,7 @@
                       title="隐藏左侧导航与右侧统计，只留目录和正文；窗口同时最大化，再点一次退出">专注模式</button>
               <button class="writer-tool" id="btnWriterFormat" type="button" title="整理多余空行；回车时已自动缩进两格，这里主要用来收拾从别处粘进来的正文">一键排版</button>
               <button class="writer-tool" id="btnWriterFind" type="button">查找替换</button>
+              <button class="writer-tool is-active" id="btnWriterTypos" type="button" title="打开或收起本地错别字提示">错别字 <span id="writerTypoToolbarCount">0</span></button>
               <button class="writer-tool is-active" id="btnWriterStats" type="button">码字统计</button>
               <button class="writer-tool" id="btnWriterDisplay" type="button" title="字体、字号、行距与页面宽度">显示设置</button>
               <!-- 定时/立即发布设置暂时收起：等下个版本重做发布流程再放出来 -->
@@ -346,6 +347,7 @@
               <main class="writer-paper-wrap">
                 <div class="writer-paper">
                   <input class="writer-title-input" id="writerChapterTitle" placeholder="章节标题" maxlength="100" />
+                  <span class="writer-title-status" id="writerChapterStatus"></span>
                   <!-- 高亮层垫在 textarea 底下：textarea 负责输入，这层只画敏感词的底色。
                        两者共用同一套字体/字号/行距/内边距变量，换显示设置也不会错位。 -->
                   <div class="writer-text-wrap">
@@ -361,17 +363,17 @@
               </main>
 
               <aside class="writer-stats" id="writerStatsPanel">
-                <div class="writer-stats-mascot">✍</div>
-                <h3>本次码字</h3>
-                <dl>
-                  <dt>本次码字</dt><dd><b id="writerTyped">0</b> 字</dd>
-                  <dt>码字速率</dt><dd><b id="writerSpeed">0</b> 字/时</dd>
-                  <dt>码字时间</dt><dd id="writerActiveTime">00:00:00</dd>
-                  <dt>空闲时间</dt><dd id="writerIdleTime">00:00:00</dd>
-                </dl>
-                <div class="plugin-editor-stats" id="pluginEditorStats" hidden></div>
-                <p>粘贴内容不计入本次码字与速率。</p>
-                <button class="btn ghost btn-sm" id="btnWriterResetStats" type="button">重新计时</button>
+                <!-- 错别字单独放在右栏顶部；候选较多时只在此卡片内部滚动。 -->
+                <div class="writer-typos" id="writerTypos">
+                  <div class="wtp-head">
+                    <div class="wtp-title"><b>错别字提示</b><span class="wtp-count" id="wtpCount">0</span></div>
+                    <button class="wtp-toggle" id="btnWriterTyposCollapse" type="button" aria-expanded="true">收起⌃</button>
+                  </div>
+                  <div class="wtp-body" id="writerTypoBody">
+                    <div class="wtp-empty" id="wtpEmpty">本章暂未发现明确的常见错写</div>
+                    <div class="wtp-list" id="wtpList"></div>
+                  </div>
+                </div>
 
                 <!-- 实时敏感词检测：命中的词在正文里高亮，这里逐词给出处理方式 -->
                 <div class="writer-badwords" id="writerBadwords">
@@ -381,6 +383,21 @@
                   </div>
                   <div class="wbp-empty" id="wbpEmpty">本章没有命中词库里的词</div>
                   <div class="wbp-list" id="wbpList"></div>
+                </div>
+
+                <!-- 码字统计固定为右栏底部区域，避免与错别字提示混在一起。 -->
+                <div class="writer-writing-stats" id="writerWritingStats">
+                  <div class="writer-stats-mascot">✍</div>
+                  <h3>本次码字</h3>
+                  <dl>
+                    <dt>本次码字</dt><dd><b id="writerTyped">0</b> 字</dd>
+                    <dt>码字速率</dt><dd><b id="writerSpeed">0</b> 字/时</dd>
+                    <dt>码字时间</dt><dd id="writerActiveTime">00:00:00</dd>
+                    <dt>空闲时间</dt><dd id="writerIdleTime">00:00:00</dd>
+                  </dl>
+                  <div class="plugin-editor-stats" id="pluginEditorStats" hidden></div>
+                  <p>粘贴内容不计入本次码字与速率。</p>
+                  <button class="btn ghost btn-sm" id="btnWriterResetStats" type="button">重新计时</button>
                 </div>
               </aside>
             </div>
@@ -1144,13 +1161,15 @@
   <script src="inbox.js"></script>
   <script src="probe.js"></script>
   <script src="badwords.js?v=20261106-1"></script>
+  <script src="typos.js?v=20261106-1"></script>
   <script src="publish.js?v=20261106-2"></script>
   <script src="prefs.js"></script>
   <script src="dark-tone.js"></script>
   <script src="theme.js?v=20261106-1"></script>
   <script src="chapter-order.js"></script>
+  <script src="writer-sync.js?v=20261106-2"></script>
   <script src="writer-indent.js"></script>
-  <script src="app.js?v=20261106-27"></script>
+  <script src="app.js?v=20261106-29"></script>
   <script src="update-ui.js"></script>
   <script src="wordlib-ui.js?v=20261106-1"></script>
 </body>
