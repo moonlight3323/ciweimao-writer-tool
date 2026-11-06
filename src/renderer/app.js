@@ -91,6 +91,26 @@ function currentRect() {
   return { x: r.x, y: r.y + off, width: r.width, height: Math.max(1, r.height - off) };
 }
 
+/**
+ * 创作中心的右栏需要根据「编辑器实际可用高度」而不是固定窗口尺寸布局。
+ * 系统最大化时顶栏、边距和缩放比例都可能改变，单靠 100vh 会让错别字面板
+ * 或底部码字统计被挤出可视区域。给高编辑区加一个状态类，由 CSS 分配两个
+ * 独立的滚动区域；窗口还原时自动恢复普通布局。
+ */
+function syncWriterViewportLayout() {
+  const editor = $('#writerEditor');
+  if (!editor) return;
+  const height = editor.getBoundingClientRect().height;
+  document.body.classList.toggle('is-writer-tall', height >= 820);
+}
+
+if (typeof ResizeObserver !== 'undefined') {
+  const editor = $('#writerEditor');
+  if (editor) new ResizeObserver(syncWriterViewportLayout).observe(editor);
+}
+window.addEventListener('resize', syncWriterViewportLayout);
+syncWriterViewportLayout();
+
 /** 把平台视图的矩形与 #content 对齐（窗口变化、侧栏切换都会触发） */
 function syncBounds() {
   if (!browserOpen) return;
