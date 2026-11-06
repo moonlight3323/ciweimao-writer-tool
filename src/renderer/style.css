@@ -237,6 +237,18 @@ body {
   user-select: none;
 }
 
+/* 品牌图标分两版：默认暖黄刺猬，粉白主题换成抱爱心那只。
+   用两个 img 各管一档而不是改 src，切换主题时不用跑 JS，也不会闪一下原图 */
+.brand-mark-pink { display: none; }
+
+:root[data-theme="pink"] .brand-mark-gold { display: none; }
+
+:root[data-theme="pink"] .brand-mark-pink {
+  display: block;
+  /* 金色阴影挪到粉底上会发脏，换成樱粉调 */
+  filter: drop-shadow(0 1px 1.5px rgba(200, 90, 130, 0.22));
+}
+
 .brand-title {
   font-size: 13px;
   font-weight: 500;
