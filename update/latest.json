@@ -1,12 +1,21 @@
 {
-  "version": "1.0.1",
+  "version": "1.0.2",
   "type": "app",
-  "size": 1483440,
-  "sha256": "aaed4696c6fd60798a04fd259d66080e84f8d66913a8ab3926dce8ba27ca3d72",
+  "size": 1485344,
+  "sha256": "30297d0097c9476075f19a78a4e9c63c6c567a102e42f1c1fa1303d834f34766",
   "url": [
-    "https://github.com/moonlight3323/ciweimao-writer-tool/releases/download/v1.0.1/ciweimao-writer-tool-v1.0.1-app.zip"
+    "https://github.com/moonlight3323/ciweimao-writer-tool/releases/download/v1.0.2/ciweimao-writer-tool-v1.0.2-app.zip"
   ],
   "changes": [
+    {
+      "version": "1.0.2",
+      "date": "2026-11-06",
+      "items": [
+        "· 新增：稿费统计刷新时重新读取作者后台章节均订，并自动写入对应作品",
+        "· 新增：Release 提供可单独导入的稿费计算器 1.2.0 插件包",
+        "· 调整：多本作品优先按后台作品号对应，后台无均订时保留手动填写值"
+      ]
+    },
     {
       "version": "1.0.1",
       "date": "2026-11-06",
