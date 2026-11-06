@@ -950,6 +950,36 @@
     </div>
   </div>
 
+  <!-- 首次点关闭时问一次。用软件自己的卡片而不是系统灰框，跟主题保持一致 -->
+  <div class="notice-overlay" id="closeAskDialog" hidden>
+    <div class="notice-card update-card" role="dialog" aria-modal="true" aria-labelledby="closeAskTitle">
+      <h2 class="notice-title" id="closeAskTitle">关闭窗口时</h2>
+      <p class="update-meta">点右上角的关闭按钮之后，你希望怎么处理？</p>
+
+      <div class="update-changes">
+        <div class="update-group">
+          <div class="update-group-head">最小化到托盘</div>
+          <ul class="update-items">
+            <li>界面收起来，后台继续运行，码字进度不会丢</li>
+            <li>双击右下角的托盘图标可以再打开</li>
+          </ul>
+        </div>
+        <div class="update-group">
+          <div class="update-group-head">直接退出</div>
+          <ul class="update-items">
+            <li>立刻结束程序，要彻底退出选这个</li>
+          </ul>
+        </div>
+      </div>
+
+      <p class="update-status" data-tone="busy">之后可以在「设置 → 窗口」里随时修改。</p>
+      <div class="update-actions">
+        <button class="btn ghost" id="btnCloseAskQuit" type="button">直接退出</button>
+        <button class="btn primary" id="btnCloseAskMin" type="button">最小化到托盘</button>
+      </div>
+    </div>
+  </div>
+
   <script src="../adapters/ciweimao.js"></script>
   <script src="reviewer.js"></script>
   <script src="signals.js"></script>
@@ -965,7 +995,7 @@
   <script src="publish.js"></script>
   <script src="prefs.js"></script>
   <script src="theme.js"></script>
-  <script src="app.js?v=20261106-13"></script>
+  <script src="app.js?v=20261106-14"></script>
   <script src="update-ui.js"></script>
   <script src="wordlib-ui.js"></script>
 </body>

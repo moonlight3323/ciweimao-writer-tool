@@ -131,6 +131,13 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.on('window:close-behavior', handler);
       return () => ipcRenderer.removeListener('window:close-behavior', handler);
     },
+    /** 主进程请求弹「关闭时怎么处理」，渲染层用软件自己的弹窗问 */
+    onAskCloseBehavior: (cb) => {
+      const handler = () => cb();
+      ipcRenderer.on('window:ask-close-behavior', handler);
+      return () => ipcRenderer.removeListener('window:ask-close-behavior', handler);
+    },
+    answerCloseBehavior: (value) => ipcRenderer.invoke('window:close-behavior-answer', value),
   },
   file: {
     /** 弹保存对话框并写入文本（自动补 UTF-8 BOM） */

@@ -50,6 +50,8 @@ let beforeQuitDone = false;
 let tray = null;
 /** 正在弹「关闭时怎么处理」的询问框，防止连点关闭叠出好几个 */
 let closeAskPending = false;
+/** 等待渲染层回答「关闭时怎么处理」的 resolver */
+let closeAskResolver = null;
 
 // ---------------------------------------------------------------- 关闭行为
 
@@ -70,19 +72,28 @@ function writeCloseBehavior(value) {
   writePrefsFile(prefs);
 }
 
-/** 首次关闭时问一次；默认选中「最小化到托盘」，取消等于最小化 */
+/**
+ * 首次关闭时问一次。
+ *
+ * 不用 dialog.showMessageBox：那是系统灰底框，跟软件整体的主题完全不搭。
+ * 改成让渲染层弹自己的 notice-card，这里只等一个 Promise。
+ */
 function askCloseBehavior() {
-  return dialog.showMessageBox(win, {
-    type: 'question',
-    title: '关闭窗口时',
-    message: '点关闭按钮之后，希望怎么处理？',
-    detail: '「最小化到托盘」：界面收起来，后台继续运行，双击右下角的图标可以再打开，'
-      + '要彻底退出请右键托盘图标选「退出」。\n\n之后可以在「设置 → 窗口」里改。',
-    buttons: ['最小化到托盘', '直接退出'],
-    defaultId: 0,
-    cancelId: 0,
-    noLink: true,
-  }).then((r) => (r.response === 1 ? 'quit' : 'minimize'));
+  return new Promise((resolve) => {
+    if (!win || win.isDestroyed() || !win.webContents) {
+      resolve('minimize');
+      return;
+    }
+    closeAskResolver = resolve;
+    win.webContents.send('window:ask-close-behavior');
+    // 兜底：30 秒没回答就按最小化处理，别让窗口卡在「点了关闭却没反应」的状态
+    setTimeout(() => {
+      if (closeAskResolver === resolve) {
+        closeAskResolver = null;
+        resolve('minimize');
+      }
+    }, 30000);
+  });
 }
 
 function showMainWindow() {
@@ -839,6 +850,14 @@ ipcMain.handle('app:close-behavior:set', (_e, value) => {
   const v = value === 'quit' ? 'quit' : 'minimize';
   writeCloseBehavior(v);
   return { value: v };
+});
+
+// 渲染层回答「关闭时怎么处理」，把等待中的 Promise 解开
+ipcMain.handle('window:close-behavior-answer', (_e, value) => {
+  const resolve = closeAskResolver;
+  closeAskResolver = null;
+  if (resolve) resolve(value === 'quit' ? 'quit' : 'minimize');
+  return { ok: true };
 });
 
 // ---------------------------------------------------------------- 执行动作

@@ -4507,9 +4507,57 @@ function pluginBridgeSource(token) {
   })();`;
 }
 
+/**
+ * 给插件页面注入一段跟随主题的覆盖样式。
+ *
+ * 插件在自己的 iframe 里，拿不到主窗口的 CSS 变量，插件作者也普遍是写死颜色，
+ * 所以这里把当前主题的关键色读出来，用 !important 覆盖掉那几处硬编码。
+ * 只对内置插件调过的类名生效，第三方插件不受影响（它们本来也没引这些类）。
+ */
+function pluginThemeCss() {
+  const cs = getComputedStyle(document.documentElement);
+  const pick = (name, fallback) => {
+    const v = cs.getPropertyValue(name).trim();
+    return v || fallback;
+  };
+  const bg = pick('--bg', '#f8f3e7');
+  const surface = pick('--surface', '#ffffff');
+  const surface2 = pick('--surface-2', '#fffdf6');
+  const surface3 = pick('--surface-3', '#fdf6e6');
+  const border = pick('--border', '#f0e7d3');
+  const borderStrong = pick('--border-strong', '#e2d4b6');
+  const text = pick('--text', '#2b2620');
+  const text2 = pick('--text-2', '#6e6555');
+  const text3 = pick('--text-3', '#a79d89');
+  const accent = pick('--accent', '#f9bf03');
+  const accentInk = pick('--accent-ink', '#7a5600');
+  const accentLine = pick('--accent-line', '#e0ac00');
+
+  return `
+    html { color-scheme: light; }
+    body { background: ${bg} !important; color: ${text} !important; }
+    header span, .summary span, .summary small, .panel-title p, .rule,
+    .limit-note, .bar span, .book-row span, .empty { color: ${text3} !important; }
+    .panel-title h2, h1, .book-row strong { color: ${text} !important; }
+    button { background: ${surface} !important; color: ${text} !important; border-color: ${borderStrong} !important; }
+    button:hover { border-color: ${accentLine} !important; }
+    #save { background: ${accent} !important; border-color: ${accentLine} !important; color: ${accentInk} !important; }
+    .summary article, .panel { background: ${surface} !important; border-color: ${border} !important; }
+    .summary article.primary { background: ${surface2} !important; border-color: ${accentLine} !important; }
+    .summary b { color: ${text} !important; }
+    .panel-title > strong { background: ${surface3} !important; color: ${text2} !important; }
+    .chart { border-bottom-color: ${borderStrong} !important;
+      background: repeating-linear-gradient(to top, transparent 0, transparent 54px, ${border} 55px) !important; }
+    .bar i { background: ${accent} !important; }
+    .book-row { background: ${surface2} !important; }
+    input, select { background: ${surface} !important; color: ${text} !important; border-color: ${borderStrong} !important; }
+  `;
+}
+
 function buildPluginDocument(bundle, token) {
   const page = String(bundle.page || '').replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, '');
-  const style = String(bundle.style || '').replace(/<\/style/gi, '<\\/style');
+  // 主题覆盖放在插件自带样式后面，靠 !important 压过硬编码
+  const style = String(bundle.style || '').replace(/<\/style/gi, '<\\/style') + pluginThemeCss();
   const bridge = pluginBridgeSource(token).replace(/<\/script/gi, '<\\/script');
   const script = String(bundle.script || '').replace(/<\/script/gi, '<\\/script');
   const nonce = 'ciweimao-plugin';
@@ -4783,6 +4831,43 @@ function initCloseBehavior() {
 
 initCloseBehavior();
 
+/**
+ * 首次点关闭时的询问卡片。
+ *
+ * 主进程只发一个信号，这里用自己的 notice-card 问，样式跟主题走；
+ * Esc 等同于「最小化到托盘」，和默认选项保持一致，避免误触直接退出。
+ */
+function initCloseAskDialog() {
+  const box = $('#closeAskDialog');
+  if (!box || !window.api.app.onAskCloseBehavior) return;
+
+  const answer = (value) => {
+    if (box.hidden) return;
+    box.hidden = true;
+    window.api.app.answerCloseBehavior(value);
+  };
+
+  $('#btnCloseAskMin').addEventListener('click', () => answer('minimize'));
+  $('#btnCloseAskQuit').addEventListener('click', () => answer('quit'));
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !box.hidden) {
+      e.preventDefault();
+      answer('minimize');
+    }
+  });
+
+  window.api.app.onAskCloseBehavior(() => {
+    box.hidden = false;
+    setTimeout(() => {
+      const btn = $('#btnCloseAskMin');
+      if (btn) btn.focus();
+    }, 30);
+  });
+}
+
+initCloseAskDialog();
+
 $('#btnStorageChoose').addEventListener('click', async () => {
   if (writerDirty) await writerSaveNow(true);
   const result = await window.api.storage.choose();
@@ -4823,6 +4908,13 @@ document.addEventListener('theme-changed', () => {
   if (!snap || !boardBookId) return;
   const b = (snap.books || []).find((x) => String(x.bookId) === boardBookId);
   if (b) renderBookChart(b);
+});
+
+// 插件页是独立 iframe，主题色在文档生成时就写进去了，换主题只能重载一次
+document.addEventListener('theme-changed', () => {
+  if (!activePlugin) return;
+  const frame = $('#pluginFrame');
+  if (frame && !frame.hidden) openPlugin(activePlugin.id);
 });
 
 // ------------------------------------------------------------ 首次启动声明

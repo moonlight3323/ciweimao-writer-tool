@@ -70,8 +70,14 @@
     return window.api.browser.evalInPage(code);
   }
 
+  /**
+   * 主窗口当前生效的主题，原样传给侧栏。
+   *
+   * 以前这里把非 dark 的一律折成 'light'，结果粉色主题传过去变浅色，
+   * 侧栏怎么加变量都不会变——侧栏那边是按 data-theme 精确取值的。
+   */
   function currentTheme() {
-    return (document.documentElement.dataset.theme || 'light') === 'dark' ? 'dark' : 'light';
+    return document.documentElement.dataset.theme || 'light';
   }
 
   function versionText() {
