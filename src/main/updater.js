@@ -228,8 +228,79 @@ function httpGetBuffer(url, opts) {
   });
 }
 
-async function fetchManifest(urls, opts) {
-  const list = (Array.isArray(urls) ? urls : [urls]).filter(Boolean);
+/**
+ * 流式下载到文件，边下边回报进度。
+ *
+ * 早先的实现是把整个包读进内存再一次性落盘，代码是简单了，
+ * 但进度回调只会在结束时触发一次 —— 界面上就是「一直 0% 然后突然满格」，
+ * 用户根本看不出下载是不是在走。包只有 1 MB 出头，网络慢时那几秒最让人心慌。
+ */
+function httpDownloadToFile(url, destFile, onProgress, opts) {
+  const o = opts || {};
+  const maxRedirect = o.maxRedirect == null ? 5 : o.maxRedirect;
+  const timeout = o.timeout == null ? 120000 : o.timeout;
+
+  return new Promise((resolve, reject) => {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (_) {
+      reject(new Error(`地址不合法：${url}`));
+      return;
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      reject(new Error(`不支持的协议：${parsed.protocol}`));
+      return;
+    }
+
+    const lib = parsed.protocol === 'https:' ? https : http;
+    const req = lib.get(parsed, { timeout }, (res) => {
+      const status = res.statusCode || 0;
+      if (status >= 300 && status < 400 && res.headers.location) {
+        res.resume();
+        if (maxRedirect <= 0) {
+          reject(new Error('重定向次数过多'));
+          return;
+        }
+        const next = new URL(res.headers.location, parsed).href;
+        httpDownloadToFile(next, destFile, onProgress, { maxRedirect: maxRedirect - 1, timeout })
+          .then(resolve, reject);
+        return;
+      }
+      if (status !== 200) {
+        res.resume();
+        reject(new Error(`HTTP ${status}`));
+        return;
+      }
+
+      const total = Number(res.headers['content-length']) || 0;
+      let received = 0;
+      const ws = fs.createWriteStream(destFile);
+
+      res.on('data', (chunk) => {
+        received += chunk.length;
+        if (typeof onProgress === 'function') onProgress(received, total);
+      });
+      res.on('error', (err) => {
+        try { ws.destroy(); } catch (_) { /* ignore */ }
+        reject(err);
+      });
+      ws.on('error', (err) => {
+        try { res.destroy(); } catch (_) { /* ignore */ }
+        reject(err);
+      });
+      ws.on('finish', () => resolve({ bytes: received, total }));
+      res.pipe(ws);
+    });
+
+    req.on('timeout', () => {
+      req.destroy(new Error('请求超时'));
+    });
+    req.on('error', reject);
+  });
+}
+
+async function fetchManifest(urls, opts) {  const list = (Array.isArray(urls) ? urls : [urls]).filter(Boolean);
   const errors = [];
   for (const u of list) {
     try {
@@ -265,18 +336,19 @@ async function downloadWithFallback(urls, destFile, expectedSha, onProgress) {
 
   for (const url of list) {
     try {
-      const buf = await httpGetBuffer(url, { timeout: 120000 });
-      if (typeof onProgress === 'function') onProgress(buf.length);
-      fs.writeFileSync(destFile, buf);
-      const got = await sha256File(destFile);
-      if (got !== String(expectedSha || '').toLowerCase()) {
+      // 边下边落盘，进度回调按已收到的累计字节数上报
+      const got = await httpDownloadToFile(url, destFile, onProgress, { timeout: 120000 });
+      const sha = await sha256File(destFile);
+      if (sha !== String(expectedSha || '').toLowerCase()) {
         errors.push(`${url}：校验不通过`);
         try { fs.unlinkSync(destFile); } catch (_) { /* ignore */ }
         continue;
       }
-      return { file: destFile, bytes: buf.length, url };
+      return { file: destFile, bytes: got.bytes, url };
     } catch (e) {
       errors.push(`${url}：${e.message}`);
+      // 半截文件留着没有意义，还会让下一次校验读到脏数据
+      try { if (fs.existsSync(destFile)) fs.unlinkSync(destFile); } catch (_) { /* ignore */ }
     }
   }
   throw new Error(`下载失败（${errors.join('；') || '没有可用地址'}）`);
@@ -284,8 +356,12 @@ async function downloadWithFallback(urls, destFile, expectedSha, onProgress) {
 
 // -------------------------------------------------------------- 状态机
 
-function statePath(dataDir) { return path.join(dataDir, 'update-state.json'); }
-function failedPath(dataDir) { return path.join(dataDir, 'update-failed.json'); }
+/** 下载与解压的临时工作目录（系统临时目录下的固定子目录） */
+function tempRoot() {
+  return path.join(os.tmpdir(), 'cw-update');
+}
+
+function statePath(dataDir) { return path.join(dataDir, 'update-state.json'); }function failedPath(dataDir) { return path.join(dataDir, 'update-failed.json'); }
 function okFlagPath(dataDir) { return path.join(dataDir, 'update-ok.flag'); }
 
 function readJson(file) {
@@ -376,13 +452,18 @@ function buildUpdateCommand(o) {
     `set "OKFLAG=${q(okFlag)}"`,
     `set "STATEFILE=${q(stateFile)}"`,
     `set "FAILEDFILE=${q(failedFile)}"`,
+    `set "LOCKFILE=${q(o.lockPath || path.join(tempRoot(), 'run-update.lock'))}"`,
     '',
     'rem 旧进程还在跑就等着，它退出后才允许碰文件',
+    'set /a WAITED=0',
     ':wait',
     'if not defined OLDPID goto go',
+    'rem 最多等 60 秒：旧进程万一赖着不走，也不能让这个窗口无限循环下去',
+    'if %WAITED% GEQ 30 goto go',
     'tasklist /FI "PID eq %OLDPID%" /NH 2>nul | findstr /R /C:"\\"%OLDPID%\\"" >nul',
     'if errorlevel 1 goto go',
     'timeout /t 2 /nobreak >nul',
+    'set /a WAITED+=1',
     'goto wait',
     '',
     ':go',
@@ -406,6 +487,7 @@ function buildUpdateCommand(o) {
     ':ok',
     'del "%OKFLAG%" >nul 2>nul',
     'del "%STATEFILE%" >nul 2>nul',
+    'del "%LOCKFILE%" >nul 2>nul',
     'rd /s /q "%BAKDIR%" >nul 2>nul',
     'del "%~f0" >nul 2>nul',
     'exit /b 0',
@@ -414,6 +496,7 @@ function buildUpdateCommand(o) {
     'rd /s /q "%APPDIR%" >nul 2>nul',
     'move /y "%BAKDIR%" "%APPDIR%" >nul 2>nul',
     `>"%FAILEDFILE%" echo {"at":"%DATE% %TIME%","to":"${q(o.to)}","reason":"启动失败"}`,
+    'del "%LOCKFILE%" >nul 2>nul',
     'start "" "%EXEPATH%" %EXEARGS%',
     'del "%~f0" >nul 2>nul',
     'exit /b 1',
@@ -422,6 +505,7 @@ function buildUpdateCommand(o) {
     'rem 备份没做成说明目录被占用，此时宁可放弃这次升级，也不能覆盖掉唯一的副本',
     `>"%FAILEDFILE%" echo {"at":"%DATE% %TIME%","to":"${q(o.to)}","reason":"备份失败"}`,
     'del "%STATEFILE%" >nul 2>nul',
+    'del "%LOCKFILE%" >nul 2>nul',
     'start "" "%EXEPATH%" %EXEARGS%',
     'del "%~f0" >nul 2>nul',
     'exit /b 2',
@@ -476,5 +560,5 @@ module.exports = {
   okFlagPath,
   buildUpdateCommand,
   extractZip,
-  tempRoot: () => path.join(os.tmpdir(), 'cw-update'),
+  tempRoot,
 };

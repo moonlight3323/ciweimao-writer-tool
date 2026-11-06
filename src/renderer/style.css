@@ -2849,3 +2849,34 @@ body.is-locked { overflow: hidden; }
   font-size: 12px;
   color: var(--text);
 }
+
+/* ---------------------------------------------------------- 更新进度条 */
+
+/* 包只有 1 MB 出头，正常几秒就完，所以进度条做得细一点、不抢戏，
+   但一定要动 —— 用户看的就是「有没有在走」。 */
+.update-progress {
+  margin: 12px 0 0;
+}
+
+.update-progress-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.update-progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width .18s ease-out;
+}
+
+.update-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--text-3);
+}

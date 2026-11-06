@@ -159,19 +159,57 @@
 
   // ------------------------------------------------------------ 下载与安装
 
+  /** 给进度条用的体积文案，和后端 humanSize 保持同一口径 */
+  function humanSize(bytes) {
+    const n = Number(bytes) || 0;
+    if (n <= 0) return '0 KB';
+    if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  let downloadTotal = 0;
+
+  /**
+   * 下载进度。
+   *
+   * 包只有 1 MB 出头，正常几秒就完，所以不做节流 —— 少写点代码，
+   * 也让「很快下完」这件事在界面上看得见，而不是一闪而过什么都不显示。
+   */
+  function setProgress(bytes) {
+    const wrap = $('#updateProgress');
+    if (!wrap) return;
+    const got = Math.max(0, Number(bytes) || 0);
+    const total = downloadTotal > 0 ? downloadTotal : 0;
+    const pct = total > 0 ? Math.min(100, Math.round((got / total) * 100)) : 0;
+
+    wrap.hidden = false;
+    $('#updateProgressFill').style.width = `${pct}%`;
+    $('#updateProgressText').textContent = total > 0 ? `${pct}%` : '下载中';
+    $('#updateProgressBytes').textContent =
+      total > 0 ? `${humanSize(got)} / ${humanSize(total)}` : humanSize(got);
+  }
+
+  function hideProgress() {
+    const wrap = $('#updateProgress');
+    if (wrap) wrap.hidden = true;
+  }
+
   async function startDownload() {
     if (busy) return;
     busy = true;
 
+    downloadTotal = Number(info.size) || 0;
     setTitle('正在下载更新');
     $('#updateMeta').textContent = `v${info.current} → v${info.version}　${info.sizeText}`;
-    setStatus(`正在下载更新包，下载完成后会自动校验完整性。`, 'busy');
-    setActions([{ label: '取消', onClick: () => { closeDialog(); busy = false; } }]);
+    setStatus('正在下载更新包，下载完成后会自动校验完整性。', 'busy');
+    setProgress(0);
+    setActions([{ label: '取消', onClick: () => { hideProgress(); closeDialog(); busy = false; } }]);
 
     const r = await api.download();
     busy = false;
 
     if (!r || !r.ok) {
+      hideProgress();
       // 失败也要把当前版本号说清楚：用户最担心的是「是不是把我软件弄坏了」
       setTitle('这次没能装上新版本');
       setStatus(r && r.message ? r.message : `没能下到更新包，当前版本 v${info.current} 可继续使用`, 'error');
@@ -182,11 +220,15 @@
       return;
     }
 
+    // 下载完但还没解压：进度条走满，文字说明改口，别让人以为卡住了
+    setProgress(downloadTotal || (r.bytes || 0));
+    setStatus('下载完成，正在校验完整性…', 'busy');
     renderReady(r);
   }
 
   function renderReady(r) {
     setTitle('更新包已就绪');
+    hideProgress();
     setStatus(
       `已下载完成并校验通过（${r.sizeText || ''}），重启后生效。重启期间界面会关闭几秒，回来就是新版本了。`,
       'ok',
@@ -303,8 +345,13 @@
 
   // 主进程清理跳过记录后同步给偏好，避免下次写回时把它又带回来
   api.onEvent((e) => {
-    if (e && e.type === 'skipped-pruned' && window.Prefs) {
+    if (!e) return;
+    if (e.type === 'skipped-pruned' && window.Prefs) {
       window.Prefs.set('skippedVersions', e.skippedVersions || []);
+    }
+    // 下载过程中主进程会不断上报累计字节数
+    if (e.type === 'progress' && e.phase === 'downloading') {
+      setProgress(e.bytes);
     }
   });
 })();

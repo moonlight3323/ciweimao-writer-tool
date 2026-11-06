@@ -198,6 +198,73 @@ test('skippedVersions：同版本不提示，更高版本提示并清理旧记�
   assert.equal(updater.isSkipped('0.10.2', []), false);
 });
 
+// ------------------------------------------------------------- 流式下载
+
+test('流式下载：边收边报进度，累计字节单调递增且落在文件大小上', async (t) => {
+  const payload = Buffer.alloc(240 * 1024, 7);
+  // 分批发，确保客户端拿到的是多个 chunk，而不是一次性的一大块
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': payload.length,
+    });
+    const step = Math.floor(payload.length / 6);
+    let offset = 0;
+    const tick = setInterval(() => {
+      if (offset >= payload.length) {
+        clearInterval(tick);
+        res.end();
+        return;
+      }
+      const end = Math.min(offset + step, payload.length);
+      res.write(payload.slice(offset, end));
+      offset = end;
+    }, 25);
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => server.close());
+  const port = server.address().port;
+
+  const dir = tmpDir('stream');
+  const dest = path.join(dir, 'pkg.zip');
+  const seen = [];
+  const r = await updater.downloadWithFallback(
+    [`http://127.0.0.1:${port}/pkg.zip`],
+    dest,
+    sha256(payload),
+    (bytes) => seen.push(bytes),
+  );
+
+  assert.ok(seen.length > 1, `进度应多次回调，实际 ${seen.length} 次`);
+  for (let i = 1; i < seen.length; i += 1) {
+    assert.ok(seen[i] >= seen[i - 1], '累计字节不能倒退');
+  }
+  assert.equal(seen[seen.length - 1], payload.length, '最后一次应等于文件总长');
+  assert.equal(r.bytes, payload.length);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('下载中途失败会清掉半截文件，不留脏数据', async (t) => {
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': 100000 });
+    res.write(Buffer.alloc(1000, 1));
+    setTimeout(() => res.destroy(), 30);
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => server.close());
+  const port = server.address().port;
+
+  const dir = tmpDir('partial');
+  const dest = path.join(dir, 'pkg.zip');
+  await assert.rejects(
+    () => updater.downloadWithFallback([`http://127.0.0.1:${port}/pkg.zip`], dest, 'a'.repeat(64)),
+  );
+  assert.equal(fs.existsSync(dest), false, '断流后的半截文件必须删除');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 // ------------------------------------------------------------- 清单校验
 
 test('清单缺少 sha256 / url / 合法版本号时判为无效', () => {
@@ -268,6 +335,10 @@ test('run-update.cmd 内容：等待旧进程、覆盖、等 ok 标记、失败�
   assert.match(cmd, /move \/y "%BAKDIR%" "%APPDIR%"/);
   assert.match(cmd, /update-failed\.json/, '回滚后要留失败记录');
   assert.ok(cmd.indexOf(':rollback') > cmd.indexOf(':probe'), '回滚分支必须在新版本启动检测之后');
+  // 等旧进程要有上限，否则旧进程赖着不走时脚本会无限循环（用户看到窗口一直闪）
+  assert.match(cmd, /set \/a WAITED=0/, '等待循环要有计数器');
+  assert.match(cmd, /if %WAITED% GEQ 30 goto go/, '等满 60 秒必须放行，不能无限等');
+  assert.match(cmd, /del "%LOCKFILE%"/, '结束时清锁，否则下次更新会被误判为「脚本运行中」');
   assert.ok(!/必须|强制/.test(cmd), '脚本里不该出现强制类措辞');
 });
 

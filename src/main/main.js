@@ -1046,6 +1046,10 @@ function recoverUpdateState() {
   const dir = dataDir();
   const version = app.getVersion();
 
+  // 能走到这里说明更新脚本要么没跑起来、要么已经结束。锁一律清掉，
+  // 否则残留的锁会让下一次更新被误判成「脚本正在运行」而不启动。
+  try { fs.rmSync(path.join(updater.tempRoot(), 'run-update.lock'), { force: true }); } catch (_) { /* ignore */ }
+
   const failed = updater.readFailed(dir);
   if (failed && failed.to) {
     updateNotice = {
@@ -1284,18 +1288,46 @@ async function installUpdate() {
   fs.mkdirSync(path.dirname(cmdPath), { recursive: true });
   fs.writeFileSync(cmdPath, cmdText, 'utf8');
 
-  // detached + unref：父进程退出后脚本要继续活着
-  const child = spawn('cmd.exe', ['/c', cmdPath], {
+  // 防重复：连点「立即重启」或上一次脚本没跑完时，不再堆出第二个窗口
+  const lockPath = path.join(updater.tempRoot(), 'run-update.lock');
+  try {
+    const age = Date.now() - fs.statSync(lockPath).mtimeMs;
+    if (age < 60000) {
+      return { ok: false, message: '更新脚本已在运行，稍等一下；当前版本可以继续使用' };
+    }
+  } catch (_) { /* 没有锁文件是正常情况 */ }
+  try { fs.writeFileSync(lockPath, String(process.pid), 'utf8'); } catch (_) { /* ignore */ }
+
+  /*
+   * 用 wscript 转一层，而不是直接 spawn cmd.exe。
+   * 直接 spawn 时 Node 在 detached 模式下用的是 DETACHED_PROCESS，
+   * cmd.exe 作为控制台程序会给自己建一个窗口 —— windowsHide 拦不住，
+   * 用户就会看到那个一直闪的 findstr 黑窗口。
+   * WScript.Shell.Run 的第二个参数 0 就是「不显示窗口」，最稳。
+   */
+  const vbsPath = path.join(updater.tempRoot(), 'run-update.vbs');
+  fs.writeFileSync(
+    vbsPath,
+    [
+      'Set sh = CreateObject("WScript.Shell")',
+      `sh.Run "cmd /c " & Chr(34) & "${cmdPath.replace(/"/g, '""')}" & Chr(34), 0, False`,
+      '',
+    ].join('\r\n'),
+    'utf8',
+  );
+
+  spawn('wscript.exe', [vbsPath], {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
-    cwd: path.dirname(cmdPath),
-  });
-  child.unref();
+    cwd: path.dirname(vbsPath),
+  }).unref();
 
+  // 用 exit 而不是 quit：脚本正在等这个进程消失，quit 还要走一遍关闭流程，
+  // 万一某个窗口拦一下就变成「脚本一直等、窗口一直闪」。
   setTimeout(() => {
-    app.quit();
-  }, 300);
+    app.exit(0);
+  }, 600);
 
   return { ok: true, restarting: true, version: st.to, type: manifest ? manifest.type : 'app' };
 }
