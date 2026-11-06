@@ -1,12 +1,21 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "app",
-  "size": 1482277,
-  "sha256": "4965bf54ea1535660116752f0212007234feb80b4529d1f2b150627d9ebfcdba",
+  "size": 1483440,
+  "sha256": "aaed4696c6fd60798a04fd259d66080e84f8d66913a8ab3926dce8ba27ca3d72",
   "url": [
-    "https://github.com/moonlight3323/ciweimao-writer-tool/releases/download/v1.0.0/ciweimao-writer-tool-v1.0.0-app.zip"
+    "https://github.com/moonlight3323/ciweimao-writer-tool/releases/download/v1.0.1/ciweimao-writer-tool-v1.0.1-app.zip"
   ],
   "changes": [
+    {
+      "version": "1.0.1",
+      "date": "2026-11-06",
+      "items": [
+        "· 新增：设置页可以主动检查更新并直接打开发布页",
+        "· 修复：GitHub Raw 缓存旧清单时无法及时发现新版本",
+        "· 调整：更新清单优先走 GitHub Contents API，并保留 Raw 地址作为备用"
+      ]
+    },
     {
       "version": "1.0.0",
       "date": "2026-11-06",
