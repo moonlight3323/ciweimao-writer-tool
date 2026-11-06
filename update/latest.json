@@ -1,12 +1,27 @@
 {
-  "version": "0.14.1",
+  "version": "1.0.0",
   "type": "app",
-  "size": 1240000,
-  "sha256": "d456d2f907aef65c3cfa366a28c2c8d0c0a3ec86b067a15efaa4b8d0fdcd0ed0",
+  "size": 1482277,
+  "sha256": "4965bf54ea1535660116752f0212007234feb80b4529d1f2b150627d9ebfcdba",
   "url": [
-    "https://github.com/moonlight3323/ciweimao-writer-tool/releases/download/v0.14.1/ciweimao-writer-tool-v0.14.1-app.zip"
+    "https://github.com/moonlight3323/ciweimao-writer-tool/releases/download/v1.0.0/ciweimao-writer-tool-v1.0.0-app.zip"
   ],
   "changes": [
+    {
+      "version": "1.0.0",
+      "date": "2026-11-06",
+      "items": [
+        "· 新增：专注模式，隐藏导航与统计栏只留目录和正文，窗口自动最大化",
+        "· 新增：显示设置，字体、字号、行距、页面宽度都能调，改完即生效",
+        "· 新增：深色一键开关，并提供「深黄黑」与「深蓝黑」两套配色",
+        "· 新增：码字时实时检测敏感词，正文高亮并可一键加间隔号、换近义词或删除",
+        "· 新增：回车自动空两格，写出来就是排版后的样子",
+        "· 新增：作品库「读取全部章节」，一次补齐所有空壳书的正文",
+        "· 新增：常驻托盘，关闭按钮默认最小化，右键托盘图标才真正退出",
+        "· 调整：章节目录统一正序，打开作品默认停在最新一章",
+        "· 修复：关掉敏感词侧栏后再发布点不开、后台被冲回首页、退出后托盘残留等问题"
+      ]
+    },
     {
       "version": "0.14.1",
       "date": "2026-11-06",
