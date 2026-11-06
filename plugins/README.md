@@ -6,8 +6,8 @@
 
 软件随包预装插件位于 `bundled-plugins/`，开发示例位于 `plugins-sample/`。
 
-## 可用插件
+## 独立插件包
 
-- [下载稿费计算器 v1.1.2 ZIP](https://github.com/moonlight3323/ciweimao-writer-tool/raw/refs/heads/main/plugins/income-calculator/刺猬猫稿费计算插件-v1.1.2.zip)：按作品设置订阅数，预估当日、7 日、30 日稿费与全勤奖励。页面金额均为预估，稿费以实际发放为准。
+当前没有单独发布的插件 ZIP。稿费计算器已移入 `bundled-plugins/income-calculator/`，会随作家助手安装并自动启用，不需要手动导入。
 
 请勿提交用户作品、插件设置、账号信息或其他个人数据。本目录的已发布 ZIP 包单独纳入版本管理。

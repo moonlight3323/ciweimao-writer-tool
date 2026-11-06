@@ -97,6 +97,8 @@ function dirSize(dir) {
   robocopy(path.join(ROOT, 'assets'), path.join(appDir, 'assets'));
   const bundled = path.join(ROOT, 'bundled-plugins');
   if (fs.existsSync(bundled)) robocopy(bundled, path.join(appDir, 'bundled-plugins'));
+  fs.copyFileSync(path.join(ROOT, 'LICENSE'), path.join(appDir, 'LICENSE'));
+  fs.copyFileSync(path.join(ROOT, 'LICENSE'), path.join(OUT, 'LICENSE'));
 
   // 运行时 package.json：去掉 dev 依赖与脚本，避免被误当作可安装工程
   fs.writeFileSync(
@@ -108,6 +110,7 @@ function dirSize(dir) {
         version: pkg.version,
         description: pkg.description,
         main: pkg.main,
+        license: pkg.license,
         private: true,
       },
       null,
@@ -115,7 +118,7 @@ function dirSize(dir) {
     ) + '\n',
     'utf8'
   );
-  step('已放入应用代码（src + assets）');
+  step('已放入应用代码、内置插件与开源协议');
 
   // ---- 5. 改写 exe 的图标与版本信息 ----
   try {
