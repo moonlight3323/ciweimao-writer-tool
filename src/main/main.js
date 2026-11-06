@@ -1045,6 +1045,24 @@ function skippedList() {
 function recoverUpdateState() {
   const dir = dataDir();
   const version = app.getVersion();
+  const st = updater.readState(dir);
+
+  /*
+   * 清掉上一次更新留下的下载包和解压目录。
+   * 每个版本约占 3 MB（1.2 MB 的包 + 1.7 MB 的解压结果），
+   * 不清的话会一直堆在 %TEMP% 里，一年下来很可观。
+   * 唯独「已下载、等用户点重启」的那一份必须留下，否则点稍后重启还得重下。
+   */
+  const keepDir = st && st.stage === 'ready' ? String(st.to || '') : '';
+  try {
+    const root = updater.tempRoot();
+    for (const name of fs.readdirSync(root)) {
+      if (name === keepDir) continue;
+      if (/^\d+\.\d+\.\d+$/.test(name) || name.endsWith('.vbs') || name.endsWith('.cmd')) {
+        try { fs.rmSync(path.join(root, name), { recursive: true, force: true }); } catch (_) { /* ignore */ }
+      }
+    }
+  } catch (_) { /* 临时目录不存在或清不掉，都不影响升级 */ }
 
   // 能走到这里说明更新脚本要么没跑起来、要么已经结束。锁一律清掉，
   // 否则残留的锁会让下一次更新被误判成「脚本正在运行」而不启动。
@@ -1061,7 +1079,6 @@ function recoverUpdateState() {
     updater.clearFailed(dir);
   }
 
-  const st = updater.readState(dir);
   if (!st || st.stage !== 'installing') return;
 
   if (st.to === version) {
