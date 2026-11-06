@@ -151,6 +151,11 @@ function saveBook(dataDir, payload) {
   const now = Date.now();
   const chapters = (Array.isArray(p.chapters) ? p.chapters : []).map((c, i) => {
     const content = String(c.content || '');
+    const platformChapterId = String(c.platformChapterId || '').replace(/[^0-9A-Za-z_-]/g, '');
+    const origin = String(c.origin || (platformChapterId || c.status === 'published' ? 'platform' : 'local'))
+      .toLowerCase() === 'platform' ? 'platform' : 'local';
+    const status = String(c.status || (origin === 'platform' ? 'published' : 'unpublished'))
+      .toLowerCase() === 'published' ? 'published' : 'unpublished';
     return {
       index: i + 1,
       id: safeId(c.id || `chapter_${i + 1}`),
@@ -159,9 +164,12 @@ function saveBook(dataDir, payload) {
       words: countWords(content),
       content,
       updatedAt: Number(c.updatedAt) || now,
-      status: String(c.status || ''),
-      platformChapterId: String(c.platformChapterId || '').replace(/[^0-9A-Za-z_-]/g, ''),
+      origin,
+      status,
+      platformChapterId,
       publishedAt: String(c.publishedAt || ''),
+      conflict: !!c.conflict,
+      conflictKey: String(c.conflictKey || ''),
     };
   });
   const source = String(p.source || old.source || 'local');

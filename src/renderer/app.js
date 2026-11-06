@@ -3401,7 +3401,9 @@ async function adoptNewPlatformBooks(remoteOverride) {
     await loadWriterBooks();
     const sync = await syncWriterBoundBooks(remote);
     if (sync && sync.added) {
-      writerNotice(`作者库已更新：新增 ${sync.added} 章${sync.failed ? `，${sync.failed} 章读取失败` : ''}`,
+      writerNotice(`作者库已更新：新增 ${sync.added} 章`
+        + (sync.conflicts ? `，发现 ${sync.conflicts} 个同章冲突` : '')
+        + (sync.failed ? `，${sync.failed} 章读取失败` : ''),
         sync.failed > 0);
     } else if (created.length === 1) {
       writerNotice(`已在作品库创建《${created[0].name}》，并连到后台这本书`);
@@ -3500,13 +3502,25 @@ function renderWriterBooks() {
 
 function normaliseWriterBook(book) {
   const b = book || {};
-  b.chapters = (Array.isArray(b.chapters) ? b.chapters : []).map((c, i) => ({
-    ...c,
-    id: String(c.id || `chapter_${i + 1}`),
-    title: String(c.title || `第${i + 1}章`),
-    volume: String(c.volume || '正文'),
-    content: String(c.content || ''),
-  }));
+  b.chapters = (Array.isArray(b.chapters) ? b.chapters : []).map((c, i) => {
+    const platformChapterId = String(c.platformChapterId
+      || (window.WriterSync ? window.WriterSync.remoteChapterId(c) : '') || '');
+    const isPlatform = String(c.origin || '').toLowerCase() === 'platform'
+      || String(c.status || '').toLowerCase() === 'published'
+      || !!platformChapterId;
+    return {
+      ...c,
+      id: String(c.id || `chapter_${i + 1}`),
+      title: String(c.title || `第${i + 1}章`),
+      volume: String(c.volume || '正文'),
+      content: String(c.content || ''),
+      platformChapterId,
+      origin: isPlatform ? 'platform' : 'local',
+      status: isPlatform ? 'published' : 'unpublished',
+      conflict: !!c.conflict,
+      conflictKey: String(c.conflictKey || ''),
+    };
+  });
   if (!b.chapters.length) b.chapters.push({ id: 'chapter_1', title: '第一章', volume: '正文', content: '' });
   return b;
 }
@@ -3569,7 +3583,8 @@ async function pullWriterBookChapters(book, onStep) {
       platformChapterId,
       title: c.title || m.title || `第${i + 1}章`,
       volume: m.volume || '正文',
-      status: m.status || '',
+      origin: 'platform',
+      status: 'published',
       content: c.content || '',
     };
   });
@@ -3612,6 +3627,15 @@ async function pullWriterBookNewChapters(localEntry, remoteBook, onStep) {
   const missing = window.WriterSync.missingRemoteChapters(localBook.chapters, remoteChapters);
   if (!missing.length) return { added: 0, failed: 0, total: remoteChapters.length };
 
+  const conflicts = new Map();
+  missing.forEach((chapter) => {
+    const hit = window.WriterSync.findChapterConflict(localBook.chapters, chapter);
+    if (!hit) return;
+    hit.chapter.conflict = true;
+    hit.chapter.conflictKey = hit.key;
+    conflicts.set(String(chapter.chapterId), hit);
+  });
+
   const result = await window.Exporter.readContents(
     { bookId: platformBookId, name },
     missing,
@@ -3634,7 +3658,10 @@ async function pullWriterBookNewChapters(localEntry, remoteBook, onStep) {
       platformChapterId,
       title: c.title || m.title || `新增章节 ${i + 1}`,
       volume: m.volume || '正文',
-      status: m.status || '',
+      origin: 'platform',
+      status: 'published',
+      conflict: conflicts.has(platformChapterId),
+      conflictKey: conflicts.get(platformChapterId)?.key || '',
       content: c.content || '',
     };
   });
@@ -3653,24 +3680,26 @@ async function pullWriterBookNewChapters(localEntry, remoteBook, onStep) {
   return {
     added: fetched.length,
     failed: result.failed.length,
+    conflicts: conflicts.size,
     total: remoteChapters.length,
   };
 }
 
 /** 检查所有已经绑定的作品，逐本拉取新增章节。 */
 async function syncWriterBoundBooks(remoteBooks) {
-  if (writerRemoteSyncBusy) return { added: 0, failed: 0, books: 0, skipped: 0 };
+  if (writerRemoteSyncBusy) return { added: 0, failed: 0, conflicts: 0, books: 0, skipped: 0 };
   const remote = Array.isArray(remoteBooks) ? remoteBooks : [];
   const remoteById = new Map(remote.map((b) => [String(b && b.bookId || ''), b]));
   const targets = writerBooks.filter((book) => {
     const id = writerPlatformBookId(book);
     return book.source !== 'remote' && id && remoteById.has(id);
   });
-  if (!targets.length) return { added: 0, failed: 0, books: 0, skipped: 0 };
+  if (!targets.length) return { added: 0, failed: 0, conflicts: 0, books: 0, skipped: 0 };
 
   writerRemoteSyncBusy = true;
   let added = 0;
   let failed = 0;
+  let conflicts = 0;
   let skipped = 0;
   try {
     for (const local of targets) {
@@ -3685,6 +3714,7 @@ async function syncWriterBoundBooks(remoteBooks) {
         const res = await pullWriterBookNewChapters(local, remoteBook, writerNotice);
         added += res.added;
         failed += res.failed;
+        conflicts += res.conflicts || 0;
       } catch (_) {
         failed += 1;
       }
@@ -3693,7 +3723,7 @@ async function syncWriterBoundBooks(remoteBooks) {
     writerRemoteSyncBusy = false;
   }
   if (added) await loadWriterBooks();
-  return { added, failed, books: targets.length, skipped };
+  return { added, failed, conflicts, books: targets.length, skipped };
 }
 
 async function syncWriterRemoteBook(remote) {
@@ -3763,6 +3793,13 @@ $('#btnWriterPullAll').addEventListener('click', async () => {
 /** 目录顺序在 chapter-order.js 里（纯函数，可在 Node 里直接测） */
 const writerDisplayChapters = (book) => window.ChapterOrder.displayChapters(book);
 
+function writerChapterStatus(chapter) {
+  return String(chapter && chapter.status || '').toLowerCase() === 'published'
+    || String(chapter && chapter.origin || '').toLowerCase() === 'platform'
+    || !!(chapter && chapter.platformChapterId)
+    ? '已发布' : '未发布';
+}
+
 function renderWriterChapterList() {
   if (!writerEditorBook) return;
   const query = $('#writerChapterSearch').value.trim().toLowerCase();
@@ -3784,7 +3821,9 @@ function renderWriterChapterList() {
         <div class="writer-chapter-row">
           <button class="writer-chapter-item ${String(chapter.id) === String(writerChapterId) ? 'is-active' : ''}"
                   data-writer-chapter="${escapeHtml(String(chapter.id))}" type="button">
-            <span>${escapeHtml(chapter.title)}</span><small>${writerFormatNumber(writerWordCount(chapter.content))}</small>
+            <span class="writer-chapter-title" title="${escapeHtml(chapter.title)}">${escapeHtml(chapter.title)}</span>
+            <em class="writer-chapter-status${chapter.conflict ? ' is-conflict' : ''}">${writerChapterStatus(chapter)}${chapter.conflict ? '·冲突' : ''}</em>
+            <small>${writerFormatNumber(writerWordCount(chapter.content))}</small>
           </button>
           <button class="writer-chapter-remove" data-writer-chapter-delete="${escapeHtml(String(chapter.id))}"
                   type="button" title="删除章节" aria-label="删除 ${escapeHtml(chapter.title)}">×</button>
@@ -3807,6 +3846,15 @@ function loadWriterChapter() {
   if (!chapter) return;
   $('#writerChapterTitle').value = chapter.title;
   $('#writerContent').value = chapter.content;
+  const statusEl = $('#writerChapterStatus');
+  if (statusEl) {
+    const published = writerChapterStatus(chapter) === '已发布';
+    statusEl.textContent = published
+      ? (chapter.conflict ? '已发布 · 同章冲突' : '已发布')
+      : (chapter.conflict ? '未发布 · 同章冲突' : '未发布');
+    statusEl.classList.toggle('is-published', published && !chapter.conflict);
+    statusEl.classList.toggle('is-conflict', !!chapter.conflict);
+  }
   writerBeforeText = chapter.content;
   writerSavedWordBaseline = writerWordCount(chapter.content);
   writerSavedBaselineChapterId = String(chapter.id);
@@ -4267,6 +4315,7 @@ $('#btnWriterSync').addEventListener('click', async () => {
     const sync = adopted && adopted.sync;
     if (sync && (sync.added || sync.failed || sync.skipped)) {
       writerNotice(`作者库已刷新：新增 ${sync.added} 章`
+        + (sync.conflicts ? `，发现 ${sync.conflicts} 个同章冲突` : '')
         + (sync.failed ? `，${sync.failed} 章读取失败` : '')
         + (sync.skipped ? `，${sync.skipped} 本正在编辑的作品稍后再检查` : ''), sync.failed > 0);
     } else {
@@ -4761,6 +4810,7 @@ window.Writer = {
   async markPublished(info) {
     const chapter = writerCurrentChapter();
     if (!chapter) return;
+    chapter.origin = 'platform';
     chapter.status = 'published';
     chapter.platformChapterId = String((info && info.chapterId) || '');
     chapter.publishedAt = new Date().toISOString();
