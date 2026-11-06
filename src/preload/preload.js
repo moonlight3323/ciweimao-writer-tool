@@ -120,6 +120,17 @@ contextBridge.exposeInMainWorld('api', {
     openPath: (p) => ipcRenderer.invoke('app:open-path', p),
     /** 在文件管理器中定位到某个文件 */
     reveal: (p) => ipcRenderer.invoke('app:reveal', p),
+    /** 关闭窗口的行为：'minimize' 收进托盘 / 'quit' 直接退出 */
+    closeBehavior: {
+      get: () => ipcRenderer.invoke('app:close-behavior:get'),
+      set: (value) => ipcRenderer.invoke('app:close-behavior:set', value),
+    },
+    /** 主进程问完「关闭时怎么处理」后回推结果，用来让设置页跟上 */
+    onCloseBehaviorChanged: (cb) => {
+      const handler = (_e, value) => cb(value);
+      ipcRenderer.on('window:close-behavior', handler);
+      return () => ipcRenderer.removeListener('window:close-behavior', handler);
+    },
   },
   file: {
     /** 弹保存对话框并写入文本（自动补 UTF-8 BOM） */

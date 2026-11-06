@@ -13,7 +13,7 @@
 
 const path = require('path');
 const fs = require('fs');
-const { app, BrowserWindow, WebContentsView, ipcMain, session, shell, net, dialog, nativeTheme } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, session, shell, net, dialog, nativeTheme, Tray, Menu } = require('electron');
 const vault = require('./vault');
 const miaoyu = require('./miaoyu');
 const pubside = require('./pubside');
@@ -44,6 +44,74 @@ let attached = false;
 let quitFallback = null;
 /** 正在退出：防止 before-quit 里销毁窗口时重入 */
 let quitting = false;
+/** before-quit 的清理只跑一次；和 quitting 分开，否则 close 里先置位会把清理整段跳过 */
+let beforeQuitDone = false;
+/** 托盘图标：必须留引用，否则会被 GC 掉，图标就从右下角消失了 */
+let tray = null;
+/** 正在弹「关闭时怎么处理」的询问框，防止连点关闭叠出好几个 */
+let closeAskPending = false;
+
+// ---------------------------------------------------------------- 关闭行为
+
+/**
+ * 点窗口关闭按钮之后怎么办：`minimize` 收进托盘、`quit` 直接退出、
+ * 空串表示还没问过。
+ *
+ * 每次现读文件而不是缓存：设置页改完立刻生效，关闭又不频繁，读一次磁盘无所谓。
+ */
+function readCloseBehavior() {
+  const v = readPrefsFile().closeBehavior;
+  return v === 'minimize' || v === 'quit' ? v : '';
+}
+
+function writeCloseBehavior(value) {
+  const prefs = readPrefsFile();
+  prefs.closeBehavior = value;
+  writePrefsFile(prefs);
+}
+
+/** 首次关闭时问一次；默认选中「最小化到托盘」，取消等于最小化 */
+function askCloseBehavior() {
+  return dialog.showMessageBox(win, {
+    type: 'question',
+    title: '关闭窗口时',
+    message: '点关闭按钮之后，希望怎么处理？',
+    detail: '「最小化到托盘」：界面收起来，后台继续运行，双击右下角的图标可以再打开，'
+      + '要彻底退出请右键托盘图标选「退出」。\n\n之后可以在「设置 → 窗口」里改。',
+    buttons: ['最小化到托盘', '直接退出'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  }).then((r) => (r.response === 1 ? 'quit' : 'minimize'));
+}
+
+function showMainWindow() {
+  if (!win || win.isDestroyed()) {
+    createWindow();
+    return;
+  }
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+function createTray() {
+  if (tray) return;
+  try {
+    tray = new Tray(fs.existsSync(APP_ICON) ? APP_ICON : undefined);
+  } catch (_) {
+    return; // 图标缺失时宁可不建托盘，也不能让启动挂掉
+  }
+  tray.setToolTip('刺猬猫作家助手');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '显示主界面', click: () => showMainWindow() },
+    { type: 'separator' },
+    { label: '退出', click: () => { quitting = true; app.quit(); } },
+  ]));
+  tray.on('click', () => showMainWindow());
+  tray.on('double-click', () => showMainWindow());
+}
+
 
 function isLoginUrl(url) {
   if (!url) return false;
@@ -147,6 +215,39 @@ function createWindow() {
   win.on('resize', () => broadcast({ type: 'window-resized' }));
   pubSideApi.attach();
 
+  /*
+   * 关闭按钮的处理：默认收进托盘继续后台运行，只有明确退出才结束进程。
+   * 第一次关闭时问一次并记住选择，之后可以在设置里改。
+   */
+  win.on('close', (e) => {
+    if (quitting) return;              // 正在走退出流程，放行
+    const behavior = readCloseBehavior();
+    if (behavior === 'quit') return;   // 用户选择的是直接退出
+
+    e.preventDefault();
+    if (behavior === 'minimize') {
+      win.hide();
+      return;
+    }
+
+    // 还没选过：这次先拦下来，问完再决定
+    if (closeAskPending) return;
+    closeAskPending = true;
+    askCloseBehavior().then((choice) => {
+      if (!win || win.isDestroyed()) return;
+      writeCloseBehavior(choice);
+      // 让渲染层里的偏好缓存跟上，否则设置页还会显示「未选择」
+      try { win.webContents.send('window:close-behavior', choice); } catch (_) { /* ignore */ }
+      if (choice === 'minimize') {
+        win.hide();
+      } else {
+        quitting = true;
+        app.quit();
+      }
+    }).catch(() => { /* 对话框异常就保持窗口不动，别把用户锁死在外面 */ })
+      .finally(() => { closeAskPending = false; });
+  });
+
   win.on('closed', () => {
     if (browserView) {
       try { browserView.webContents.close(); } catch (_) { /* ignore */ }
@@ -155,10 +256,9 @@ function createWindow() {
     pubSideApi.destroy();
     miaoyuApi.destroy();
     win = null;
-    // 主窗口就是应用本体，关掉就该退出。
-    // 这里不能只靠 window-all-closed：侧栏和喵语窗口平时是 hide() 而不是销毁，
-    // 关主窗口这一刻它们仍然存在，window-all-closed 不会触发，进程就一直留在后台。
-    if (process.platform !== 'darwin') app.quit();
+    // 只有真退出才结束进程；关闭按钮已经被 close 拦下改成 hide 了，
+    // 走不到这里。留着这个判断是为了托盘「退出」这条路径能收尾干净。
+    if (quitting && process.platform !== 'darwin') app.quit();
   });
 }
 
@@ -732,6 +832,14 @@ ipcMain.handle('data:write', async (_e, name, content) => {
 ipcMain.handle('app:open-external', (_e, url) => shell.openExternal(url));
 ipcMain.handle('app:open-path', (_e, p) => shell.openPath(p));
 ipcMain.handle('app:reveal', (_e, p) => shell.showItemInFolder(String(p)));
+
+// 关闭行为：设置页读写它，close 事件也读它
+ipcMain.handle('app:close-behavior:get', () => ({ value: readCloseBehavior() }));
+ipcMain.handle('app:close-behavior:set', (_e, value) => {
+  const v = value === 'quit' ? 'quit' : 'minimize';
+  writeCloseBehavior(v);
+  return { value: v };
+});
 
 // ---------------------------------------------------------------- 执行动作
 //
@@ -1410,6 +1518,8 @@ if (!gotLock) {
     await ensureInitialStorageChoice();
     plugins.installBundled(dataDir(), path.join(app.getAppPath(), 'bundled-plugins'));
     createWindow();
+    // 托盘常驻：关闭窗口只是收起来，靠右下角图标再打开或退出
+    createTray();
 
     // 上次退出时若开着 AI 接入，这里直接恢复；否则保持关闭（默认不监听任何端口）
     try {
@@ -1428,8 +1538,10 @@ if (!gotLock) {
   });
 
   app.on('before-quit', () => {
-    // 销毁窗口会再次触发 closed → app.quit()，这里挡住重入，避免在退出流程里绕圈
-    if (quitting) return;
+    // 这段清理只跑一次。判断不能复用 quitting：close 拦截里选了「直接退出」
+    // 会先把 quitting 置位，用同一个标志会让清理整段被跳过。
+    if (beforeQuitDone) return;
+    beforeQuitDone = true;
     quitting = true;
 
     // 端口不留在后台：进程要退了就把监听销毁
@@ -1459,6 +1571,8 @@ if (!gotLock) {
   });
 
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') app.quit();
+    // 常驻托盘时不能因为「窗口都关了」就退出：用户可能只是把界面收起来了。
+    // 真正退出走托盘菜单的「退出」，那条路径会把 quitting 置位。
+    if (quitting && process.platform !== 'darwin') app.quit();
   });
 }

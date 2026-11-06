@@ -4739,6 +4739,50 @@ async function refreshStoragePanel() {
   } catch (_) { /* ignore */ }
 }
 
+/* ------------------------------------------------------------ 窗口行为 */
+
+/**
+ * 关闭按钮的行为偏好。
+ *
+ * 真值由主进程维护（写在 ui-prefs.json 里，close 事件要用），这里只负责
+ * 读出来画选中态、把点击传回去。刻意不走 Prefs 模块：主进程首次关闭时也会
+ * 写这个字段，两边各持一份缓存容易互相覆盖。
+ */
+function initCloseBehavior() {
+  const box = $('#closeBehaviorSeg');
+  const tag = $('#closeBehaviorTag');
+  if (!box) return;
+
+  const LABEL = { minimize: '最小化到托盘', quit: '直接退出' };
+  const paint = (value) => {
+    const v = value === 'quit' ? 'quit' : 'minimize';
+    Array.prototype.forEach.call(box.children, (b) => {
+      b.classList.toggle('is-active', b.dataset.closeBehavior === v);
+    });
+    if (tag) tag.textContent = LABEL[v];
+  };
+
+  window.api.app.closeBehavior.get()
+    .then((r) => paint(r && r.value))
+    .catch(() => paint('minimize'));
+
+  box.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-close-behavior]');
+    if (!btn) return;
+    try {
+      const r = await window.api.app.closeBehavior.set(btn.dataset.closeBehavior);
+      paint(r && r.value ? r.value : btn.dataset.closeBehavior);
+    } catch (_) { /* 写不进去就保持原样，不画成没保存的状态 */ }
+  });
+
+  // 主进程首次询问后回推结果，让这里跟着变
+  if (window.api.app.onCloseBehaviorChanged) {
+    window.api.app.onCloseBehaviorChanged(paint);
+  }
+}
+
+initCloseBehavior();
+
 $('#btnStorageChoose').addEventListener('click', async () => {
   if (writerDirty) await writerSaveNow(true);
   const result = await window.api.storage.choose();
@@ -4746,8 +4790,7 @@ $('#btnStorageChoose').addEventListener('click', async () => {
   writingStatsData = null;
   savedOutputStatsData = null;
   await refreshStoragePanel();
-  writerEditorBook = null;
-  $('#writerEditor').hidden = true;
+  writerEditorBook = null;  $('#writerEditor').hidden = true;
   $('#writerLibrary').hidden = false;
   await loadWriterBooks();
 });

@@ -718,6 +718,15 @@
             <p class="hint-line">作品库、章节草稿、导入书籍和本地统计都会保存在这里。切换位置不会删除旧目录中的文件。</p>
           </div>
 
+          <div class="panel" id="panelWindow">
+            <div class="panel-head"><h3>窗口</h3><span class="tag" id="closeBehaviorTag">最小化到托盘</span></div>
+            <p class="hint-line">点右上角关闭按钮时怎么处理。程序会常驻右下角托盘，右键图标选「退出」才会彻底结束。</p>
+            <div class="segmented" id="closeBehaviorSeg">
+              <button type="button" data-close-behavior="minimize">最小化到托盘</button>
+              <button type="button" data-close-behavior="quit">直接退出</button>
+            </div>
+          </div>
+
           <div class="panel">
             <div class="panel-head"><h3>关于</h3><span class="tag">二组</span></div>
             <dl class="kv">
@@ -956,7 +965,7 @@
   <script src="publish.js"></script>
   <script src="prefs.js"></script>
   <script src="theme.js"></script>
-  <script src="app.js?v=20261106-12"></script>
+  <script src="app.js?v=20261106-13"></script>
   <script src="update-ui.js"></script>
   <script src="wordlib-ui.js"></script>
 </body>
