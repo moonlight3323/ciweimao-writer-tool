@@ -68,6 +68,8 @@ function readManifest(folder) {
         ? { title: String(manifest.contributes.navigation.title || manifest.name || id).slice(0, 20) }
         : null,
       editorStat: !!(manifest.contributes && manifest.contributes.editorStat),
+      // 页面原生悬浮球：由插件 iframe 自己绘制，宿主只负责让 iframe 常驻。
+      floatingWidget: !!(manifest.contributes && manifest.contributes.floatingWidget),
     },
   };
 }

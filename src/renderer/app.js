@@ -111,6 +111,7 @@ if (typeof ResizeObserver !== 'undefined') {
 window.addEventListener('resize', syncWriterViewportLayout);
 syncWriterViewportLayout();
 
+
 /** 把平台视图的矩形与 #content 对齐（窗口变化、侧栏切换都会触发） */
 function syncBounds() {
   if (!browserOpen) return;
@@ -172,8 +173,7 @@ function setActiveView(name) {
   if (name === 'writing-stats') loadWritingStats().then(renderWritingStats);
   // 回到抓取页时按已有数据重算引导状态（读过列表 / 抓过没抓过）
   if (name === 'sync') renderCrawlGuide();
-  // “插件中心”和插件贡献的导航项共用同一个 view。切回插件中心时也必须
-  // 先退出当前插件页面，否则 pluginHost 仍会盖在插件列表上。
+  // 普通插件页随导航退出；常驻插件持有独立 iframe，继续运行。
   if (activePlugin) closePlugin();
   if (name === 'plugins') loadPlugins();
 
@@ -5202,6 +5202,65 @@ let activePluginToken = '';
 let activePluginRuntime = null;
 const pluginBackgroundRuntimes = new Map();
 const pluginEditorStats = new Map();
+const pluginFloatingRuntimes = new Map();
+let pluginFloatingSync = Promise.resolve();
+
+function sendPluginHostState(runtime, payload) {
+  runtime.frame.contentWindow?.postMessage({
+    type: 'ciweimao-plugin-host', token: runtime.token, ...payload,
+  }, '*');
+}
+
+function disposeFloatingPlugin(id) {
+  const runtime = pluginFloatingRuntimes.get(id);
+  if (!runtime) return;
+  sendPluginHostState(runtime, { event: 'dispose', mode: 'floating' });
+  runtime.controller.dispose();
+  pluginFloatingRuntimes.delete(id);
+}
+
+function syncPluginFloatingFrames() {
+  // 串行对账避免重复启动；失败的单个插件不影响其他插件。
+  pluginFloatingSync = pluginFloatingSync.catch(() => {}).then(async () => {
+    const desired = new Map(pluginItems.filter((p) => p.enabled && !p.invalid
+      && p.contributes && p.contributes.floatingWidget).map((p) => [p.id, p]));
+    for (const id of pluginFloatingRuntimes.keys()) {
+      if (!desired.has(id)) disposeFloatingPlugin(id);
+    }
+    for (const plugin of desired.values()) {
+      const old = pluginFloatingRuntimes.get(plugin.id);
+      if (old && old.plugin.version === plugin.version) continue;
+      if (old) disposeFloatingPlugin(plugin.id);
+      try {
+        const bundle = await window.api.plugins.get(plugin.id);
+        const position = await window.api.plugins.storageGet(plugin.id, '__host.floating.position');
+        const frame = document.createElement('iframe');
+        frame.sandbox = 'allow-scripts';
+        frame.title = plugin.name;
+        const host = document.createElement('div');
+        host.className = 'plugin-persistent-host';
+        $('#pluginPersistentHosts').appendChild(host);
+        const runtime = {
+          plugin: { ...plugin, manifest: bundle.manifest }, frame, token: pluginToken(),
+          kind: 'floating', messageStartedAt: Date.now(), messageCount: 0,
+        };
+        runtime.controller = window.PluginFloating.create({
+          frame, host, initialPosition: position,
+          notify: (state) => sendPluginHostState(runtime, state),
+          savePosition: (value) => window.api.plugins.storageSet(plugin.id, '__host.floating.position', value),
+        });
+        pluginFloatingRuntimes.set(plugin.id, runtime);
+        frame.addEventListener('load', () => runtime.controller.render());
+        const documentText = buildPluginDocument(bundle, runtime.token);
+        frame.src = `data:text/html;base64,${pluginUtf8Base64(documentText)}`;
+      } catch (err) {
+        disposeFloatingPlugin(plugin.id);
+        console.error(`插件 ${plugin.id} 常驻启动失败`, err);
+      }
+    }
+  });
+  return pluginFloatingSync;
+}
 
 function pluginNotice(text, error) {
   const box = $('#pluginNotice');
@@ -5224,9 +5283,13 @@ async function loadPlugins() {
   try {
     const result = await window.api.plugins.list();
     pluginItems = (result && result.plugins) || [];
+    if (activePlugin && !pluginItems.some((item) => item.id === activePlugin.id && item.enabled && !item.invalid)) {
+      closePlugin();
+    }
     renderPlugins();
     syncPluginNavigation();
     await syncPluginBackgrounds();
+    await syncPluginFloatingFrames();
     await refreshBuiltInIncomeEditorStat();
   } catch (err) {
     pluginNotice(`读取插件失败：${err.message || err}`, true);
@@ -5402,30 +5465,138 @@ function pluginBridgeSource(token) {
     'use strict';
     const TOKEN = ${JSON.stringify(token)};
     let sequence = 0;
+    let disposed = false;
+    let hostState = null;
+    let readyResolve;
+    const ready = new Promise(resolve => { readyResolve = resolve; });
     const waiting = new Map();
+    const listeners = new Map();
+    const cleanup = new Set();
+    function on(name, callback) {
+      if (typeof callback !== 'function') throw new TypeError('事件回调必须是函数');
+      if (!listeners.has(name)) listeners.set(name, new Set());
+      listeners.get(name).add(callback);
+      return () => listeners.get(name)?.delete(callback);
+    }
+    function emit(name, value) {
+      for (const callback of listeners.get(name) || []) {
+        try { callback(value); } catch (error) { console.error('插件事件处理失败', name, error); }
+      }
+    }
+    function dispose() {
+      if (disposed) return;
+      emit('dispose');
+      disposed = true;
+      for (const fn of cleanup) fn();
+      cleanup.clear();
+      for (const item of waiting.values()) {
+        clearTimeout(item.timer);
+        item.reject(new Error('插件已卸载'));
+      }
+      waiting.clear();
+      listeners.clear();
+    }
     function request(method, payload, timeoutMs) {
+      if (disposed) return Promise.reject(new Error('插件已卸载'));
       return new Promise((resolve, reject) => {
         const id = ++sequence;
-        waiting.set(id, { resolve, reject });
-        parent.postMessage({ type: 'ciweimao-plugin-request', token: TOKEN, id, method, payload }, '*');
-        setTimeout(() => {
+        const timer = setTimeout(() => {
           const item = waiting.get(id);
           if (!item) return;
           waiting.delete(id);
           item.reject(new Error('插件请求超时'));
         }, timeoutMs || 15000);
+        waiting.set(id, { resolve, reject, timer });
+        parent.postMessage({ type: 'ciweimao-plugin-request', token: TOKEN, id, method, payload }, '*');
       });
+    }
+    function hostEvent(event, payload) {
+      if (!disposed) parent.postMessage({ type: 'ciweimao-plugin-host-event', token: TOKEN, event, ...payload }, '*');
+    }
+    function bindDrag(element, options = {}) {
+      if (!element || typeof element.addEventListener !== 'function') throw new TypeError('请传入可拖动元素');
+      let drag = null;
+      let scheduled = 0;
+      let latest;
+      function flush() {
+        scheduled = 0;
+        if (latest) hostEvent('drag-move', latest);
+        latest = null;
+      }
+      function down(e) {
+        if (e.button !== 0 || drag) return;
+        e.preventDefault();
+        drag = { id: e.pointerId, x: e.screenX, y: e.screenY, moved: false };
+        element.setPointerCapture(e.pointerId);
+        element.classList.add('dragging');
+        hostEvent('drag-start', {});
+      }
+      function move(e) {
+        if (!drag || e.pointerId !== drag.id) return;
+        const dx = e.screenX - drag.x, dy = e.screenY - drag.y;
+        if (Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true;
+        if (!drag.moved) return;
+        latest = { dx, dy };
+        if (!scheduled) scheduled = requestAnimationFrame(flush);
+      }
+      function end(e) {
+        if (!drag || e.pointerId !== drag.id) return;
+        const clicked = !drag.moved && e.type === 'pointerup';
+        drag = null;
+        if (scheduled) { cancelAnimationFrame(scheduled); scheduled = 0; }
+        flush();
+        element.classList.remove('dragging');
+        try { element.releasePointerCapture(e.pointerId); } catch (_) {}
+        hostEvent(e.type === 'pointerup' ? 'drag-end' : 'drag-cancel', {});
+        if (clicked && typeof options.onClick === 'function') options.onClick(e);
+      }
+      element.addEventListener('pointerdown', down);
+      element.addEventListener('pointermove', move);
+      for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) element.addEventListener(name, end);
+      const unbind = () => {
+        if (scheduled) cancelAnimationFrame(scheduled);
+        drag = null;
+        element.classList.remove('dragging');
+        element.removeEventListener('pointerdown', down);
+        element.removeEventListener('pointermove', move);
+        for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) element.removeEventListener(name, end);
+        cleanup.delete(unbind);
+      };
+      cleanup.add(unbind);
+      return unbind;
     }
     addEventListener('message', (event) => {
       const data = event.data || {};
-      if (event.source !== parent || data.type !== 'ciweimao-plugin-response' || data.token !== TOKEN) return;
+      if (event.source !== parent || data.token !== TOKEN) return;
+      if (data.type === 'ciweimao-plugin-host') {
+        if (data.event === 'dispose') { dispose(); return; }
+        if (data.event === 'theme') {
+          document.documentElement.dataset.theme = data.theme;
+          const style = document.getElementById('plugin-host-theme');
+          if (style) style.textContent = data.css || '';
+          emit('theme-changed', { theme: data.theme });
+          return;
+        }
+        if (data.event) { emit(data.event, data); return; }
+        hostState = data;
+        document.documentElement.dataset.ciweimaoEmbed = data.mode === 'floating' ? 'floating' : 'page';
+        readyResolve(data);
+        emit('floating-changed', data);
+        window.dispatchEvent(new CustomEvent('ciweimao-plugin-embed-mode', { detail: data }));
+        return;
+      }
+      if (data.type !== 'ciweimao-plugin-response') return;
       const item = waiting.get(data.id);
       if (!item) return;
       waiting.delete(data.id);
+      clearTimeout(item.timer);
       if (data.ok) item.resolve(data.result);
       else item.reject(new Error(data.error || '插件请求失败'));
     });
     const api = {
+      version: '1.1.0',
+      ready,
+      on,
       app: { info: () => request('app.info'), notify: (message) => request('app.notify', { message }) },
       editor: {
         getContext: () => request('editor.getContext'),
@@ -5437,13 +5608,22 @@ function pluginBridgeSource(token) {
         refreshAuthorSubscriptions: () => request('stats.refreshAuthorSubscriptions', null, 300000),
       },
       ui: { setEditorStat: (item) => request('ui.setEditorStat', item) },
+      floating: {
+        configure: (options) => request('floating.configure', options),
+        setExpanded: (expanded) => request('floating.setExpanded', { expanded: !!expanded }),
+        getState: () => hostState,
+        onChange: (callback) => on('floating-changed', callback),
+        bindDrag,
+      },
       storage: {
         get: (key) => request('storage.get', { key }),
         set: (key, value) => request('storage.set', { key, value }),
       },
     };
-    Object.freeze(api.app); Object.freeze(api.editor); Object.freeze(api.stats); Object.freeze(api.ui); Object.freeze(api.storage);
+    for (const name of ['app', 'editor', 'stats', 'ui', 'floating', 'storage']) Object.freeze(api[name]);
     Object.defineProperty(window, 'PluginAPI', { value: Object.freeze(api), writable: false });
+    addEventListener('pagehide', dispose, { once: true });
+    setTimeout(() => hostEvent('ready', {}), 0);
   })();`;
 }
 
@@ -5491,24 +5671,41 @@ function pluginThemeCss() {
     .bar i { background: ${accent} !important; }
     .book-row { background: ${surface2} !important; }
     input, select { background: ${surface} !important; color: ${text} !important; border-color: ${borderStrong} !important; }
+    html[data-ciweimao-embed="floating"], html[data-ciweimao-embed="floating"] body {
+      background: transparent !important;
+      overflow: hidden !important;
+    }
+    html[data-ciweimao-embed="floating"] #app {
+      width: 100vw !important;
+      height: 100vh !important;
+      min-height: 0 !important;
+      padding: 0 !important;
+      background: transparent !important;
+    }
   `;
 }
 
 function buildPluginDocument(bundle, token) {
   const page = String(bundle.page || '').replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, '');
   // 主题覆盖放在插件自带样式后面，靠 !important 压过硬编码
-  const style = String(bundle.style || '').replace(/<\/style/gi, '<\\/style') + pluginThemeCss();
+  const style = String(bundle.style || '').replace(/<\/style/gi, '<\\/style');
   const bridge = pluginBridgeSource(token).replace(/<\/script/gi, '<\\/script');
   const script = String(bundle.script || '').replace(/<\/script/gi, '<\\/script');
   const nonce = 'ciweimao-plugin';
   return `<!doctype html><html><head><meta charset="utf-8">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
-    <meta name="viewport" content="width=device-width,initial-scale=1"><style>${style}</style></head>
+    <meta name="viewport" content="width=device-width,initial-scale=1"><style>${style}</style><style id="plugin-host-theme">${pluginThemeCss()}</style></head>
     <body>${page}<script nonce="${nonce}">${bridge}</script><script nonce="${nonce}">${script}</script></body></html>`;
 }
 
 async function openPlugin(id) {
   try {
+    const floating = pluginFloatingRuntimes.get(id);
+    if (floating) {
+      floating.controller.setExpanded(true);
+      sendPluginHostState(floating, { event: 'open', mode: 'floating' });
+      return;
+    }
     const bundle = await window.api.plugins.get(id);
     const meta = pluginItems.find((item) => item.id === id) || bundle.manifest;
     activePlugin = { ...meta, manifest: bundle.manifest };
@@ -5529,13 +5726,19 @@ async function openPlugin(id) {
       && activePlugin.contributes.navigation.title) || activePlugin.name;
     setActiveNav('plugins', activePlugin.id);
     const documentText = buildPluginDocument(bundle, activePluginToken);
-    $('#pluginFrame').src = `data:text/html;base64,${pluginUtf8Base64(documentText)}`;
+    const frame = $('#pluginFrame');
+    const runtime = activePluginRuntime;
+    frame.addEventListener('load', () => {
+      if (activePluginRuntime === runtime) sendPluginHostState(runtime, { mode: 'page' });
+    }, { once: true });
+    frame.src = `data:text/html;base64,${pluginUtf8Base64(documentText)}`;
   } catch (err) {
     pluginNotice(`打开插件失败：${err.message || err}`, true);
   }
 }
 
 function closePlugin() {
+  if (activePluginRuntime) sendPluginHostState(activePluginRuntime, { event: 'dispose', mode: 'page' });
   activePlugin = null;
   activePluginToken = '';
   activePluginRuntime = null;
@@ -5558,7 +5761,14 @@ async function handlePluginRequest(runtime, method, payload) {
   const plugin = runtime && runtime.plugin;
   if (!plugin) throw new Error('插件未打开');
   if (method === 'app.info') {
-    return { plugin: plugin.id, version: plugin.version, theme: document.documentElement.dataset.theme || 'light' };
+    return { plugin: plugin.id, version: plugin.version, apiVersion: '1.1.0',
+      capabilities: ['events', 'lifecycle', 'floating'],
+      theme: document.documentElement.dataset.theme || 'light' };
+  }
+  if (method.startsWith('floating.')) {
+    if (runtime.kind !== 'floating' || !runtime.controller) throw new Error('插件未声明常驻悬浮能力');
+    if (method === 'floating.configure') return runtime.controller.configure(payload);
+    if (method === 'floating.setExpanded') return runtime.controller.setExpanded(payload && payload.expanded);
   }
   if (method === 'app.notify') {
     const message = String((payload && payload.message) || '').slice(0, 160);
@@ -5568,6 +5778,11 @@ async function handlePluginRequest(runtime, method, payload) {
   if (method === 'storage.get') return window.api.plugins.storageGet(plugin.id, payload && payload.key);
   if (method === 'storage.set') {
     const result = await window.api.plugins.storageSet(plugin.id, payload && payload.key, payload && payload.value);
+    for (const candidate of [activePluginRuntime, ...pluginBackgroundRuntimes.values(), ...pluginFloatingRuntimes.values()]) {
+      if (candidate && candidate !== runtime && candidate.plugin.id === plugin.id) {
+        sendPluginHostState(candidate, { event: 'storage-changed', key: payload && payload.key });
+      }
+    }
     if (plugin.id === 'income-calculator') await refreshBuiltInIncomeEditorStat();
     return result;
   }
@@ -5668,23 +5883,35 @@ window.addEventListener('message', async (event) => {
   const data = event.data || {};
   let runtime = null;
   if (activePluginRuntime && event.source === activePluginRuntime.frame.contentWindow
-      && data.token === activePluginRuntime.token) runtime = activePluginRuntime;
+      && data.token === activePluginRuntime.token) {
+    runtime = activePluginRuntime;
+  }
   if (!runtime) {
-    for (const candidate of pluginBackgroundRuntimes.values()) {
-      if (event.source === candidate.frame.contentWindow && data.token === candidate.token) {
+    for (const candidate of [...pluginBackgroundRuntimes.values(), ...pluginFloatingRuntimes.values()]) {
+      // 仅对早期悬浮插件的布局消息兼容缺少 token 的格式，其他接口始终校验 token。
+      const legacyLayout = candidate.kind === 'floating' && data.type === 'ciweimao-plugin-host-event'
+        && data.token == null && ['popover', 'drag-start', 'drag-move', 'drag-end'].includes(data.event);
+      if (event.source === candidate.frame.contentWindow && (data.token === candidate.token || legacyLayout)) {
         runtime = candidate;
         break;
       }
     }
   }
-  if (!runtime || data.type !== 'ciweimao-plugin-request') return;
+  if (!runtime || !['ciweimao-plugin-request', 'ciweimao-plugin-host-event'].includes(data.type)) return;
   const now = Date.now();
   if (now - runtime.messageStartedAt > 1000) {
     runtime.messageStartedAt = now;
     runtime.messageCount = 0;
   }
   runtime.messageCount += 1;
-  if (runtime.messageCount > 100) return;
+  if (runtime.messageCount > 240) return;
+  if (data.type === 'ciweimao-plugin-host-event') {
+    if (data.event === 'ready') {
+      if (runtime.controller) runtime.controller.render();
+      else sendPluginHostState(runtime, { mode: 'page' });
+    } else if (runtime.controller) runtime.controller.event(data);
+    return;
+  }
   try {
     const result = await handlePluginRequest(runtime, String(data.method || ''), data.payload || {});
     event.source.postMessage({ type: 'ciweimao-plugin-response', token: runtime.token, id: data.id, ok: true, result }, '*');
@@ -5715,7 +5942,10 @@ $('#pluginGrid').addEventListener('click', async (e) => {
 });
 
 $('#btnPluginFolder').addEventListener('click', () => window.api.plugins.openFolder());
-$('#btnPluginReload').addEventListener('click', loadPlugins);
+$('#btnPluginReload').addEventListener('click', async () => {
+  for (const id of pluginFloatingRuntimes.keys()) disposeFloatingPlugin(id);
+  await loadPlugins();
+});
 $('#btnPluginImport').addEventListener('click', async () => {
   const result = await window.api.plugins.importZip();
   if (!result || result.canceled) return;
@@ -5885,11 +6115,19 @@ document.addEventListener('theme-changed', () => {
   if (b) renderBookChart(b);
 });
 
-// 插件页是独立 iframe，主题色在文档生成时就写进去了，换主题只能重载一次
+// 主题通过事件同步，不重载 iframe，保留计时器、拖动位置和插件界面状态。
 document.addEventListener('theme-changed', () => {
-  if (!activePlugin) return;
-  const frame = $('#pluginFrame');
-  if (frame && !frame.hidden) openPlugin(activePlugin.id);
+  const css = pluginThemeCss();
+  const theme = document.documentElement.dataset.theme || 'light';
+  for (const runtime of [activePluginRuntime, ...pluginBackgroundRuntimes.values(), ...pluginFloatingRuntimes.values()]) {
+    if (runtime) sendPluginHostState(runtime, { event: 'theme', css, theme });
+  }
+});
+
+document.addEventListener('view-changed', (event) => {
+  for (const runtime of pluginFloatingRuntimes.values()) {
+    sendPluginHostState(runtime, { event: 'view-changed', view: event.detail.name });
+  }
 });
 
 // ------------------------------------------------------------ 首次启动声明

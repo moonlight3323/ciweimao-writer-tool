@@ -90,8 +90,9 @@ npm install
 插件跑在 `sandbox` iframe 里，只能通过宿主暴露的 `PluginAPI` 与软件交互，拿不到 Node、文件系统与界面 DOM。
 
 - 插件目录：`manifest.json` + `page.html` + `main.js` + `style.css` + `README.md`（预装插件还可带 `background.js`）
-- `manifest.json` 支持 `contributes.navigation`（在左侧加一项）与 `contributes.editorStat`（在编辑器里显示指标）
+- `manifest.json` 支持 `contributes.navigation`（在左侧加一项）、`contributes.editorStat`（在编辑器里显示指标）与 `contributes.floatingWidget`（让插件自己的 iframe 悬浮球常驻应用顶层）
 - 权限：`editor.read` / `editor.write` / `stats.read` / `stats.author` / `ui.editorStat`
+- 插件 API 1.1.0 提供就绪握手、事件订阅、独立常驻 iframe 和 `floating.configure / bindDrag / setExpanded`；切换页面与主题时保留常驻插件状态
 - 随包预装放在 `bundled-plugins/`，首次启动会按版本号安装到用户数据目录，升级时不覆盖用户改动
 
 接口细节、沙箱红线与常见错误对照见 `docs/插件开发说明.md`。

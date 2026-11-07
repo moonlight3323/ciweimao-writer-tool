@@ -20,6 +20,10 @@ const html = fs.readFileSync(path.join(root, 'src/renderer/index.html'), 'utf8')
 if (!html.includes(`v${pkg.version}`)) throw new Error('界面版本与 package.json 不一致');
 const bundledIncome = JSON.parse(fs.readFileSync(path.join(root, 'bundled-plugins/income-calculator/manifest.json'), 'utf8'));
 if (bundledIncome.id !== 'income-calculator') throw new Error('内置稿费插件清单无效');
+const health = JSON.parse(fs.readFileSync(path.join(root, 'bundled-plugins/health-helper/manifest.json'), 'utf8'));
+if (health.id !== 'health-helper' || !health.contributes.floatingWidget || health.contributes.navigation) {
+  throw new Error('内置健康助手必须启用常驻悬浮能力，且不贡献侧边栏导航');
+}
 const pluginDir = path.join(root, 'plugins', 'income-calculator');
 if (fs.existsSync(pluginDir) && fs.readdirSync(pluginDir).some((file) => file.endsWith('.zip'))) {
   throw new Error('稿费插件必须作为内置插件发布，不能保留独立 ZIP');
