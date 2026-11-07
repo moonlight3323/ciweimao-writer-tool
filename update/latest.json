@@ -1,12 +1,28 @@
 {
-  "version": "1.0.4",
+  "version": "1.0.5",
   "type": "app",
-  "size": 1497357,
-  "sha256": "24d0519dacbf4e92433c58baba90dc2a0089f20e176a73d9779d5000f8c40257",
+  "size": 1516234,
+  "sha256": "092d45badb6cffd42ad1b5652ef0f5bc29119618fad97af6e37949d7bb162ed0",
   "url": [
-    "https://github.com/moonlight3323/ciweimao-writer-tool/releases/download/v1.0.4/ciweimao-writer-tool-v1.0.4-app.zip"
+    "https://github.com/moonlight3323/ciweimao-writer-tool/releases/download/v1.0.5/ciweimao-writer-tool-v1.0.5-app.zip"
   ],
   "changes": [
+    {
+      "version": "1.0.5",
+      "date": "2026-11-07",
+      "items": [
+        "新增内置健康小助手，提供番茄钟、喝水提醒和睡觉提醒。",
+        "悬浮球可在应用本地页面持续显示，切换页面或打开其他插件时继续计时。",
+        "支持自由拖动，在当前位置松手即可放置；点击球体展开计时面板。",
+        "弹窗根据位置选择展开方向，展开和收起时保持球的位置。",
+        "在插件中心点击“打开”可调整健康助手设置，也可以通过开关停用。",
+        "新增常驻悬浮组件接口，多个悬浮插件可以独立运行。",
+        "统一拖动、弹窗尺寸和位置管理，改善拖动跟手性及边角显示。",
+        "新增插件就绪、页面切换、主题变化和卸载通知。",
+        "切换主题时保留插件界面状态，停用或移除时自动清理实例。",
+        "更新插件开发说明，方便开发者接入自己的悬浮组件。"
+      ]
+    },
     {
       "version": "1.0.4",
       "date": "2026-11-07",
