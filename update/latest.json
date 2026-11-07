@@ -1,12 +1,21 @@
 {
-  "version": "1.0.3",
+  "version": "1.0.4",
   "type": "app",
-  "size": 1494588,
-  "sha256": "519c46f6da78fd5ffe66f9c1557a3a1ee4b03199ed415de7e503f7224a549552",
+  "size": 1497357,
+  "sha256": "24d0519dacbf4e92433c58baba90dc2a0089f20e176a73d9779d5000f8c40257",
   "url": [
-    "https://github.com/moonlight3323/ciweimao-writer-tool/releases/download/v1.0.3/ciweimao-writer-tool-v1.0.3-app.zip"
+    "https://github.com/moonlight3323/ciweimao-writer-tool/releases/download/v1.0.4/ciweimao-writer-tool-v1.0.4-app.zip"
   ],
   "changes": [
+    {
+      "version": "1.0.4",
+      "date": "2026-11-07",
+      "items": [
+        "· 新增：更新安装完成后单独显示当前版本更新内容",
+        "· 新增：创作中心置顶书籍栏和置顶筛选，可持久保存置顶状态",
+        "· 调整：置顶与取消置顶提示改为浮动文字，3 秒后自动隐藏"
+      ]
+    },
     {
       "version": "1.0.3",
       "date": "2026-11-07",
