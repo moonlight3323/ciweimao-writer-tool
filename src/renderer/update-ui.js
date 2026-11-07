@@ -110,6 +110,60 @@
     });
   }
 
+  /** 更新已经完成后的独立说明页，不和「发现新版本」确认框共用状态。 */
+  function renderCompletedChanges(bundle, fallback) {
+    const box = $('#updateCompleteChanges');
+    const empty = $('#updateCompleteEmpty');
+    if (!box || !empty) return;
+    box.innerHTML = '';
+    if (fallback || !bundle || !bundle.length) {
+      box.hidden = true;
+      empty.hidden = false;
+      return;
+    }
+    empty.hidden = true;
+    box.hidden = false;
+    bundle.forEach((entry) => {
+      const group = document.createElement('div');
+      group.className = 'update-group';
+      const head = document.createElement('div');
+      head.className = 'update-group-head';
+      head.textContent = `v${entry.version}${entry.date ? ' · ' + entry.date : ''}`;
+      group.appendChild(head);
+      if (entry.items && entry.items.length) {
+        const ul = document.createElement('ul');
+        ul.className = 'update-items';
+        entry.items.forEach((line) => {
+          const li = document.createElement('li');
+          li.textContent = line;
+          ul.appendChild(li);
+        });
+        group.appendChild(ul);
+      }
+      box.appendChild(group);
+    });
+  }
+
+  function showCompletedNotice(notice) {
+    const dialog = $('#updateCompleteDialog');
+    if (!dialog) return;
+    const to = notice && notice.to ? String(notice.to) : '';
+    const from = notice && notice.from ? String(notice.from) : '';
+    $('#updateCompleteTitle').textContent = to ? `已更新到 v${to}` : '更新已完成';
+    $('#updateCompleteMeta').textContent = from && to
+      ? `v${from} → v${to}　现在可以继续创作了`
+      : '新版本已经安装完成，现在可以继续创作了';
+    renderCompletedChanges(notice && notice.bundle, notice && notice.fallback);
+    dialog.hidden = false;
+    document.body.classList.add('is-locked');
+  }
+
+  function closeCompletedNotice() {
+    const dialog = $('#updateCompleteDialog');
+    if (dialog) dialog.hidden = true;
+    document.body.classList.remove('is-locked');
+  }
+
   function openDialog() {
     $('#updateDialog').hidden = false;
   }
@@ -382,6 +436,8 @@
     $('#btnUpdateReleases').addEventListener('click', () => {
       api.openReleases(info ? info.releasesPage : '');
     });
+    const completeClose = $('#btnUpdateCompleteClose');
+    if (completeClose) completeClose.addEventListener('click', closeCompletedNotice);
     const checkButton = $('#btnCheckUpdate');
     if (checkButton) checkButton.addEventListener('click', () => checkLatest(true));
     const releasesButton = $('#btnSettingsReleases');
@@ -393,6 +449,7 @@
     try {
       const notice = await api.notice();
       if (notice && notice.kind === 'rolled-back') showRollbackNotice(notice);
+      if (notice && notice.kind === 'updated') showCompletedNotice(notice);
     } catch (_) { /* 没有提示就是正常的 */ }
 
     await checkLatest(false);

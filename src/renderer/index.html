@@ -8,7 +8,7 @@
   <title>刺猬猫作家助手</title>
   <!-- 先定主题再上色，避免深色模式下闪一下白底 -->
   <script src="theme-init.js"></script>
-  <link rel="stylesheet" href="style.css?v=20261106-20" />
+  <link rel="stylesheet" href="style.css?v=20261107-2" />
 </head>
 <body>
   <!-- 更新提示条：仅在有新版本时出现，固定 32px，关闭后本次运行不再出现 -->
@@ -52,7 +52,7 @@
           <span class="conn-dot"></span>
           <span class="conn-text">后台未打开</span>
         </div>
-        <div class="version">v1.0.3</div>
+        <div class="version">v1.0.4</div>
       </div>
     </aside>
 
@@ -250,12 +250,35 @@
                 <button class="btn ghost" id="btnWriterRefresh" type="button">刷新</button>
               </div>
             </div>
+            <div class="writer-library-filters" role="tablist" aria-label="作品筛选">
+              <button class="writer-library-filter is-active" data-writer-filter="all" type="button" role="tab" aria-selected="true">全部作品</button>
+              <button class="writer-library-filter" data-writer-filter="pinned" type="button" role="tab" aria-selected="false">
+                置顶书籍 <span class="writer-library-filter-count" id="writerPinnedCount">0</span>
+              </button>
+            </div>
             <div class="writer-notice" id="writerNotice" hidden></div>
+            <section class="writer-pinned-panel" id="writerPinnedPanel" hidden>
+              <div class="writer-pinned-head">
+                <div>
+                  <h3>置顶书籍</h3>
+                  <p>把正在连载的作品放在这里，打开作品更方便。</p>
+                </div>
+                <span class="writer-pinned-badge" id="writerPinnedBadge">0 本</span>
+              </div>
+              <div class="writer-book-grid writer-pinned-grid" id="writerPinnedGrid"></div>
+              <div class="writer-pinned-empty" id="writerPinnedEmpty" hidden>还没有置顶书籍，点击作品卡片右下角的 ☆ 即可置顶。</div>
+            </section>
+            <div class="writer-other-label" id="writerOtherLabel">其他作品</div>
             <div class="writer-book-grid" id="writerBookGrid"></div>
             <div class="writer-empty" id="writerEmpty" hidden>
               <div class="writer-empty-icon">✎</div>
               <h3>还没有作品</h3>
               <p>新建一本书，或导入 TXT / JSON 开始创作。</p>
+            </div>
+            <div class="writer-filter-empty" id="writerFilterEmpty" hidden>
+              <div class="writer-empty-icon">☆</div>
+              <h3>还没有置顶书籍</h3>
+              <p>在作品卡片右下角点击 ☆，就能把正在更新的书放到置顶栏。</p>
             </div>
           </div>
 
@@ -1116,6 +1139,21 @@
       </div>
       <p class="update-status" id="updateStatus" hidden></p>
       <div class="update-actions" id="updateActions"></div>
+    </div>
+  </div>
+
+  <!-- 更新成功后的独立说明页：只在刚完成一次版本升级时显示一次。 -->
+  <div class="notice-overlay update-complete-overlay" id="updateCompleteDialog" hidden>
+    <div class="notice-card update-card update-complete-card" role="dialog" aria-modal="true" aria-labelledby="updateCompleteTitle">
+      <div class="notice-badge">更新完成</div>
+      <h2 class="notice-title" id="updateCompleteTitle">已更新到新版本</h2>
+      <p class="update-meta" id="updateCompleteMeta"></p>
+      <div class="update-complete-intro">本次更新内容</div>
+      <div class="update-changes" id="updateCompleteChanges"></div>
+      <p class="update-empty" id="updateCompleteEmpty" hidden>本次更新没有提供详细说明，可以前往发布页查看完整内容。</p>
+      <div class="update-actions">
+        <button class="btn primary" id="btnUpdateCompleteClose" type="button">开始使用</button>
+      </div>
     </div>
   </div>
 

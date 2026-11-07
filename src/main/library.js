@@ -88,6 +88,8 @@ function archive(dataDir, payload) {
     bookId,
     name,
     source: old.source || 'author',
+    pinned: !!old.pinned,
+    pinnedAt: Number(old.pinnedAt) || 0,
     createdAt: old.createdAt || now,
     updatedAt: now,
     exportedAt: now,
@@ -109,6 +111,8 @@ function archive(dataDir, payload) {
     chapters: chapters.length,
     words: totalWords,
     source: book.source,
+    pinned: !!book.pinned,
+    pinnedAt: Number(book.pinnedAt) || 0,
     createdAt: book.createdAt,
     updatedAt: book.updatedAt,
     exportedAt: book.exportedAt,
@@ -173,12 +177,16 @@ function saveBook(dataDir, payload) {
     };
   });
   const source = String(p.source || old.source || 'local');
+  const pinned = p.pinned === undefined ? !!old.pinned : !!p.pinned;
+  const pinnedAt = pinned ? (Number(p.pinnedAt) || Number(old.pinnedAt) || now) : 0;
   const book = {
     ...old,
     bookId,
     name: String(p.name || old.name || '未命名作品').trim() || '未命名作品',
     cover: String(p.cover || old.cover || ''),
     source,
+    pinned,
+    pinnedAt,
     platformBookId: String(p.platformBookId || old.platformBookId || (source === 'author' ? bookId : ''))
       .replace(/[^0-9A-Za-z_-]/g, ''),
     createdAt: Number(old.createdAt) || Number(p.createdAt) || now,
@@ -197,6 +205,8 @@ function saveBook(dataDir, payload) {
     cover: book.cover,
     source: book.source,
     platformBookId: book.platformBookId,
+    pinned: book.pinned,
+    pinnedAt: book.pinnedAt,
     chapters: chapters.length,
     words: chapters.reduce((sum, c) => sum + c.words, 0),
     createdAt: book.createdAt,
@@ -295,6 +305,28 @@ function deleteBook(dataDir, bookId) {
     updatedAt: Date.now(),
   });
   return true;
+}
+
+/** 设置作品库中的置顶状态。置顶只改索引和书籍元数据，不会改变正文。 */
+function setPinned(dataDir, bookId, pinned) {
+  const id = safeId(bookId);
+  const idx = readIndex(dataDir);
+  const entry = idx.books.find((b) => String(b.bookId) === id);
+  if (!entry) return null;
+
+  const file = bookPath(dataDir, id);
+  const book = readJson(file, null);
+  const nextPinned = !!pinned;
+  const pinnedAt = nextPinned ? Date.now() : 0;
+  if (book) {
+    book.pinned = nextPinned;
+    book.pinnedAt = pinnedAt;
+    writeJson(file, book);
+  }
+  entry.pinned = nextPinned;
+  entry.pinnedAt = pinnedAt;
+  writeJson(indexPath(dataDir), { books: idx.books, updatedAt: Date.now() });
+  return { bookId: id, pinned: nextPinned, pinnedAt };
 }
 
 /**
@@ -396,6 +428,7 @@ module.exports = {
   archive, listBooks, saveBook, createBook, getBook, deleteBook,
   adoptPlatformBooks,
   updateCovers,
+  setPinned,
   getBookToc, getChapter, getChapterRange, clearAll,
   libraryDir, MAX_BOOKS,
 };

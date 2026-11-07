@@ -85,6 +85,7 @@ contextBridge.exposeInMainWorld('api', {
     adopt: (books) => ipcRenderer.invoke('writer:adopt', books),
     save: (book) => ipcRenderer.invoke('writer:save', book),
     covers: (list) => ipcRenderer.invoke('writer:covers', list),
+    pin: (bookId, pinned) => ipcRenderer.invoke('writer:pin', bookId, pinned),
     remove: (bookId) => ipcRenderer.invoke('writer:delete', bookId),
     importBook: () => ipcRenderer.invoke('writer:import'),
   },

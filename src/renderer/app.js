@@ -3264,6 +3264,7 @@ let writerExcludeInput = false;
 let writerSuppressInput = false;
 let writerSession = null;
 let writerCollapsedVolumes = new Set();
+let writerPinnedOnly = false;
 let writerTypedMask = [];
 let writerNextTypedToken = 1;
 let writerSavingTokens = new Set();
@@ -3272,6 +3273,7 @@ let writerSavedWordBaseline = 0;
 let writerSavedBaselineChapterId = '';
 let writerLastSavedChapterWords = 0;
 let writerSaveQueue = Promise.resolve();
+let writerNoticeTimer = null;
 
 function writerWordCount(text) {
   return String(text || '').replace(/\s/g, '').length;
@@ -3351,11 +3353,20 @@ function updateWriterWordCount() {
   $('#writerBottomWords').textContent = writerFormatNumber(count);
 }
 
-function writerNotice(text, error) {
+function writerNotice(text, error, autoHideMs = 0) {
+  clearTimeout(writerNoticeTimer);
+  writerNoticeTimer = null;
   const el = $('#writerNotice');
   el.hidden = !text;
   el.textContent = text || '';
   el.classList.toggle('is-error', !!error);
+  if (text && !error && Number(autoHideMs) > 0) {
+    writerNoticeTimer = setTimeout(() => {
+      el.hidden = true;
+      el.textContent = '';
+      writerNoticeTimer = null;
+    }, Number(autoHideMs));
+  }
 }
 
 // -------------------------------------------------- 作品库自动补建（后台新书）
@@ -3474,16 +3485,18 @@ function bindWriterCoverFallback() {
   });
 }
 
-function renderWriterBooks() {
-  const grid = $('#writerBookGrid');
-  $('#writerEmpty').hidden = !!writerBooks.length;
-  grid.innerHTML = writerBooks.map((book, i) => {
-    const cover = String(book.cover || remoteCoverFor(book) || '');
-    const coverTag = cover
-      ? `<img class="writer-book-cover-img" src="${escapeHtml(cover)}" alt="" loading="lazy" />`
-      : '';
-    return `
-    <article class="writer-book-card" data-writer-book="${escapeHtml(String(book.bookId))}">
+function renderWriterBookCard(book, i) {
+  const cover = String(book.cover || remoteCoverFor(book) || '');
+  const coverTag = cover
+    ? `<img class="writer-book-cover-img" src="${escapeHtml(cover)}" alt="" loading="lazy" />`
+    : '';
+  const id = escapeHtml(String(book.bookId));
+  const pinButton = book.source === 'remote' ? '' : `
+      <button class="writer-book-pin${book.pinned ? ' is-pinned' : ''}" data-writer-pin="${id}"
+              type="button" title="${book.pinned ? '取消置顶' : '置顶到上方栏'}" aria-label="${book.pinned ? '取消置顶' : '置顶到上方栏'}"
+              aria-pressed="${book.pinned ? 'true' : 'false'}">${book.pinned ? '★' : '☆'}</button>`;
+  return `
+    <article class="writer-book-card${book.pinned ? ' is-pinned' : ''}" data-writer-book="${id}">
       <div class="writer-book-cover tone-${i % 5}${cover ? ' has-cover' : ''}">
         ${coverTag}
         <span class="writer-book-source">${writerSourceLabel(book.source)}</span>
@@ -3491,12 +3504,43 @@ function renderWriterBooks() {
       </div>
       <div class="writer-book-info">
         <h3>${escapeHtml(book.name || '未命名作品')}</h3>
-        <p>${writerFormatNumber(book.words)} 字 · ${Number(book.chapters) || 0} 章</p>
+        <div class="writer-book-meta">
+          <p>${writerFormatNumber(book.words)} 字 · ${Number(book.chapters) || 0} 章</p>
+          ${pinButton}
+        </div>
       </div>
-      <button class="writer-book-delete" data-writer-delete="${escapeHtml(String(book.bookId))}" type="button" title="从本地作品库删除">•••</button>
+      <button class="writer-book-delete" data-writer-delete="${id}" type="button" title="从本地作品库删除">•••</button>
     </article>
   `;
-  }).join('');
+}
+
+function renderWriterBooks() {
+  const pinned = writerBooks.filter((book) => !!book.pinned && book.source !== 'remote')
+    .sort((a, b) => (Number(b.pinnedAt) || 0) - (Number(a.pinnedAt) || 0));
+  const other = writerBooks.filter((book) => !book.pinned || book.source === 'remote');
+  const pinnedPanel = $('#writerPinnedPanel');
+  const pinnedGrid = $('#writerPinnedGrid');
+  const grid = $('#writerBookGrid');
+  const filterEmpty = $('#writerFilterEmpty');
+  const hasBooks = writerBooks.length > 0;
+
+  $('#writerPinnedCount').textContent = String(pinned.length);
+  $('#writerPinnedBadge').textContent = `${pinned.length} 本`;
+  $$('.writer-library-filter').forEach((button) => {
+    const active = (button.dataset.writerFilter === 'pinned') === writerPinnedOnly;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+
+  pinnedPanel.hidden = writerPinnedOnly ? false : !pinned.length;
+  pinnedGrid.innerHTML = pinned.map((book, i) => renderWriterBookCard(book, i)).join('');
+  $('#writerPinnedEmpty').hidden = pinned.length > 0;
+
+  $('#writerOtherLabel').hidden = writerPinnedOnly || !other.length;
+  grid.hidden = writerPinnedOnly || !other.length;
+  grid.innerHTML = writerPinnedOnly ? '' : other.map((book, i) => renderWriterBookCard(book, i)).join('');
+  $('#writerEmpty').hidden = hasBooks;
+  filterEmpty.hidden = !writerPinnedOnly || pinned.length > 0;
   bindWriterCoverFallback();
 }
 
@@ -4275,7 +4319,28 @@ async function writerPerformSave(auto) {
   }
 }
 
-$('#writerBookGrid').addEventListener('click', async (e) => {
+$('#writerLibrary').addEventListener('click', async (e) => {
+  const pin = e.target.closest('[data-writer-pin]');
+  if (pin) {
+    e.stopPropagation();
+    const book = writerBooks.find((b) => String(b.bookId) === pin.dataset.writerPin);
+    if (!book || book.source === 'remote') return;
+    pin.disabled = true;
+    try {
+      const result = await window.api.writer.pin(book.bookId, !book.pinned);
+      if (!result || !result.result) throw new Error('置顶状态保存失败');
+      writerNotice(
+        result.result.pinned ? `《${book.name}》已置顶` : `《${book.name}》已取消置顶`,
+        false,
+        3000,
+      );
+      await loadWriterBooks();
+    } catch (err) {
+      writerNotice(`置顶失败：${err.message || err}`, true);
+      pin.disabled = false;
+    }
+    return;
+  }
   const del = e.target.closest('[data-writer-delete]');
   if (del) {
     e.stopPropagation();
@@ -4292,6 +4357,13 @@ $('#writerBookGrid').addEventListener('click', async (e) => {
     if (remote) syncWriterRemoteBook(remote);
     else openWriterBook(card.dataset.writerBook);
   }
+});
+
+$$('.writer-library-filter').forEach((button) => {
+  button.addEventListener('click', () => {
+    writerPinnedOnly = button.dataset.writerFilter === 'pinned';
+    renderWriterBooks();
+  });
 });
 
 $('#btnWriterRefresh').addEventListener('click', loadWriterBooks);

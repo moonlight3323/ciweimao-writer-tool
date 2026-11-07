@@ -681,6 +681,9 @@ ipcMain.handle('writer:create', (_e, name) => library.createBook(dataDir(), name
 ipcMain.handle('writer:adopt', (_e, books) => library.adoptPlatformBooks(dataDir(), books));
 ipcMain.handle('writer:save', (_e, book) => library.saveBook(dataDir(), book));
 ipcMain.handle('writer:covers', (_e, list) => library.updateCovers(dataDir(), list));
+ipcMain.handle('writer:pin', (_e, bookId, pinned) => ({
+  result: library.setPinned(dataDir(), bookId, pinned),
+}));
 ipcMain.handle('writer:delete', (_e, bookId) => ({ deleted: library.deleteBook(dataDir(), bookId) }));
 ipcMain.handle('writer:import', async () => {
   const picked = await dialog.showOpenDialog(win, {
@@ -1241,6 +1244,12 @@ function recoverUpdateState() {
   if (st.to === version) {
     // 新版本已经跑起来了：先落 ok 标记（cmd 靠它判断成功），再清状态与备份
     try { fs.writeFileSync(updater.okFlagPath(dir), version, 'utf8'); } catch (_) { /* ignore */ }
+    updateNotice = {
+      kind: 'updated',
+      from: String(st.from || ''),
+      to: String(version),
+      at: String(st.at || ''),
+    };
     updater.clearState(dir);
     if (st.bakPath) {
       try { fs.rmSync(st.bakPath, { recursive: true, force: true }); } catch (_) { /* 删不掉就留着 */ }
@@ -1278,7 +1287,13 @@ async function checkForUpdate() {
     throw new Error(`清单里的版本号读不懂：${manifest.version}`);
   }
   if (cmp <= 0) {
-    return { available: false, current, version: manifest.version };
+    return {
+      available: false,
+      current,
+      version: manifest.version,
+      changes: Array.isArray(manifest.changes) ? manifest.changes : [],
+      releasesPage: manifest.releasesPage,
+    };
   }
 
   const skipped = skippedList();
@@ -1506,9 +1521,25 @@ async function installUpdate() {
   return { ok: true, restarting: true, version: st.to, type: manifest ? manifest.type : 'app' };
 }
 
-ipcMain.handle('update:notice', () => {
+ipcMain.handle('update:notice', async () => {
   const n = updateNotice;
   updateNotice = null;
+  if (n && n.kind === 'updated') {
+    try {
+      const manifest = await updater.fetchManifest(MANIFEST_URLS);
+      const changes = updater.pickChanges(n.from, n.to, manifest.changes);
+      return {
+        ...n,
+        bundle: changes.bundle,
+        fallback: changes.fallback,
+        across: changes.across,
+        releasesPage: manifest.releasesPage,
+      };
+    } catch (_) {
+      // 更新已经完成，清单暂时不可用时仍要显示独立的完成页。
+      return { ...n, bundle: [], fallback: true, across: 0 };
+    }
+  }
   return n;
 });
 
