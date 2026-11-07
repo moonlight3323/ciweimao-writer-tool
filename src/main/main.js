@@ -1207,6 +1207,16 @@ function recoverUpdateState() {
   const version = app.getVersion();
   const st = updater.readState(dir);
 
+  if (st && st.stage === 'installing' && st.to === version) {
+    // 更新助手仍在执行：先确认启动，不清理它正在读取的脚本、锁和备份。
+    // 收尾由助手收到确认后统一完成，避免新进程删掉正在执行的 cmd。
+    fs.writeFileSync(updater.okFlagPath(dir), version, 'utf8');
+    updateNotice = {
+      kind: 'updated', from: String(st.from || ''), to: String(version), at: String(st.at || ''),
+    };
+    return;
+  }
+
   /*
    * 清掉上一次更新留下的下载包和解压目录。
    * 每个版本约占 3 MB（1.2 MB 的包 + 1.7 MB 的解压结果），
@@ -1240,22 +1250,6 @@ function recoverUpdateState() {
   }
 
   if (!st || st.stage !== 'installing') return;
-
-  if (st.to === version) {
-    // 新版本已经跑起来了：先落 ok 标记（cmd 靠它判断成功），再清状态与备份
-    try { fs.writeFileSync(updater.okFlagPath(dir), version, 'utf8'); } catch (_) { /* ignore */ }
-    updateNotice = {
-      kind: 'updated',
-      from: String(st.from || ''),
-      to: String(version),
-      at: String(st.at || ''),
-    };
-    updater.clearState(dir);
-    if (st.bakPath) {
-      try { fs.rmSync(st.bakPath, { recursive: true, force: true }); } catch (_) { /* 删不掉就留着 */ }
-    }
-    return;
-  }
 
   if (st.from === version) {
     if (!updateNotice) {
@@ -1470,7 +1464,7 @@ async function installUpdate() {
     args: process.argv.slice(1).map((a) => (/[\s"]/.test(a) ? `"${a.replace(/"/g, '""')}"` : a)).join(' '),
     dataDir: dir,
     to: st.to,
-    waitSeconds: 15,
+    waitSeconds: 60,
   });
 
   const cmdPath = path.join(updater.tempRoot(), 'run-update.cmd');
@@ -1593,7 +1587,7 @@ if (!gotLock) {
   app.whenReady().then(async () => {
     // Windows 任务栏图标与分组归属，需与快捷方式一致，否则会回落到 electron.exe 的图标
     app.setAppUserModelId('com.ciweimao.author.tool');
-    // 升级自检要尽早做：run-update.cmd 正在等新版本写 ok 标记，超过 15 秒它就会回滚
+    // 升级自检要尽早做：run-update.cmd 正在等待新版本确认启动。
     try { recoverUpdateState(); } catch (_) { /* 自检失败不阻断启动 */ }
     await ensureInitialStorageChoice();
     plugins.installBundled(dataDir(), path.join(app.getAppPath(), 'bundled-plugins'));

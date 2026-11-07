@@ -47,6 +47,8 @@ jobs:
           if ($env:REF_TYPE -eq 'tag' -and $env:REF_NAME -ne "v$version") { throw 'Tag must match package.json version' }
       - run: npm ci --no-audit --no-fund
       - run: npm run install:electron
+      - name: Verify Windows update installation
+        run: node --test tests/updater-install.test.js
       - name: Build portable directory
         run: |
           $distPath = [IO.Path]::GetFullPath((Join-Path $PWD 'dist'))
@@ -128,7 +130,14 @@ jobs:
           # 手写说明优先：docs/更新说明-<tag>.md 就是 Release 正文，格式与人读的一致。
           # 没写就回退到 GitHub 自动生成的提交列表，至少不会是空白。
           NOTES="docs/更新说明-${TAG_NAME}.md"
-          if [ -f "$NOTES" ]; then
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            # 同版本修复重发：替换成品和校验文件，随后发布新的更新清单。
+            gh release upload "$TAG_NAME" release/*.zip release/*.sha256 --clobber
+            if [ -f "$NOTES" ]; then
+              gh release edit "$TAG_NAME" --notes-file "$NOTES" \
+                --title "刺猬猫作家助手 $TAG_NAME"
+            fi
+          elif [ -f "$NOTES" ]; then
             echo "使用手写更新说明：$NOTES"
             gh release create "$TAG_NAME" release/*.zip release/*.sha256 \
               --verify-tag --notes-file "$NOTES" --draft \

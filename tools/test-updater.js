@@ -353,7 +353,11 @@ test('run-update.cmd 内容：等待旧进程、覆盖、等 ok 标记、失败�
   assert.ok(cmd.indexOf(':rollback') > cmd.indexOf(':probe'), '回滚分支必须在新版本启动检测之后');
   // 等旧进程要有上限，否则旧进程赖着不走时脚本会无限循环（用户看到窗口一直闪）
   assert.match(cmd, /set \/a WAITED=0/, '等待循环要有计数器');
-  assert.match(cmd, /if %WAITED% GEQ 30 goto go/, '等满 60 秒必须放行，不能无限等');
+  assert.match(cmd, /if %WAITED% GEQ 30 goto busyfail/, '旧进程超时不得继续覆盖文件');
+  assert.match(cmd, /\/FO CSV \/NH/, 'PID 判断的引号匹配必须使用 CSV 输出');
+  assert.doesNotMatch(cmd, /timeout \/t/i, '后台无控制台输入时 timeout 会立即失败');
+  assert.match(cmd, /Start-Sleep -Seconds %~1/, '等待无需控制台标准输入');
+  assert.match(cmd, /if errorlevel 8 goto copyfail/, '复制失败不能当作新版本启动失败');
   assert.match(cmd, /del "%LOCKFILE%"/, '结束时清锁，否则下次更新会被误判为「脚本运行中」');
   assert.ok(!/必须|强制/.test(cmd), '脚本里不该出现强制类措辞');
 });
