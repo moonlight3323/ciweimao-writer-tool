@@ -140,3 +140,8 @@ jobs:
               --title "刺猬猫作家助手 $TAG_NAME"
           fi
           gh release edit "$TAG_NAME" --draft=false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Publish automatic update manifest
+        run: node tools/publish-update-manifest.js
