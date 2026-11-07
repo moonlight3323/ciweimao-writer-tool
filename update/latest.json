@@ -1,12 +1,21 @@
 {
-  "version": "1.0.2",
+  "version": "1.0.3",
   "type": "app",
-  "size": 1485344,
-  "sha256": "30297d0097c9476075f19a78a4e9c63c6c567a102e42f1c1fa1303d834f34766",
+  "size": 1494588,
+  "sha256": "519c46f6da78fd5ffe66f9c1557a3a1ee4b03199ed415de7e503f7224a549552",
   "url": [
-    "https://github.com/moonlight3323/ciweimao-writer-tool/releases/download/v1.0.2/ciweimao-writer-tool-v1.0.2-app.zip"
+    "https://github.com/moonlight3323/ciweimao-writer-tool/releases/download/v1.0.3/ciweimao-writer-tool-v1.0.3-app.zip"
   ],
   "changes": [
+    {
+      "version": "1.0.3",
+      "date": "2026-11-07",
+      "items": [
+        "· 新增：作者库章节登录后增量同步，自动发现网页中新上传的章节",
+        "· 新增：同章冲突检测，保留本地与网页两份内容并标记发布状态",
+        "· 新增：错别字识别面板，支持提示、替换、忽略及最大化窗口自适应"
+      ]
+    },
     {
       "version": "1.0.2",
       "date": "2026-11-06",
