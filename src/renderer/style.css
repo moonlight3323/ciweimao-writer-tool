@@ -1976,6 +1976,20 @@ input[type="checkbox"] { accent-color: var(--accent-line); cursor: pointer; }
 .vault-hint.is-error { color: var(--warn-ink); }
 .vault-hint.is-ok { color: var(--ok-ink); }
 
+/* 「记住这次输入」按下后的结果：直接改按钮自己的样子。
+   提示条在最右端、10px 灰字，用户点完还在看按钮，靠它反馈等于没反馈。 */
+.btn.is-flash-ok {
+  color: var(--ok-ink);
+  border-color: var(--ok-ink);
+  background: var(--surface);
+}
+
+.btn.is-flash-err {
+  color: var(--warn-ink);
+  border-color: var(--warn-ink);
+  background: var(--surface);
+}
+
 /* 密码本的多选管理面板。
    刻意做成工具条里的第二行而不是弹窗：平台页面是原生视图、盖在 HTML 之上，
    全屏遮罩会被它整个挡住，用户在遮罩上点不到东西。展开这一行会让平台视图自动往下让位。 */

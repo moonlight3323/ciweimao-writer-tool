@@ -1749,3 +1749,65 @@ maybe('调整态下三个按钮各司其职，不会互相顶掉', async (t) => 
   assert.equal(s.adjust, 'hidden', '调整态下不显示「调整侧边栏」');
   assert.equal(s.reset, 'hidden', '调整态下不显示「恢复初始」');
 });
+
+/* ---------- 密码本：「记住这次输入」必须给出看得见的反馈 ---------- */
+
+maybe('点「记住这次输入」成功后，按钮自己变成「已保存 ✓」', async (t) => {
+  // 用户反馈「点了没有反应」：原来唯一的反馈是工具条最右端一行 10px 灰字，
+  // 点完按钮视线还在按钮上，根本不会往那边看。
+  const page = bootPage();
+  t.after(() => page.dom.window.close());
+  const { window } = page;
+  assert.ok(await waitBoot(window));
+
+  const item = { id: 'v1', username: '13800001111', authorName: '', mode: 'account' };
+  window.api.vault.capture = () => Promise.resolve({ item, items: [item] });
+
+  const doc = window.document;
+  const btn = doc.getElementById('btnVaultCapture');
+  btn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+
+  await waitFor(() => btn.textContent.includes('已保存'));
+  assert.ok(btn.textContent.includes('已保存'), `按钮应变成已保存，实际：${btn.textContent}`);
+  assert.equal(btn.classList.contains('is-flash-ok'), true, '成功态要有自己的样式');
+
+  const hint = doc.getElementById('vaultHint');
+  await waitFor(() => hint.textContent.includes('已保存'));
+  assert.ok(hint.textContent.includes('13800001111'), '提示条要说明存了哪个账号');
+  assert.equal(hint.classList.contains('is-ok'), true);
+});
+
+maybe('保存失败时按钮明确说「没保存」，不做静默失败', async (t) => {
+  const page = bootPage();
+  t.after(() => page.dom.window.close());
+  const { window } = page;
+  assert.ok(await waitBoot(window));
+
+  window.api.vault.capture = () => Promise.reject(new Error('登录框里还没有内容'));
+
+  const doc = window.document;
+  const btn = doc.getElementById('btnVaultCapture');
+  btn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+
+  await waitFor(() => btn.textContent.includes('没保存'));
+  assert.equal(btn.classList.contains('is-flash-err'), true, '失败态要有自己的样式');
+  const hint = doc.getElementById('vaultHint');
+  assert.ok(hint.textContent.includes('登录框里还没有内容'), '真实原因要如实显示，不能吞掉');
+});
+
+maybe('提示文字变化会重算平台视图，新增的那一行不会被网页盖住', () => {
+  // 平台页面是原生视图，位置按「量到的工具条高度」定。提示变长让工具条多一行，
+  // 不重算就会把那一行压在网页下面——表现就是「点了没反应」。
+  const src = fs.readFileSync(path.join(RENDERER, 'app.js'), 'utf8');
+  const start = src.indexOf('function setVaultHint');
+  assert.ok(start > 0, '应能找到 setVaultHint');
+  // 只取函数体：从函数头到第一个行首的右花括号，
+  // 否则下面紧挨着的 ResizeObserver 块里也有 syncBounds()，会把这条断言蒙过去
+  const body = src.slice(start, src.indexOf('\n}', start));
+  assert.ok(/syncBounds\(\)/.test(body), 'setVaultHint 里必须调用 syncBounds()');
+
+  // 更稳的一层：盯工具条自身高度，展开说明 / 打开管理面板 / 按钮换行都能覆盖
+  assert.ok(/ResizeObserver\([^)]*\)\s*\.observe\(vaultBarEl\)/.test(src)
+    || /observe\(vaultBarEl\)/.test(src),
+    '必须用 ResizeObserver 盯住 #vaultBar 的高度变化');
+});

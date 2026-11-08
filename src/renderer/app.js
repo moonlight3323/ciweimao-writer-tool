@@ -1042,6 +1042,8 @@ window.api.browser.onEvent((data) => {
 // 密码的解密与填入都在主进程里完成，这里拿不到、也不需要明文。
 
 let vaultItems = [];
+/** 「记住这次输入」按钮上短暂显示保存结果的定时器 */
+let flashTimer = 0;
 /** 多选管理里勾中的记录 id（只在界面内有效，不落盘） */
 const vaultPicked = new Set();
 
@@ -1056,6 +1058,21 @@ function setVaultHint(text, kind) {
   el.textContent = text || '';
   el.classList.toggle('is-error', kind === 'error');
   el.classList.toggle('is-ok', kind === 'ok');
+  // 提示文字一变长，工具条可能从一行变成两行；平台页面是原生视图、压在 HTML 之上，
+  // 它的位置是按「当时量到的工具条高度」定的。不重算就会盖住新长出来的那一行 ——
+  // 用户看到的正是「点了『记住这次输入』，什么反应都没有」（提示正好在那行上）。
+  syncBounds();
+}
+
+/**
+ * 工具条只要高度变了就要把平台视图重新让位。
+ *
+ * 覆盖的不止提示文字：展开「怎么用」说明、打开「管理」面板、窗口变窄导致按钮换行，
+ * 都会让工具条变高。逐个在调用处补 syncBounds() 早晚会漏，直接盯高度最稳。
+ */
+if (typeof ResizeObserver !== 'undefined') {
+  const vaultBarEl = $('#vaultBar');
+  if (vaultBarEl) new ResizeObserver(() => syncBounds()).observe(vaultBarEl);
 }
 
 /** 下拉里的显示名：有作者名就以作者名为主，账号放后面 */
@@ -1138,7 +1155,7 @@ async function refreshVault(keepHint) {
           ? `已保存 ${vaultItems.length} 个账号`
             + (unbound ? ` · ${unbound} 条还没标作者名` : ' · 都已标作者名')
             + ' · 密码加密后仅存本机'
-          : '先在页面里手动登录一次，再点「记住这次输入」',
+          : '先在页面里填好账号密码，再点「记住这次输入」',
         ''
       );
     }
@@ -1223,6 +1240,28 @@ $('#btnVaultFill').addEventListener('click', async () => {
 
 $('#btnVaultCapture').addEventListener('click', async () => {
   const btn = $('#btnVaultCapture');
+  // 记下原文字，结束时按这个复原（不要在别处再写死一遍「记住这次输入」）
+  const label = btn.dataset.label || btn.textContent;
+  btn.dataset.label = label;
+
+  /**
+   * 结果直接写在按钮上。
+   *
+   * 提示条在工具条最右端、字号只有 10px，用户点完按钮视线还在按钮上，
+   * 根本没往右边看 —— 反馈「已保存」的提示条一直被当成「没反应」。
+   * 按钮自己变一下，是最不可能漏掉的反馈。
+   */
+  const flash = (text, ok) => {
+    btn.textContent = text;
+    btn.classList.toggle('is-flash-ok', !!ok);
+    btn.classList.toggle('is-flash-err', !ok);
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => {
+      btn.textContent = label;
+      btn.classList.remove('is-flash-ok', 'is-flash-err');
+    }, 1800);
+  };
+
   btn.disabled = true;
   setVaultHint('正在保存…');
   try {
@@ -1231,10 +1270,13 @@ $('#btnVaultCapture').addEventListener('click', async () => {
     renderVaultPick();
     if (res.item) $('#vaultPick').value = res.item.id;
     setVaultHint(`已保存：${res.item ? res.item.username : ''} · 下次点「填入」即可`, 'ok');
+    flash('已保存 ✓', true);
     // 登录页还开着，趁后台能读就顺手把作者名认下来
     bindAuthorQuietly(res.item && res.item.id);
   } catch (err) {
-    setVaultHint(ipcError(err), 'error');
+    const msg = ipcError(err);
+    setVaultHint(msg, 'error');
+    flash('没保存 · 看右侧提示', false);
   } finally {
     btn.disabled = false;
   }
