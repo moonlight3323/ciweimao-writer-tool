@@ -1,15 +1,31 @@
 {
-  "version": "1.0.7",
+  "version": "1.0.8",
   "type": "app",
-  "size": 1576598,
-  "sha256": "d108ec2e5721b105c63cbab58468fbfad1c99306834da14edee974c70f79344d",
+  "size": 1587162,
+  "sha256": "ee436f31fcef5bb03b15d40a1bc5f50e7dfbaf793fb2161d2520ff32f72324ab",
   "url": [
-    "https://cdn.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.0.7-app.zip",
-    "https://fastly.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.0.7-app.zip",
-    "https://gcore.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.0.7-app.zip",
-    "https://raw.githubusercontent.com/moonlight3323/ciweimao-writer-tool/main/update/assets/ciweimao-writer-tool-v1.0.7-app.zip"
+    "https://cdn.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.0.8-app.zip",
+    "https://fastly.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.0.8-app.zip",
+    "https://gcore.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.0.8-app.zip",
+    "https://raw.githubusercontent.com/moonlight3323/ciweimao-writer-tool/main/update/assets/ciweimao-writer-tool-v1.0.8-app.zip"
   ],
   "changes": [
+    {
+      "version": "1.0.8",
+      "date": "2026-11-08",
+      "items": [
+        "更新包改由 CDN 分发，不再依赖本机能否连上 GitHub。此前所有「GitHub 加速镜像」都是实时回源 GitHub，国内访问不通时会一起失败，表现就是进度条一直停在 0 KB。",
+        "下载地址现在会自动补充备用线路：一个地址不通会立刻换下一个，不用你手动重试。",
+        "单个地址的等待时间从 2 分钟缩短到 25 秒，网络不通时不会再让人干等。",
+        "下载失败时会说明具体原因（请求超时 / HTTP 404 / 下载不完整），不再只有一句「没能下到更新包」。",
+        "网络类失败多一个「手动下载」按钮，直接打开 Release 页面。",
+        "点「重试」会重新读取更新清单，服务端换了下载地址后点一下就能好，不必重启软件。",
+        "保存成功或失败会直接显示在按钮上（「已保存 ✓」/「没保存」），1.8 秒后恢复原样，不用再去看工具条最右端那一行小字。",
+        "修掉提示被内嵌网页盖住的问题：登录页打开时工具条会展开一行提示，此前这一段没有重新计算网页的位置，提示正好压在网页下面，看起来就像点了没反应。",
+        "纠正用法说明：原来是「登录成功后点记住这次输入」，但登录成功那一刻工具条就收起了，照着做点不到。正确做法是填好账号密码后、点登录之前保存。",
+        "保存失败时如实显示原因（例如「登录框里还没有内容」），不再只留在隐藏的提示里。"
+      ]
+    },
     {
       "version": "1.0.7",
       "date": "2026-11-08",
