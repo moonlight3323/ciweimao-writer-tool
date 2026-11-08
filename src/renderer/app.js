@@ -80,6 +80,55 @@ let browserReturnView = 'writer';
 let writerFocusOn = false;
 let lastState = { isLoginPage: true, url: '' };
 let rafPending = false;
+/**
+ * 更新确认框打开期间暂存的内嵌页面状态。
+ *
+ * WebContentsView 位于渲染页面之上，普通 DOM 弹窗无法覆盖它。更新框
+ * 打开前先把当前内嵌页摘下来，关闭后再把同一个页面挂回去，避免用户
+ * 在作者后台填写到一半时被导航到首页或丢失页面状态。
+ */
+let updateOverlayState = null;
+let updateOverlayPending = null;
+
+async function prepareUpdateOverlay() {
+  if (updateOverlayPending) await updateOverlayPending;
+  if (updateOverlayState) return updateOverlayState;
+
+  const state = {
+    browser: browserOpen,
+    miaoyu: miaoyuOpen,
+  };
+  if (!state.browser && !state.miaoyu) return null;
+
+  updateOverlayState = state;
+  updateOverlayPending = state.browser ? closeBrowser() : closeMiaoyu();
+  try {
+    await updateOverlayPending;
+  } catch (_) {
+    // 更新弹窗不能因为内嵌页摘取失败而打不开；下次关闭时仍会尝试恢复。
+  } finally {
+    updateOverlayPending = null;
+  }
+  return state;
+}
+
+async function restoreUpdateOverlay() {
+  if (updateOverlayPending) await updateOverlayPending;
+  const state = updateOverlayState;
+  updateOverlayState = null;
+  if (!state) return;
+
+  try {
+    if (state.browser) await showBrowserKeepPage();
+    else if (state.miaoyu) await openMiaoyu();
+  } catch (err) {
+    console.warn('恢复更新前的内嵌页面失败', err);
+  }
+}
+
+// 更新提示脚本在同一个渲染进程中加载，使用这两个窄接口即可协调页面层级。
+window.prepareUpdateOverlay = prepareUpdateOverlay;
+window.restoreUpdateOverlay = restoreUpdateOverlay;
 
 // ------------------------------------------------------------ 尺寸同步
 

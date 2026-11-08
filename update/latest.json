@@ -1,12 +1,22 @@
 {
-  "version": "1.0.5",
+  "version": "1.0.6",
   "type": "app",
-  "size": 1516512,
-  "sha256": "350e3e3418ef7ff4fea2b524515f38a09136ca85f5279feff54ef6039eab85d0",
+  "size": 1517076,
+  "sha256": "bba43b20e4cda56ea1f92a536f3defd08c406cce5db5c1590cfc0bb323da6f8a",
   "url": [
-    "https://github.com/moonlight3323/ciweimao-writer-tool/releases/download/v1.0.5/ciweimao-writer-tool-v1.0.5-app.zip"
+    "https://github.com/moonlight3323/ciweimao-writer-tool/releases/download/v1.0.6/ciweimao-writer-tool-v1.0.6-app.zip"
   ],
   "changes": [
+    {
+      "version": "1.0.6",
+      "date": "2026-11-08",
+      "items": [
+        "修复打开作者后台或喵语数据时，内嵌网页挡住更新确认窗口、无法查看更新内容或点击操作按钮的问题。",
+        "打开更新窗口时暂时收起内嵌网页；选择稍后提醒、取消、稍后重启或关闭提示后，自动恢复原网页。",
+        "恢复内嵌网页时保留当前页面、登录状态和未提交的表单内容，不重新导航到首页。",
+        "更新完成说明和更新失败回滚提示同样支持内嵌网页的暂时收起与恢复。"
+      ]
+    },
     {
       "version": "1.0.5",
       "date": "2026-11-07",
