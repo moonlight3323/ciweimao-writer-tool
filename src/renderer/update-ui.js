@@ -144,9 +144,10 @@
     });
   }
 
-  function showCompletedNotice(notice) {
+  async function showCompletedNotice(notice) {
     const dialog = $('#updateCompleteDialog');
     if (!dialog) return;
+    if (window.prepareUpdateOverlay) await window.prepareUpdateOverlay();
     const to = notice && notice.to ? String(notice.to) : '';
     const from = notice && notice.from ? String(notice.from) : '';
     $('#updateCompleteTitle').textContent = to ? `已更新到 v${to}` : '更新已完成';
@@ -162,14 +163,17 @@
     const dialog = $('#updateCompleteDialog');
     if (dialog) dialog.hidden = true;
     document.body.classList.remove('is-locked');
+    if (window.restoreUpdateOverlay) void window.restoreUpdateOverlay();
   }
 
-  function openDialog() {
+  async function openDialog() {
+    if (window.prepareUpdateOverlay) await window.prepareUpdateOverlay();
     $('#updateDialog').hidden = false;
   }
 
   function closeDialog() {
     $('#updateDialog').hidden = true;
+    if (window.restoreUpdateOverlay) void window.restoreUpdateOverlay();
   }
 
   function setSettingsCheck(text, tone, tag) {
@@ -220,7 +224,7 @@
       else showBar(`发现新版本 v${info.version} · 更新包 ${info.sizeText}`);
 
       if (manual) {
-        openDialog();
+        await openDialog();
         renderConfirm();
       }
       return result;
@@ -403,7 +407,7 @@
 
   // ------------------------------------------------------------ 回滚提示
 
-  function showRollbackNotice(n) {
+  async function showRollbackNotice(n) {
     setTitle('上次更新没有成功');
     $('#updateMeta').textContent = `已回到 v${n.reason === '备份失败' ? n.to : n.from || ''} 之前的状态`;
     $('#updateFull').hidden = true;
@@ -414,7 +418,7 @@
       'warn',
     );
     setActions([{ label: '知道了', primary: true, onClick: () => closeDialog() }]);
-    openDialog();
+    await openDialog();
   }
 
   // -------------------------------------------------------------- 启动流程
@@ -427,9 +431,9 @@
       dismissed = true;
       hideBar();
     });
-    $('#updateBarOpen').addEventListener('click', () => {
+    $('#updateBarOpen').addEventListener('click', async () => {
       if (info) {
-        openDialog();
+        await openDialog();
         renderConfirm();
       }
     });
@@ -448,8 +452,8 @@
     // 被更新脚本拉起来的新版本：先领上次的回滚提示
     try {
       const notice = await api.notice();
-      if (notice && notice.kind === 'rolled-back') showRollbackNotice(notice);
-      if (notice && notice.kind === 'updated') showCompletedNotice(notice);
+      if (notice && notice.kind === 'rolled-back') await showRollbackNotice(notice);
+      if (notice && notice.kind === 'updated') await showCompletedNotice(notice);
     } catch (_) { /* 没有提示就是正常的 */ }
 
     await checkLatest(false);
