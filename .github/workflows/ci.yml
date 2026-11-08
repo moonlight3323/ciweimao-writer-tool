@@ -152,5 +152,25 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
+      - name: Commit app package into repo for CDN delivery
+        run: |
+          # 更新包必须同时存在于仓库里，jsDelivr 才能回源分发。
+          # GitHub Release 的直链会 302 到 objects.githubusercontent.com，
+          # 国内连不上，用户侧表现是进度条停在 0 KB（v1.0.7 的事故）。
+          set -e
+          VERSION="${TAG_NAME#v}"
+          mkdir -p update/assets
+          # 只留当前版本，避免仓库被历史包越堆越大
+          find update/assets -name 'ciweimao-writer-tool-*-app.zip' -delete
+          cp "release/ciweimao-writer-tool-v${VERSION}-app.zip" update/assets/
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -f update/assets
+          if git diff --cached --quiet; then
+            echo "更新包已是仓库内最新，无需提交"
+          else
+            git commit -m "release: attach v${VERSION} app package for CDN delivery [skip ci]"
+            git push origin HEAD:main
+          fi
       - name: Publish automatic update manifest
         run: node tools/publish-update-manifest.js

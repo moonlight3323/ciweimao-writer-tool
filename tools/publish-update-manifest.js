@@ -4,6 +4,27 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { compareVersions } = require('../src/main/updater');
 
+/**
+ * 更新包的下载地址。
+ *
+ * 不能再给 GitHub Release 的直链：它会 302 到 objects.githubusercontent.com，
+ * 该域名国内直连不通，用户侧就是「进度条停在 0 KB」。
+ * 所有 GitHub 加速镜像也一样，它们都是实时回源那个域名，于是集体 504。
+ *
+ * jsDelivr 是 CDN 自己回源 GitHub（它的服务器能访问），再分发给用户，
+ * 所以只要仓库里有这个包，用户不必能连上 GitHub 也能更新。
+ * 三个 jsDelivr 域名 + raw 兜底，字节完全相同，挂在同一个 sha256 上。
+ */
+function assetUrls(repo, version) {
+  const asset = `update/assets/ciweimao-writer-tool-v${version}-app.zip`;
+  return [
+    `https://cdn.jsdelivr.net/gh/${repo}@main/${asset}`,
+    `https://fastly.jsdelivr.net/gh/${repo}@main/${asset}`,
+    `https://gcore.jsdelivr.net/gh/${repo}@main/${asset}`,
+    `https://raw.githubusercontent.com/${repo}/main/${asset}`,
+  ];
+}
+
 function buildManifest(previous, { version, repo, bytes, sha256, date, items }) {
   if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('无效的发布版本');
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error('无效的仓库');
@@ -11,7 +32,7 @@ function buildManifest(previous, { version, repo, bytes, sha256, date, items }) 
   if (previous.version && compareVersions(previous.version, version) > 0) throw new Error('禁止将更新清单降级');
   return {
     version, type: 'app', size: bytes, sha256,
-    url: [`https://github.com/${repo}/releases/download/v${version}/ciweimao-writer-tool-v${version}-app.zip`],
+    url: assetUrls(repo, version),
     changes: [{ version, date, items }, ...(previous.changes || []).filter(entry => entry.version !== version)].slice(0, 30),
   };
 }
@@ -51,4 +72,4 @@ async function publish() {
 }
 
 if (require.main === module) publish().catch(error => { console.error(error.message); process.exitCode = 1; });
-module.exports = { buildManifest };
+module.exports = { buildManifest, assetUrls };
