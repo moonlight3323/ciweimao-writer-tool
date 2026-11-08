@@ -1,11 +1,13 @@
 {
   "version": "1.0.7",
   "type": "app",
-  "size": 1584644,
-  "sha256": "97d947802ae6a9c47f6109ae51ad4858b4cca2bd533857eaf558090e5b02918e",
+  "size": 1576598,
+  "sha256": "d108ec2e5721b105c63cbab58468fbfad1c99306834da14edee974c70f79344d",
   "url": [
-    "https://ghfast.top/https://github.com/moonlight3323/ciweimao-writer-tool/releases/download/v1.0.7/ciweimao-writer-tool-v1.0.7-app.zip",
-    "https://github.com/moonlight3323/ciweimao-writer-tool/releases/download/v1.0.7/ciweimao-writer-tool-v1.0.7-app.zip"
+    "https://cdn.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.0.7-app.zip",
+    "https://fastly.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.0.7-app.zip",
+    "https://gcore.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.0.7-app.zip",
+    "https://raw.githubusercontent.com/moonlight3323/ciweimao-writer-tool/main/update/assets/ciweimao-writer-tool-v1.0.7-app.zip"
   ],
   "changes": [
     {
