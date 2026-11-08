@@ -7256,15 +7256,33 @@ function initCloseBehavior() {
     if (tag) tag.textContent = LABEL[v];
   };
 
-  window.api.app.closeBehavior.get()
-    .then((r) => paint(r && r.value))
-    .catch(() => paint('minimize'));
+  // 桥接层缺方法时**不能让整个脚本崩在这里**。
+  //
+  // 之前 preload 里有两个重复的 app 键，后一个把前一个覆盖掉，`closeBehavior`
+  // 变成 undefined。这一行原来直接 `window.api.app.closeBehavior.get()`，
+  // 抛出的 TypeError 把 app.js 顶层后面的代码全部带走：
+  //   深色模式绑定、右上角关闭询问、末尾的 boot() 都没执行，
+  //   连 `let guideFallback` 都没初始化 —— 之后弹窗全抛 TDZ 错误。
+  // 用户看到的就是「深色模式、关闭按钮、清除数据，点了都没反应」。
+  //
+  // 现在的写法：能读到就画选中态，读不到就按默认画，**点击绑定一定装上**。
+  const behaviorApi = window.api && window.api.app && window.api.app.closeBehavior;
+
+  if (behaviorApi && typeof behaviorApi.get === 'function') {
+    behaviorApi.get()
+      .then((r) => paint(r && r.value))
+      .catch(() => paint('minimize'));
+  } else {
+    paint('minimize');
+  }
 
   box.addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-close-behavior]');
     if (!btn) return;
     try {
-      const r = await window.api.app.closeBehavior.set(btn.dataset.closeBehavior);
+      const r = behaviorApi && typeof behaviorApi.set === 'function'
+        ? await behaviorApi.set(btn.dataset.closeBehavior)
+        : null;
       paint(r && r.value ? r.value : btn.dataset.closeBehavior);
     } catch (_) { /* 写不进去就保持原样，不画成没保存的状态 */ }
   });

@@ -146,6 +146,8 @@ contextBridge.exposeInMainWorld('api', {
       return () => ipcRenderer.removeListener('window:ask-close-behavior', handler);
     },
     answerCloseBehavior: (value) => ipcRenderer.invoke('window:close-behavior-answer', value),
+    /** 重启应用：清除数据 / 恢复数据 / 放弃继承旧数据之后必须重启才彻底生效 */
+    relaunch: () => ipcRenderer.invoke('app:relaunch'),
   },
   file: {
     /** 弹保存对话框并写入文本（自动补 UTF-8 BOM） */
@@ -164,9 +166,6 @@ contextBridge.exposeInMainWorld('api', {
     backupNow: () => ipcRenderer.invoke('data:backup-now'),
     reset: (opts) => ipcRenderer.invoke('data:reset', opts),
     restore: (name) => ipcRenderer.invoke('data:restore', name),
-  },
-  app: {
-    relaunch: () => ipcRenderer.invoke('app:relaunch'),
   },
   /** 版本变化：手动安装时问「是否继承旧数据」，自动更新不问 */
   version: {
