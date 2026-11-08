@@ -383,34 +383,90 @@ function sha256File(file) {
 }
 
 /**
+ * GitHub Release 的下载域名（objects.githubusercontent.com）在国内经常连不上，
+ * 表现就是卡住不动、最后报「请求超时」，用户只看到一句「没能下到更新包」。
+ *
+ * 这里对官方地址自动补一层镜像，清单里只写官方地址也能走通，发版时少一处要记得改。
+ * 镜像在前、官方在后：国内直连基本必然超时，把官方放前面等于先让用户干等一轮。
+ * 镜像只是通道 —— 包体仍由清单里的 sha256 校验，被换过就装不上（会换下一个地址重试）。
+ */
+const MIRRORS = ['https://ghfast.top/'];
+
+/** 已经是「镜像/官方地址」的形态（镜像本身也含一个 http 前缀） */
+const WRAPPED_RE = /^https:\/\/[^/]+\/https?:\/\//i;
+const RELEASE_RE = /^https:\/\/github\.com\/[^/]+\/[^/]+\/releases\/download\//i;
+
+/**
+ * 把清单里的下载地址展开成「镜像 + 原地址」，去重后返回。
+ *
+ * 清单里已经写过镜像的（旧做法）不会再加一层，避免出现
+ * `ghfast.top/https://ghfast.top/…` 这种双前缀。
+ */
+function expandMirrors(urls) {
+  const list = (Array.isArray(urls) ? urls : [urls]).filter(Boolean);
+  const out = [];
+  const seen = new Set();
+  const push = (u) => {
+    const v = String(u || '').trim();
+    if (!v || seen.has(v)) return;
+    seen.add(v);
+    out.push(v);
+  };
+
+  for (const raw of list) {
+    const url = String(raw || '').trim();
+    if (!url) continue;
+    if (RELEASE_RE.test(url) && !WRAPPED_RE.test(url)) {
+      for (const m of MIRRORS) push(m + url);
+    }
+    push(url);
+  }
+  return out;
+}
+
+/** 单个地址的下载超时：包体只有 1~2 MB，25 秒还没起来就该换源了 */
+const DOWNLOAD_TIMEOUT_MS = 25000;
+
+/**
  * 依次尝试清单里的每个地址下载，任一成功且哈希匹配即返回。
  *
  * 哈希只在整个文件落盘后算一次：边下边算看着快，但一旦某个地址中途断流，
  * 已经喂进去的数据没法回退，反而要重下；先落盘再校验，失败就换下一个地址重来。
  */
 async function downloadWithFallback(urls, destFile, expectedSha, onProgress) {
-  const list = (Array.isArray(urls) ? urls : [urls]).filter(Boolean);
+  const list = expandMirrors(urls);
   const errors = [];
   fs.mkdirSync(path.dirname(destFile), { recursive: true });
 
   for (const url of list) {
     try {
       // 边下边落盘，进度回调按已收到的累计字节数上报
-      const got = await httpDownloadToFile(url, destFile, onProgress, { timeout: 120000 });
+      const got = await httpDownloadToFile(url, destFile, onProgress, { timeout: DOWNLOAD_TIMEOUT_MS });
       const sha = await sha256File(destFile);
       if (sha !== String(expectedSha || '').toLowerCase()) {
-        errors.push(`${url}：校验不通过`);
+        errors.push(`${hostOf(url)}：校验不通过`);
         try { fs.unlinkSync(destFile); } catch (_) { /* ignore */ }
         continue;
       }
       return { file: destFile, bytes: got.bytes, url };
     } catch (e) {
-      errors.push(`${url}：${e.message}`);
+      // 报错只带域名：整条 URL 又长又重复（镜像版还带两层），
+      // 十几条拼上去会顶满弹窗，用户还是看不出到底卡在哪一步。
+      errors.push(`${hostOf(url)}：${e.message}`);
       // 半截文件留着没有意义，还会让下一次校验读到脏数据
       try { if (fs.existsSync(destFile)) fs.unlinkSync(destFile); } catch (_) { /* ignore */ }
     }
   }
   throw new Error(`下载失败（${errors.join('；') || '没有可用地址'}）`);
+}
+
+/** 取 URL 的主机名，用于把错误信息说短些 */
+function hostOf(url) {
+  try {
+    return new URL(String(url)).hostname;
+  } catch (_) {
+    return String(url).slice(0, 40);
+  }
 }
 
 // -------------------------------------------------------------- 状态机
@@ -625,6 +681,9 @@ module.exports = {
   DEFAULT_MANIFEST_URL,
   RELEASES_PAGE,
   MAX_CHANGES,
+  MIRRORS,
+  expandMirrors,
+  DOWNLOAD_TIMEOUT_MS,
   parseVersion,
   compareVersions,
   pickChanges,

@@ -1724,6 +1724,11 @@ async function downloadUpdate() {
     };
   } catch (e) {
     updater.clearState(dir);
+    // 失败后把缓存的清单扔掉：清单里的下载地址是会变的（换镜像、换资产名）。
+    // 不清的话用户点「重试」还是拿同一份旧清单跑同一个地址，
+    // 除非手动重启软件，否则永远修不好 —— 这次用户装不上就是这么被卡住的。
+    cachedManifest = null;
+
     const detail = String(e.message || e);
     const kind = /校验不通过/.test(detail) ? 'verify' : (/HTTP|超时|ENOTFOUND|ECONN|fetch/i.test(detail) ? 'network' : 'unknown');
     return {
@@ -1731,13 +1736,24 @@ async function downloadUpdate() {
       kind,
       detail,
       current: app.getVersion(),
+      // 把 detail 带进去：原来网络类失败只说「没能下到更新包」，
+      // 用户既不知道是超时还是 404，也没法告诉我们，只能猜。
       message: kind === 'verify'
         ? `下载不完整（校验不通过），当前版本 v${app.getVersion()} 可继续使用`
-        : `没能下到更新包，当前版本 v${app.getVersion()} 可继续使用`,
+        : `没能下到更新包（${shorten(detail)}），当前版本 v${app.getVersion()} 可继续使用`,
+      hint: kind === 'network'
+        ? '网络到 GitHub 的连接不通，可以点「重试」再试一次，或到设置里打开发布页手动下载。'
+        : '',
     };
   } finally {
     downloading = false;
   }
+}
+
+/** 失败详情太长会撑破弹窗，截一下并去掉重复的地址前缀 */
+function shorten(text) {
+  const s = String(text || '').replace(/\s+/g, ' ').trim();
+  return s.length > 120 ? s.slice(0, 120) + '…' : s;
 }
 
 /**

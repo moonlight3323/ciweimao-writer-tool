@@ -387,3 +387,42 @@ test('humanSize 输出人能看懂的单位', () => {
   assert.equal(updater.humanSize(2048), '2 KB');
   assert.equal(updater.humanSize(2.1 * 1024 * 1024), '2.1 MB');
 });
+
+/* ---------- 下载地址：镜像展开 ---------- */
+
+const GH_RELEASE = 'https://github.com/moonlight3323/ciweimao-writer-tool/releases/download/v1.0.7/app.zip';
+
+test('官方 release 地址会自动补镜像，且镜像排在前面', () => {
+  // 用户报「更新装不上」，实测是 objects.githubusercontent.com 直连超时。
+  // 镜像放前面：国内直连基本必然超时，官方在前等于先让用户干等一轮。
+  const list = updater.expandMirrors([GH_RELEASE]);
+  assert.ok(list.length >= 2, '应至少有一条镜像 + 官方');
+  assert.equal(list[0], updater.MIRRORS[0] + GH_RELEASE, '第一条应是镜像');
+  assert.equal(list[list.length - 1], GH_RELEASE, '最后一条应是官方地址');
+});
+
+test('清单里已经写过镜像时不再套一层', () => {
+  // 旧清单（v1.0.7 起）就是手写镜像的形态，
+  // 若再拼一次会得到 ghfast.top/https://ghfast.top/… 这种废地址。
+  const wrapped = updater.MIRRORS[0] + GH_RELEASE;
+  const list = updater.expandMirrors([wrapped, GH_RELEASE]);
+  assert.deepEqual(list, [wrapped, GH_RELEASE]);
+  assert.equal(list.some((u) => (u.match(/https:\/\//g) || []).length > 2), false,
+    '不能出现三层 https 前缀');
+});
+
+test('非 release 地址原样保留，不拼镜像', () => {
+  const plain = 'https://example.com/pkg.zip';
+  assert.deepEqual(updater.expandMirrors([plain]), [plain]);
+});
+
+test('重复地址只留一条', () => {
+  assert.equal(updater.expandMirrors([GH_RELEASE, GH_RELEASE]).length, 2,
+    '同一官方地址展开后是「镜像 + 官方」两条，不该重复成四条');
+});
+
+test('下载超时够短：换源不能靠用户干等', () => {
+  // 原来是 120 秒。地址挂了的时候，用户要盯着「正在下载」两分钟才看到失败。
+  assert.ok(updater.DOWNLOAD_TIMEOUT_MS <= 30000,
+    `单地址超时应 ≤30s，实际 ${updater.DOWNLOAD_TIMEOUT_MS}ms`);
+});

@@ -338,10 +338,15 @@
       // 失败也要把当前版本号说清楚：用户最担心的是「是不是把我软件弄坏了」
       setTitle('这次没能装上新版本');
       setStatus(r && r.message ? r.message : `没能下到更新包，当前版本 v${info.current} 可继续使用`, 'error');
-      setActions([
-        { label: '重试', primary: true, onClick: startDownload },
-        { label: '稍后提醒', onClick: () => { closeDialog(); } },
-      ]);
+
+      // 网络类失败多给一个出口：更新包是从 GitHub 下的，国内网络时通时不通，
+      // 与其让用户反复点重试，不如直接把发布页递过去，手动下完整包同样能装。
+      const acts = [{ label: '重试', primary: true, onClick: startDownload }];
+      if (r && r.kind === 'network') {
+        acts.push({ label: '手动下载', onClick: () => api.openReleases(info ? info.releasesPage : '') });
+      }
+      acts.push({ label: '稍后提醒', onClick: () => { closeDialog(); } });
+      setActions(acts);
       return;
     }
 
