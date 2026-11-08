@@ -782,3 +782,93 @@ maybe('用户手动换作品后，固定看这一本', async (t) => {
     '换成另一本后应显示那一本的数据');
 });
 
+
+/* ---------- 弹窗遮挡：内嵌平台页面会盖住 DOM 弹窗 ---------- */
+
+maybe('清除数据 / 恢复数据 / 继承旧数据三个弹窗前会先摘下内嵌页面', async (t) => {
+  // v1.0.6 修过一次「内嵌网页挡住更新窗口」，这次新增的三个确认框是同一类场景：
+  // 作者后台是 WebContentsView，画在渲染页面之上，不先摘下来用户什么也看不见。
+  const page = bootPage({ books: BOOKS, props: [] });
+  t.after(() => page.dom.window.close());
+  const { window } = page;
+  assert.ok(await waitBoot(window));
+  const doc = window.document;
+
+  // 用假的钩子替代真实实现，只关心「有没有调用」
+  let prepared = 0;
+  let restored = 0;
+  let detachResult = true;
+  window.prepareUpdateOverlay = async () => {
+    prepared += 1;
+    return detachResult ? { browser: true, miaoyu: false } : null;
+  };
+  window.restoreUpdateOverlay = async () => { restored += 1; };
+
+  window.setActiveView('settings');
+  // 直接调三处的共同入口，等价于用户点了那些按钮
+  await window.showBlockingDialog({
+    badge: '危险操作',
+    title: '清除所有数据并重启？',
+    steps: ['会被清除：作品库'],
+    secondary: { label: '先不清除' },
+    primary: { label: '清除并重启' },
+  });
+
+  assert.equal(prepared, 1, '弹窗出现前应先摘掉内嵌页面');
+  assert.equal(doc.getElementById('guideDialog').hidden, false, '弹窗应已显示');
+
+  // 关闭后要把页面挂回去
+  doc.querySelector('#guideActions .btn.ghost')
+    .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.equal(doc.getElementById('guideDialog').hidden, true, '弹窗应已关闭');
+  assert.equal(restored, 1, '关闭后应把页面挂回');
+});
+
+maybe('没有内嵌页面时不必摘取，也不做多余的恢复', async (t) => {
+  const page = bootPage({ books: BOOKS, props: [] });
+  t.after(() => page.dom.window.close());
+  const { window } = page;
+  assert.ok(await waitBoot(window));
+  const doc = window.document;
+
+  let prepared = 0;
+  let restored = 0;
+  window.prepareUpdateOverlay = async () => { prepared += 1; return null; };
+  window.restoreUpdateOverlay = async () => { restored += 1; };
+
+  window.setActiveView('settings');
+  await window.showBlockingDialog({
+    badge: '版本升级',
+    title: '要不要接着用旧版本的数据？',
+    steps: ['继承：全部保留'],
+    secondary: { label: '不继承' },
+    primary: { label: '继承旧数据' },
+  });
+
+  assert.equal(prepared, 1, '仍会问一次（由实现判断有没有页面）');
+  doc.querySelector('#guideActions .btn.ghost')
+    .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.equal(restored, 0, '本来就没有摘取，不该调恢复（避免把用户关掉的页面又弹出来）');
+});
+
+maybe('摘取失败也要让弹窗出来，不能把用户卡死', async (t) => {
+  const page = bootPage({ books: BOOKS, props: [] });
+  t.after(() => page.dom.window.close());
+  const { window } = page;
+  assert.ok(await waitBoot(window));
+  const doc = window.document;
+
+  window.prepareUpdateOverlay = async () => { throw new Error('摘不下来'); };
+  window.restoreUpdateOverlay = async () => {};
+
+  window.setActiveView('settings');
+  await window.showBlockingDialog({
+    badge: '危险操作',
+    title: '清除所有数据并重启？',
+    steps: ['x'],
+    secondary: { label: '取消' },
+    primary: { label: '确定' },
+  });
+  assert.equal(doc.getElementById('guideDialog').hidden, false,
+    '即使摘取失败，弹窗也必须显示出来');
+});

@@ -7193,7 +7193,8 @@ $('#btnDataReset').addEventListener('click', async () => {
       '界面偏好', '密码本', '登录态',
     ],
   });
-  showGuideDialog({
+  // 这三个确认框都可能在内嵌页面开着时弹出，统一走 showBlockingDialog 处理遮挡
+  await showBlockingDialog({
     ...cfg,
     primary: {
       label: cfg.primary.label,
@@ -7209,14 +7210,14 @@ $('#btnDataReset').addEventListener('click', async () => {
   });
 });
 
-$('#dataBackupList').addEventListener('click', (event) => {
+$('#dataBackupList').addEventListener('click', async (event) => {
   const btn = event.target.closest('[data-backup-restore]');
   if (!btn) return;
   const name = btn.dataset.backupRestore;
   const backup = dataBackups.find((b) => b.name === name);
   if (!backup) return;
   const cfg = dataRestoreConfirm(backup);
-  showGuideDialog({
+  await showBlockingDialog({
     ...cfg,
     primary: {
       label: cfg.primary.label,
@@ -7446,6 +7447,8 @@ document.addEventListener('keydown', (e) => {
 let startGuidePending = false;
 /** Esc 关弹窗时补跑的「次要动作」（比如把后台页面挂回去） */
 let guideFallback = null;
+/** 关闭引导弹窗后的收尾回调（用于挂回临时摘下的内嵌页面） */
+let guideAfterClose = null;
 
 function showGuideDialog(cfg) {
   $('#guideBadge').textContent = cfg.badge || '第一次使用';
@@ -7456,6 +7459,7 @@ function showGuideDialog(cfg) {
   // Esc 关掉时按「次要按钮」处理：登录那次要把后台页面挂回去，
   // 否则用户一按 Esc 就莫名其妙回到了概览
   guideFallback = cfg.onDismiss || (cfg.secondary && cfg.secondary.onClick) || null;
+  guideAfterClose = typeof cfg.afterClose === 'function' ? cfg.afterClose : null;
 
   const box = $('#guideActions');
   box.innerHTML = '';
@@ -7493,6 +7497,42 @@ function closeGuideDialog(runFallback) {
   const fn = guideFallback;
   guideFallback = null;
   if (runFallback && typeof fn === 'function') fn();
+  // 关闭后收尾（目前用于把临时摘下的内嵌页面挂回去）
+  const after = guideAfterClose;
+  guideAfterClose = null;
+  if (typeof after === 'function') {
+    try { after(); } catch (_) { /* 收尾失败不该影响界面 */ }
+  }
+}
+
+/**
+ * 显示一个「需要用户看清再说」的确认弹窗，并处理内嵌页面遮挡。
+ *
+ * 为什么需要这一层：作者后台 / 喵语数据是 WebContentsView，画在渲染页面**之上**，
+ * 普通 DOM 弹窗会被它整个盖住——用户既看不到文案也点不到按钮。
+ * 更新确认框已经踩过这个坑（v1.0.6 修的就是它），这次新增的
+ * 「是否继承旧数据」「清除所有数据」「恢复数据」三个确认框是同一类场景，
+ * 所以复用更新器挂出来的 prepareUpdateOverlay / restoreUpdateOverlay：
+ * 弹窗前把页面摘下来，关掉后原样挂回去（保留页面与表单状态，不重新导航）。
+ */
+async function showBlockingDialog(cfg) {
+  let detached = false;
+  if (typeof window.prepareUpdateOverlay === 'function') {
+    try {
+      detached = !!(await window.prepareUpdateOverlay());
+    } catch (_) {
+      // 摘取失败也要让弹窗出来，否则用户彻底没法操作
+      detached = false;
+    }
+  }
+  showGuideDialog({
+    ...cfg,
+    afterClose: () => {
+      if (detached && typeof window.restoreUpdateOverlay === 'function') {
+        void window.restoreUpdateOverlay();
+      }
+    },
+  });
 }
 
 /** 第一次打开软件（还没连过后台）→ 告诉用户先登录 */
@@ -7669,7 +7709,7 @@ async function maybeAskInheritData() {
   if (!info || !info.ask) return;
 
   const dirText = info.direction === 'down' ? '降级' : '升级';
-  showGuideDialog({
+  await showBlockingDialog({
     badge: `版本${dirText}`,
     title: '要不要接着用旧版本的数据？',
     lead: `检测到版本从 ${info.from || '（未知）'} 变到 ${info.to}，看起来是你自己下载安装的。`
