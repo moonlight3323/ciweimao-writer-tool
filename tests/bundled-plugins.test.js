@@ -30,6 +30,26 @@ const plugins = require('../src/main/plugins');
 const ROOT = path.join(__dirname, '..');
 const BUNDLED_ROOT = path.join(ROOT, 'bundled-plugins');
 
+/**
+ * jsdom 只在本地装了（`npm install --no-save jsdom`），CI 的 `npm ci` 里没有。
+ *
+ * 用 `needsDom` 包住依赖 DOM 的几条：本地照常跑，CI 上自动跳过。
+ * 之前直接把 `require('jsdom')` 写进测试体里，CI 上就是
+ * 「Cannot find module 'jsdom'」→ check 红 → 打包与发版全部跳过。
+ */
+let JSDOM = null;
+try {
+  // eslint-disable-next-line global-require
+  ({ JSDOM } = require('jsdom'));
+} catch (_) {
+  JSDOM = null;
+}
+const needsDom = JSDOM ? test : test.skip;
+
+function dom(html) {
+  return new JSDOM(html).window.document;
+}
+
 const MANIFEST = {
   id: 'demo-feature',
   name: '演示功能',
@@ -266,9 +286,9 @@ test('番茄钟是独立插件，健康提醒只留喝水与睡觉', () => {
   }
 });
 
-test('健康提醒的设置面板只剩喝水与睡觉两组', () => {
+needsDom('健康提醒的设置面板只剩喝水与睡觉两组', () => {
   const html = fs.readFileSync(path.join(HH, 'page.html'), 'utf8');
-  const doc = new (require('jsdom').JSDOM)(html).window.document;
+  const doc = dom(html);
 
   const groups = doc.querySelectorAll('.field-group');
   assert.equal(groups.length, 2, '应只剩两块：喝水提醒 / 睡觉提醒');
@@ -282,9 +302,9 @@ test('健康提醒的设置面板只剩喝水与睡觉两组', () => {
   assert.deepEqual(idsIn(1), ['inSleep'], '睡觉组只放提醒时间');
 });
 
-test('番茄钟的设置面板只放专注节奏', () => {
+needsDom('番茄钟的设置面板只放专注节奏', () => {
   const html = fs.readFileSync(path.join(POMO, 'page.html'), 'utf8');
-  const doc = new (require('jsdom').JSDOM)(html).window.document;
+  const doc = dom(html);
 
   const groups = doc.querySelectorAll('.field-group');
   assert.equal(groups.length, 1, '番茄钟只有「专注节奏」一组');
@@ -301,13 +321,13 @@ test('番茄钟的设置面板只放专注节奏', () => {
   }
 });
 
-test('改结构没弄丢 main.js 依赖的任何元素 id', () => {
+needsDom('改结构没弄丢 main.js 依赖的任何元素 id', () => {
   // 拆插件 / 拆分组都会动 HTML 结构，JS 靠 id 取元素，少一个就是整页脚本崩
   for (const dir of [HH, POMO]) {
     const name = path.basename(dir);
     const html = fs.readFileSync(path.join(dir, 'page.html'), 'utf8');
     const js = fs.readFileSync(path.join(dir, 'main.js'), 'utf8');
-    const doc = new (require('jsdom').JSDOM)(html).window.document;
+    const doc = dom(html);
 
     const used = new Set();
     for (const m of js.matchAll(/\$\('#([\w-]+)'\)/g)) used.add(m[1]);
