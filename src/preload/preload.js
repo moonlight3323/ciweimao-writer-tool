@@ -78,14 +78,15 @@ contextBridge.exposeInMainWorld('api', {
   },
   /** 本地创作中心：作品库、导入与草稿保存 */
   writer: {
-    list: () => ipcRenderer.invoke('writer:list'),
-    open: (bookId) => ipcRenderer.invoke('writer:open', bookId),
+    list: () => ipcRenderer.invoke('writer:list'),    open: (bookId) => ipcRenderer.invoke('writer:open', bookId),
     create: (name) => ipcRenderer.invoke('writer:create', name),
     /** 把后台新建、本地还没有的作品补进作品库并绑定 */
     adopt: (books) => ipcRenderer.invoke('writer:adopt', books),
     save: (book) => ipcRenderer.invoke('writer:save', book),
     covers: (list) => ipcRenderer.invoke('writer:covers', list),
     pin: (bookId, pinned) => ipcRenderer.invoke('writer:pin', bookId, pinned),
+    /** 只查优先级作品（不看作品列表时也能定位数据看板） */
+    priority: () => ipcRenderer.invoke('writer:priority'),
     remove: (bookId) => ipcRenderer.invoke('writer:delete', bookId),
     importBook: () => ipcRenderer.invoke('writer:import'),
   },
@@ -114,6 +115,10 @@ contextBridge.exposeInMainWorld('api', {
     capture: () => ipcRenderer.invoke('vault:capture'),
     fill: (id) => ipcRenderer.invoke('vault:fill', id),
     remove: (id) => ipcRenderer.invoke('vault:remove', id),
+    // 作者名匹配：把账号和笔名对上，多账号时按笔名区分
+    byAuthor: (authorName) => ipcRenderer.invoke('vault:by-author', authorName),
+    bindAuthor: (id) => ipcRenderer.invoke('vault:bind-author', id),
+    setAuthor: (id, authorName) => ipcRenderer.invoke('vault:set-author', id, authorName),
   },
   app: {
     userDataPath: () => ipcRenderer.invoke('app:user-data'),
@@ -154,6 +159,19 @@ contextBridge.exposeInMainWorld('api', {
     read: (name) => ipcRenderer.invoke('data:read', name),
     write: (name, content) => ipcRenderer.invoke('data:write', name, content),
     dir: () => ipcRenderer.invoke('data:dir'),
+    // 备份 / 清除 / 恢复：备份落在 %APPDATA%\刺猬猫作家助手-数据备份\，与 userData 同级
+    backups: () => ipcRenderer.invoke('data:backups'),
+    backupNow: () => ipcRenderer.invoke('data:backup-now'),
+    reset: (opts) => ipcRenderer.invoke('data:reset', opts),
+    restore: (name) => ipcRenderer.invoke('data:restore', name),
+  },
+  app: {
+    relaunch: () => ipcRenderer.invoke('app:relaunch'),
+  },
+  /** 版本变化：手动安装时问「是否继承旧数据」，自动更新不问 */
+  version: {
+    change: () => ipcRenderer.invoke('version:change'),
+    resetData: () => ipcRenderer.invoke('version:reset-data'),
   },
   /**
    * 执行动作（删除间贴 / 禁言读者）。

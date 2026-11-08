@@ -1939,6 +1939,238 @@
   //
   // 需要随目标函数一起送进页面的辅助函数。它们互相调用，必须同批注入。
 
+  /**
+   * 读当前登录账号的作者名（笔名）。
+   *
+   * 用途：把密码本里的「账号」和「笔名」对上，多账号用户才能一眼分清。
+   *
+   * 站点没有给稳定的钩子，所以按「越具体越优先」的顺序试几种来源：
+   *   1. 后台页面里明确写着「作者名 / 笔名 / 昵称」的字段；
+   *   2. 顶部导航里的用户名节点（作者后台右上角那一块）；
+   *   3. 作者中心首页的欢迎语「你好，XXX」。
+   * 都读不到就返回空串——宁可让用户手填，也不要瞎猜一个名字绑上去。
+   */
+  function readAuthorName() {
+    function clean(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
+
+    // 1) 带标签的字段：<dt>作者名</dt><dd>某某</dd>、<span>笔名：</span><b>某某</b>
+    var labels = ['作者名', '笔名', '作者笔名'];
+    var all = document.querySelectorAll('dt, span, label, th, td, li, p, div');
+    for (var i = 0; i < all.length; i += 1) {
+      var el = all[i];
+      var text = clean(el.innerText || el.textContent);
+      if (text.length > 40) continue;
+      for (var l = 0; l < labels.length; l += 1) {
+        var lab = labels[l];
+        if (text === lab || text === lab + '：' || text === lab + ':') {
+          var next = el.nextElementSibling;
+          if (next) {
+            var v = clean(next.innerText || next.textContent);
+            if (v && v.length <= 40 && !/[:：]$/.test(v)) return v;
+          }
+          // 同一个节点里写成「作者名：某某」
+          var self = text.replace(new RegExp('^' + lab + '\\s*[:：]\\s*'), '');
+          if (self && self !== text) return self;
+        }
+        // 直接命中「作者名：某某」的紧凑写法
+        var m = text.match(new RegExp(lab + '\\s*[:：]\\s*(\\S{1,40})$'));
+        if (m && m[1]) return m[1];
+      }
+    }
+
+    // 2) 顶部导航的用户名节点
+    var candidates = [
+      '.header .username', '.top-bar .username', '.user-name', '.author-name',
+      '.header-user .name', '.nav-user .name', '[class*="userName"]', '[class*="authorName"]',
+    ];
+    for (var c = 0; c < candidates.length; c += 1) {
+      var node = document.querySelector(candidates[c]);
+      if (!node) continue;
+      var name = clean(node.innerText || node.textContent);
+      if (name && name.length <= 40) return name;
+    }
+
+    // 3) 欢迎语
+    var bodyText = clean(document.body ? document.body.innerText : '');
+    var hello = bodyText.match(/(?:你好|欢迎你|欢迎)[，,、\s]*([^\s，,。！!]{1,20})/);
+    if (hello && hello[1]) return hello[1];
+
+    return '';
+  }
+
+  /**
+   * 道具获得：从作者后台「统计中心 → 道具获得」读当日四项数字与明细。
+   *
+   * 真实页面结构（2026-11 实测）：
+   *   [说明行] 平台按每日 6 时到次日 6 时结算…
+   *   [选择作品 ▼] [查看]                    [道具获得][点击和收藏]
+   *   [总推荐票 384] [总月票 9] [总打赏 5064] [总刀片 3]
+   *   「道具获得趋势」 近7日 / 近30日 / 按月
+   *   「道具获得明细」 一张表（常见为「暂无任何数据」）
+   *
+   * 只有这四项，没有「宝箱」。之前按猜测多写了一项，永远读不到、只会显示「—」。
+   *
+   * 提取策略：不写死选择器。按「关键词 + 同一块里唯一的数字」找，
+   * 这样后台改版换了 class 也还能用；一块里数字不唯一就跳过，宁可不显示也不猜。
+   */
+  function extractProps() {
+    // 顺序与平台一致：推荐票 → 月票 → 打赏 → 刀片
+    var RULES = [
+      { key: 'recommend', words: ['总推荐票', '推荐票'] },
+      { key: 'monthly', words: ['总月票', '月票'] },
+      { key: 'reward', words: ['总打赏', '打赏'] },
+      { key: 'blade', words: ['总刀片', '刀片'] },
+    ];
+
+    function clean(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
+    function toNum(s) {
+      var t = String(s == null ? '' : s).replace(/,/g, '').trim();
+      var m = t.match(/-?\d+(\.\d+)?/);
+      return m ? Number(m[0]) : null;
+    }
+
+    var nodes = document.querySelectorAll('div, li, p, span, td, th, h3, h4, strong, em, b');
+    var items = {};
+    var raw = [];
+    var scanned = 0;
+
+    for (var i = 0; i < nodes.length; i += 1) {
+      var el = nodes[i];
+      var text = clean(el.innerText || el.textContent);
+      if (!text || text.length > 60) continue;
+      scanned += 1;
+
+      // 只认叶子级：子元素里若也有同样的关键词，交给子元素处理，避免父块重复计数
+      var hasSameInside = false;
+      for (var c = 0; c < el.children.length; c += 1) {
+        var childText = clean(el.children[c].innerText || el.children[c].textContent);
+        for (var r0 = 0; r0 < RULES.length; r0 += 1) {
+          if (RULES[r0].words.indexOf(childText) >= 0) { hasSameInside = true; break; }
+        }
+        if (hasSameInside) break;
+      }
+      if (hasSameInside) continue;
+
+      for (var r = 0; r < RULES.length; r += 1) {
+        var rule = RULES[r];
+        var hitWord = '';
+        for (var w = 0; w < rule.words.length; w += 1) {
+          if (text.indexOf(rule.words[w]) >= 0) { hitWord = rule.words[w]; break; }
+        }
+        if (!hitWord) continue;
+
+        // 卡片里通常写成「总推荐票 / 384」两行，或「总推荐票 384」一行。
+        // 先把关键词本身去掉，剩下的数字才是这个指标的数值，
+        // 否则「总推荐票」里的字被当成数字之外的东西没问题，但「近7日」这类
+        // 会混进无关数字 —— 所以要求去掉关键词后只剩一个数字。
+        var rest = text.split(hitWord).join(' ');
+        var nums = rest.match(/-?\d[\d,]*(?:\.\d+)?/g) || [];
+        if (nums.length !== 1) {
+          if (nums.length > 1) raw.push({ key: rule.key, text: text, ambiguous: true });
+          continue;
+        }
+        var value = toNum(nums[0]);
+        if (value === null || value < 0) continue;
+
+        // 同一指标在多处出现时取第一次（主卡片通常在页面最前）
+        if (items[rule.key] === undefined) {
+          items[rule.key] = value;
+          raw.push({ key: rule.key, text: text, value: value });
+        }
+      }
+    }
+
+    // ---- 明细表：有就抓，没有就空数组（平台默认就是「暂无任何数据」） ----
+    var detail = [];
+    try {
+      var tables = document.querySelectorAll('table');
+      for (var t = 0; t < tables.length; t += 1) {
+        var rows = tables[t].querySelectorAll('tbody tr, tr');
+        var cols = [];
+        var headRow = tables[t].querySelector('thead tr');
+        if (headRow) {
+          var ths = headRow.querySelectorAll('th, td');
+          for (var h = 0; h < ths.length; h += 1) cols.push(clean(ths[h].innerText || ths[h].textContent));
+        }
+        for (var q = 0; q < rows.length && detail.length < 50; q += 1) {
+          var tds = rows[q].querySelectorAll('td');
+          if (!tds.length) continue;
+          var cells = [];
+          for (var k = 0; k < tds.length; k += 1) cells.push(clean(tds[k].innerText || tds[k].textContent));
+          // 整行都没有数字的，多半是「暂无任何数据」这类占位行，不当明细
+          if (!cells.some(function (x) { return /\d/.test(x); })) continue;
+          detail.push({ cells: cells, cols: cols });
+        }
+        if (detail.length) break;
+      }
+    } catch (_) { detail = []; }
+
+    // ---- 当前选中的作品 ----
+    var bookId = '';
+    var sel = document.querySelector('select');
+    if (sel && /^\d{6,}$/.test(String(sel.value || ''))) bookId = String(sel.value);
+
+    // ---- 当前粒度（近7日 / 近30日 / 按月）----
+    var grain = '';
+    var grainWords = ['近7日', '近30日', '按月', '近 7 日', '近 30 日'];
+    for (var g = 0; g < grainWords.length; g += 1) {
+      var cands = document.querySelectorAll('a, button, li, span');
+      for (var cb = 0; cb < cands.length; cb += 1) {
+        var ct = clean(cands[cb].innerText || cands[cb].textContent);
+        if (ct === grainWords[g]) {
+          var cls = String(cands[cb].className || '');
+          var par = cands[cb].parentElement ? String(cands[cb].parentElement.className || '') : '';
+          if (/active|on|cur|selected|is-/.test(cls + ' ' + par)) grain = grainWords[g];
+        }
+      }
+      if (grain) break;
+    }
+
+    return {
+      items: items,
+      detail: detail,
+      bookId: bookId,
+      grain: grain,
+      raw: raw.slice(0, 30),
+      scanned: scanned,
+    };
+  }
+
+  /**
+   * 在道具获得页切到指定作品并点「查看」。
+   *
+   * 平台是「选作品 → 查看」两步，只改下拉框不会刷新数字，必须点那个按钮。
+   * 找不到按钮时只改下拉框并返回 clicked=false，由调用方决定是否重试。
+   */
+  function selectPropsBook(bookId) {
+    function clean(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
+    var want = String(bookId || '');
+    var sel = document.querySelector('select');
+    var picked = false;
+    if (sel && want) {
+      for (var i = 0; i < sel.options.length; i += 1) {
+        if (String(sel.options[i].value) === want) {
+          sel.value = want;
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+          picked = true;
+          break;
+        }
+      }
+    }
+    // 「查看」按钮：文字精确匹配，避免误点「刷新」之类
+    var clicked = false;
+    var btns = document.querySelectorAll('a, button, input[type="button"], input[type="submit"]');
+    for (var b = 0; b < btns.length; b += 1) {
+      var txt = clean(btns[b].innerText || btns[b].value || btns[b].textContent);
+      if (txt === '查看' || txt === '查 看') {
+        btns[b].click();
+        clicked = true;
+        break;
+      }
+    }
+    return { picked: picked, clicked: clicked, value: sel ? String(sel.value || '') : '' };
+  }
+
   const PAGE_HELPERS = [
     execPost,
     execGet,
@@ -1979,6 +2211,9 @@
     extractBookOptions: extractBookOptions,
     extractBookStats: extractBookStats,
     extractSubscribeStats: extractSubscribeStats,
+    extractProps: extractProps,
+    selectPropsBook: selectPropsBook,
+    readAuthorName: readAuthorName,
     extractHomeStats: extractHomeStats,
     fetchHtml: fetchHtml,
     fetchChapterDetail: fetchChapterDetail,

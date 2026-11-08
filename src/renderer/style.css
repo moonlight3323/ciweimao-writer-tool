@@ -55,6 +55,13 @@
   --chart-ink: #a79d89;
   --chart-dot: #ffffff;
 
+  /* 道具趋势的四条线：与作者后台图例同色系（推荐票蓝 / 月票粉 / 打赏橙 / 刀片黄），
+     浅底上各压深一档，否则黄色和橙色在白底上几乎看不见 */
+  --props-c1: #2f7ed8;
+  --props-c2: #e0559b;
+  --props-c3: #d97a2b;
+  --props-c4: #b8912a;
+
   --scroll: #e2d5b7;
   --scroll-hover: #d2c29e;
   --chevron: #b3a17a;
@@ -110,6 +117,12 @@
   --chart-grid: #302a1e;
   --chart-ink: #7d735f;
   --chart-dot: #1e1b14;
+
+  /* 深色底上整体提亮一档，保证四条线都能分辨 */
+  --props-c1: #5aa9ff;
+  --props-c2: #ff86bb;
+  --props-c3: #ffa45c;
+  --props-c4: #f0c53a;
 
   --scroll: #3a3323;
   --scroll-hover: #4b422e;
@@ -167,6 +180,12 @@
   --chart-grid: #24303e;
   --chart-ink: #6d7c92;
   --chart-dot: #161d26;
+
+  /* 深蓝底上蓝色要避开线条色，否则第一条线跟主色融在一起 */
+  --props-c1: #78c0ff;
+  --props-c2: #ff8fc2;
+  --props-c3: #ffab6b;
+  --props-c4: #f2cc4c;
 
   --scroll: #2a3644;
   --scroll-hover: #3a4a5d;
@@ -333,9 +352,51 @@ body {
   text-align: left;
   padding: 8px 10px;
   border-radius: 7px;
-  cursor: grab;
+  cursor: pointer;
   transition: background 0.12s, color 0.12s;
+  position: relative;
 }
+
+/* 侧边栏自定义：编辑态下每项右侧留出工具条位置，避免按钮压住文字。
+   工具条常显而不是 hover 才出现 —— hover 才显示的话，鼠标一离开这一行
+   按钮就消失，连点两次上移会变成「点了第一次就找不到按钮」。 */
+.nav.is-editing .nav-item { padding-right: 72px; }
+
+.nav-tools {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.nav.is-editing .nav-tools { display: flex; }
+
+.nav-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--text-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+}
+
+.nav-tool:hover { color: var(--text); border-color: var(--accent-line); }
+.nav-tool[data-nav-tool="remove"]:hover { color: var(--danger-ink); border-color: var(--danger-line); }
+.nav-tool.is-disabled { opacity: 0.35; cursor: default; }
+.nav-tool.is-disabled:hover { color: var(--text-3); border-color: var(--border); }
+
+/* 被删掉的项：不再出现在侧边栏，但还能在设置里加回来 */
+.nav-item.is-nav-hidden { display: none; }
 
 .nav-item:hover { background: var(--surface-3); color: var(--text); }
 
@@ -761,6 +822,68 @@ body {
 .stat-num.is-high { color: var(--danger-ink); }
 .stat-num.is-mid { color: var(--warn-ink); }
 
+/* 道具收获：一张卡一个道具，右侧放与前一日相比的差值。
+   差值配色按涨红跌绿以外的中性口径：这里说的是「收得多/少」，
+   不是股价，所以用强调色与灰色而不是红绿，避免误读成涨跌。 */
+.props-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.props-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+
+.props-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.props-label { font-size: 12px; color: var(--text-2); }
+
+.props-value {
+  font-size: 24px;
+  font-weight: 500;
+  letter-spacing: -0.5px;
+  margin-top: 4px;
+}
+
+.props-value.is-missing { color: var(--text-3); font-size: 18px; }
+
+.props-diff {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.props-diff[data-tone="up"] { color: var(--accent-ink); }
+.props-diff[data-tone="down"] { color: var(--text-2); }
+
+.props-hint { margin-top: 5px; font-size: 11px; color: var(--text-3); }
+
+.props-raw {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.props-raw-row {
+  padding: 6px 9px;
+  background: var(--surface-3);
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+
 .toolbar {
   display: flex;
   align-items: center;
@@ -769,6 +892,29 @@ body {
   margin-bottom: 12px;
   flex-wrap: wrap;
 }
+
+/* 侧边栏设置：保存 / 撤销 / 恢复默认三个按钮靠左排，
+   默认的 space-between 会把它们拉散到两头，看起来像三组不同的操作 */
+.toolbar.nav-actions { justify-content: flex-start; gap: 8px; }
+
+/* 有未保存改动时整块面板给一条左侧强调线，扫一眼就知道这里还没定稿 */
+#panelNav.is-dirty { box-shadow: inset 3px 0 0 var(--accent); }
+
+/* 状态行稍微提一格亮度：它是「存没存」的唯一反馈，不该和普通提示一样淡 */
+#panelNav .nav-state { font-size: 12px; color: var(--text-2); }
+#panelNav.is-dirty .nav-state { color: var(--accent-ink); font-weight: 500; }
+
+/* 操作反馈行：保存成功 / 撤销 / 失败原因。
+   不复用 showNotice —— 那个写的是「抓取与同步」页的测绘提示条，
+   用户在这个页面根本看不到，等于点了没反应。 */
+.nav-flash {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--ok-ink);
+  font-weight: 500;
+}
+.nav-flash[hidden] { display: none; }
+.nav-flash.is-error { color: var(--danger-ink); }
 
 .toolbar-right { display: flex; align-items: center; gap: 8px; }
 
@@ -1204,6 +1350,123 @@ input[type="checkbox"] { accent-color: var(--accent-line); cursor: pointer; }
   border: 1px dashed var(--border-strong);
   border-radius: 8px;
 }
+
+/* ---------- 道具获得（数据看板的下半部分） ----------
+   版式照作者后台「统计中心 → 道具获得」：说明 → 选作品 → 四张卡 → 趋势 → 明细。
+   用一条上分隔线和上面的统计内容区分开，但仍是同一页，不另起 h2 大标题。 */
+.props-section {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.props-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.props-section-head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.props-section-head .hint-line { margin: 3px 0 0; }
+
+/* 选作品 / 查看：和看板里的「查看范围」同一套视觉，但独立一行 */
+.props-scope { margin-bottom: 12px; }
+
+.props-empty-inline {
+  margin: 0 0 10px;
+  padding: 10px 13px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  color: var(--text-3);
+}
+
+.props-empty-inline[hidden] { display: none; }
+
+.props-chart {
+  margin-top: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 13px 16px 11px;
+}
+
+.props-chart .chart-canvas { min-height: 240px; }
+
+/* 图例：与平台一致，四条线四个色块 */
+.props-legend {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding-top: 6px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.props-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.props-legend-item i {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.props-detail {
+  margin-top: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 13px 16px 12px;
+}
+
+.props-detail-body { margin-top: 8px; }
+
+.props-detail-empty {
+  padding: 14px 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.props-detail-scroll { overflow-x: auto; }
+
+.props-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.props-table th,
+.props-table td {
+  padding: 7px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.props-table th {
+  font-weight: 500;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.props-table tr:last-child td { border-bottom: 0; }
+
+.props-note { margin-top: 12px; }
 
 .chart-foot {
   font-size: 10px;
@@ -1646,6 +1909,65 @@ input[type="checkbox"] { accent-color: var(--accent-line); cursor: pointer; }
 
 .vault-hint.is-error { color: var(--warn-ink); }
 .vault-hint.is-ok { color: var(--ok-ink); }
+
+/* 密码本的多选管理面板。
+   刻意做成工具条里的第二行而不是弹窗：平台页面是原生视图、盖在 HTML 之上，
+   全屏遮罩会被它整个挡住，用户在遮罩上点不到东西。展开这一行会让平台视图自动往下让位。 */
+.vault-manage {
+  flex: 0 0 100%;
+  margin: 4px 0 2px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.vault-manage-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--text-3);
+  background: var(--surface-3);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.vault-manage-list { max-height: 168px; overflow-y: auto; }
+
+.vault-manage-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  font-size: 11.5px;
+  border-bottom: 1px solid var(--border);
+}
+
+.vault-manage-row:last-child { border-bottom: 0; }
+
+.vault-manage-author {
+  min-width: 92px;
+  color: var(--text);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault-manage-author.is-missing { color: var(--text-3); font-weight: 400; }
+
+.vault-manage-account {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault-manage-empty { color: var(--text-3); justify-content: center; }
 
 /* ---------------------------------------------------------- 执行台 */
 
@@ -2163,6 +2485,43 @@ body.is-locked { overflow: hidden; }
   font-size: 12px;
 }
 .plugin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(285px, 1fr)); gap: 14px; }
+
+/* 功能中心：内置功能与自装扩展分组显示。
+   外层用 flex 纵向排（不要再用 grid），否则每个分组会被当成一格，
+   组内的卡片网格反而塌成一列。 */
+.plugin-groups { display: flex; flex-direction: column; gap: 22px; }
+
+.plugin-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.plugin-group-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.plugin-group-head span { font-size: 11px; color: var(--text-3); }
+
+/* 「内置」小标：跟在功能名后面，不抢视觉但一眼能分辨来源 */
+.plugin-builtin-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--accent-weak);
+  color: var(--accent-ink);
+  font-size: 9.5px;
+  font-weight: 400;
+  vertical-align: 1px;
+}
+
+.plugin-builtin-note { font-size: 11px; color: var(--text-3); }
+
 .plugin-card {
   min-width: 0;
   padding: 16px;
@@ -2425,20 +2784,40 @@ body.is-locked { overflow: hidden; }
   cursor: pointer;
 }
 .writer-book-delete:hover { background: var(--surface); color: var(--danger-ink); }
+/* 优先级星标：压在封面右上角。
+   左上角是「来源」标签（作者库 / 导入 / 原创）的位置，两个都放左边会叠在一起，
+   所以星标固定走右侧。半透明底保证在任何封面上都看得清。 */
 .writer-book-pin {
-  position: static;
-  flex: 0 0 25px;
-  width: 25px;
-  height: 25px;
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  width: 26px;
+  height: 26px;
+  padding: 0;
   border: 0;
   border-radius: 50%;
-  background: transparent;
-  color: var(--text-2);
-  font-size: 17px;
-  line-height: 25px;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(2px);
+  color: #7b6a4a;
+  font-size: 16px;
+  line-height: 26px;
+  text-align: center;
   cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  transition: background .14s, color .14s, transform .14s;
 }
-.writer-book-pin:hover, .writer-book-pin.is-pinned { background: var(--accent-weak); color: var(--accent-ink); }
+
+.writer-book-pin:hover { transform: scale(1.08); color: var(--accent-ink); }
+
+.writer-book-pin.is-pinned {
+  background: var(--accent);
+  color: #5a4300;
+}
+
+/* 深色主题下白底会突兀，换成半透明深底 */
+:root[data-theme="dark"] .writer-book-pin { background: rgba(30, 28, 24, 0.78); color: #d8c9a4; }
+:root[data-theme="dark"] .writer-book-pin.is-pinned { background: var(--accent); color: #3d2e00; }
 
 .writer-empty { padding: 90px 20px; text-align: center; color: var(--text-2); }
 .writer-empty-icon { font-size: 54px; color: var(--accent-line); }
@@ -2685,6 +3064,44 @@ body.is-locked { overflow: hidden; }
 .plugin-background-host { position: fixed; left: -10000px; top: -10000px; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
 .plugin-background-host iframe { width: 1px; height: 1px; border: 0; }
 .storage-path { overflow-wrap: anywhere; padding: 11px 13px; border-radius: 7px; background: var(--surface-3); color: var(--text-2); }
+
+/* 数据管理：本机备份列表。一行一份，正常字号，靠左对齐时间与说明 */.data-backup-list {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.data-backup-title {
+  padding: 9px 13px;
+  font-size: 12px;
+  color: var(--text-3);
+  background: var(--surface-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.data-backup-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 13px;
+  border-bottom: 1px solid var(--border);
+}
+
+.data-backup-row:last-child { border-bottom: 0; }
+
+.data-backup-main { min-width: 0; }
+
+.data-backup-when { font-size: 12.5px; color: var(--text); }
+
+.data-backup-meta {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
 #updateSettingsHint[data-tone="ok"] { color: var(--ok-ink); }
 #updateSettingsHint[data-tone="warn"] { color: var(--accent-ink); }
 #updateSettingsHint[data-tone="error"] { color: var(--danger-ink); }

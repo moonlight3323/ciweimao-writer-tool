@@ -19,6 +19,7 @@ const { app, safeStorage } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const vaultOrder = require('./vault-order');
 
 const FILE = 'vault.json';
 
@@ -47,23 +48,17 @@ function write(data) {
   fs.renameSync(tmp, f);
 }
 
-/** 对外（渲染进程）可见的字段，永远不含密码 */
-function redact(it) {
-  return {
-    id: it.id,
-    label: it.label || it.username,
-    mode: it.mode || 'account',
-    username: it.username,
-    updatedAt: it.updatedAt,
-    lastUsedAt: it.lastUsedAt || '',
-  };
-}
+/**
+ * 对外（渲染进程）可见的字段，**永远不含密码**。
+ * 实现放在 vault-order.js：那边不依赖 electron，可以直接跑测试。
+ */
+const redact = vaultOrder.redact;
 
+/**
+ * 排序规则：先按作者名分组，组内按最近使用。见 vault-order.js 的注释。
+ */
 function list() {
-  return read().items
-    .slice()
-    .sort((a, b) => String(b.lastUsedAt || b.updatedAt || '').localeCompare(String(a.lastUsedAt || a.updatedAt || '')))
-    .map(redact);
+  return vaultOrder.sortItems(read().items).map(redact);
 }
 
 function encrypt(plain) {
@@ -99,6 +94,7 @@ function save(item) {
     found.updatedAt = now;
     found.lastUsedAt = now;
     if (item.label) found.label = String(item.label).slice(0, 40);
+    if (item.authorName) found.authorName = String(item.authorName).slice(0, 40);
     write(data);
     return redact(found);
   }
@@ -109,6 +105,8 @@ function save(item) {
     mode,
     username,
     secret: encrypt(password),
+    // 保存时通常还没有作者名（登录前），留空等登录成功后再绑
+    authorName: String(item.authorName || '').slice(0, 40),
     updatedAt: now,
     lastUsedAt: now,
   };
@@ -148,6 +146,57 @@ function markUsed(id) {
   write(data);
 }
 
-const api = { available, list, save, remove, reveal, markUsed, vaultFile };
+/**
+ * 绑定作者名：这条账号登录过之后，把后台里的作者名记下来。
+ *
+ * 为什么要单独一个动作而不是塞进 save()：作者名只有登录成功之后才拿得到，
+ * 而 save() 发生在登录之前（用户在登录页填好就存了）。
+ *
+ * @returns {object|null} 更新后的对外字段；记录不存在返回 null
+ */
+function bindAuthor(id, authorName) {
+  const name = String(authorName || '').trim().slice(0, 40);
+  if (!name) return null;
+  const data = read();
+  const rec = data.items.find((x) => x.id === id);
+  if (!rec) return null;
+  if (rec.authorName === name) return redact(rec);
+  rec.authorName = name;
+  rec.authorBoundAt = new Date().toISOString();
+  write(data);
+  return redact(rec);
+}
+
+/**
+ * 按作者名找记录：用于「登录后自动认领」和界面上的快速选择。
+ * @returns {object|null} 对外字段（不含密码）
+ */
+function findByAuthor(authorName) {
+  const name = String(authorName || '').trim();
+  if (!name) return null;
+  const rec = read().items.find((x) => String(x.authorName || '').trim() === name);
+  return rec ? redact(rec) : null;
+}
+
+/**
+ * 取最近一次填入的记录 id。
+ *
+ * 登录成功后要把它绑定作者名，但那一刻页面上可能同时开着好几个账号的 cookie，
+ * 唯一可靠的线索就是「刚刚用哪条记录填的」。
+ */
+function lastFilledId() {
+  const items = read().items;
+  let best = null;
+  for (const it of items) {
+    if (!it.lastUsedAt) continue;
+    if (!best || String(it.lastUsedAt) > String(best.lastUsedAt)) best = it;
+  }
+  return best ? best.id : '';
+}
+
+const api = {
+  available, list, save, remove, reveal, markUsed, vaultFile,
+  bindAuthor, findByAuthor, lastFilledId,
+};
 
 if (typeof module === 'object' && module.exports) module.exports = api;

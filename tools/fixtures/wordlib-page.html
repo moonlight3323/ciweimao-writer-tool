@@ -25,6 +25,13 @@
       <button class="link-btn" id="btnWordlibMore" type="button"></button>
     </div>
 
+    <!-- 手动加词：wordlib-ui.js 会直接绑定这两个元素，少了就整页脚本报错 -->
+    <div class="wordlib-add">
+      <input class="input" id="wordlibAddInput" type="text" autocomplete="off" spellcheck="false"
+             placeholder="手动添加：输入词，多个用逗号或换行分隔" />
+      <button class="btn primary btn-sm" id="btnWordlibAdd" type="button">添加</button>
+    </div>
+
     <div class="wordlib-actions">
       <button class="btn ghost" id="btnWordlibCopy" type="button">复制全部</button>
       <button class="btn ghost" id="btnWordlibClear" type="button">清空</button>

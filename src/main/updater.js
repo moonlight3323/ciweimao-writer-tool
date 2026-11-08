@@ -131,6 +131,46 @@ function pruneSkipped(target, skipped) {
   });
 }
 
+/**
+ * 启动时判断「这次是怎么变成新版本的」。
+ *
+ * 为什么要分：两种情况对用户的意义完全不同。
+ *   - 软件自己提示并安装的自动更新 → 数据本来就该接着用，不该拿一个问题打断用户
+ *   - 用户自己去 GitHub 下载完整包、解压到新目录 → 可能是想「换一个干净的版本」，
+ *     也可能是想接着用旧数据，猜不出来，必须问
+ *
+ * @param {{current:string, last:string, autoInstalled:boolean}} o
+ *   current      当前运行的版本（app.getVersion()）
+ *   last         上次运行时记录的版本（首次运行是空串）
+ *   autoInstalled 更新器是否确认这是它自己装上的（installing 状态 + 版本对得上）
+ * @returns {{kind:string, direction:string, from:string, to:string}}
+ *   kind: first-run | same-version | auto-update | manual-update
+ *   direction: up（升级）| down（降级）| same
+ */
+function decideVersionChange(o) {
+  const current = String((o && o.current) || '');
+  const last = String((o && o.last) || '');
+  const autoInstalled = !!(o && o.autoInstalled);
+
+  if (!last) return { kind: 'first-run', direction: 'same', from: '', to: current };
+  if (last === current) return { kind: 'same-version', direction: 'same', from: last, to: current };
+
+  let direction = 'up';
+  try {
+    direction = compareVersions(current, last) > 0 ? 'up' : 'down';
+  } catch (_) {
+    // 版本号格式坏了（手改过 package.json）：当成升级处理，仍然问一句更安全
+    direction = 'up';
+  }
+
+  return {
+    kind: autoInstalled ? 'auto-update' : 'manual-update',
+    direction,
+    from: last,
+    to: current,
+  };
+}
+
 // ------------------------------------------------------------------ 清单
 
 /**
@@ -590,6 +630,7 @@ module.exports = {
   pickChanges,
   isSkipped,
   pruneSkipped,
+  decideVersionChange,
   normalizeManifest,
   humanSize,
   httpGetBuffer,

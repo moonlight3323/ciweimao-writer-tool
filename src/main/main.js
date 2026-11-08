@@ -24,6 +24,10 @@ const aiexportModule = require('./aiexport');
 const updater = require('./updater');
 const closeBehavior = require('./closebehavior');
 const badwordlib = require('./badwordlib');
+const datamanager = require('./datamanager');
+// 优先级规则放在渲染层目录里（那边要直接用），这里 require 进来复用同一份逻辑，
+// 避免主进程和界面各写一套判断 —— 两套一旦分叉，就会出现「界面点亮了、看板不认」。
+const bookPriority = require('../renderer/book-priority');
 const adapter = require('../adapters/ciweimao');
 const { spawn } = require('child_process');
 
@@ -681,9 +685,40 @@ ipcMain.handle('writer:create', (_e, name) => library.createBook(dataDir(), name
 ipcMain.handle('writer:adopt', (_e, books) => library.adoptPlatformBooks(dataDir(), books));
 ipcMain.handle('writer:save', (_e, book) => library.saveBook(dataDir(), book));
 ipcMain.handle('writer:covers', (_e, list) => library.updateCovers(dataDir(), list));
-ipcMain.handle('writer:pin', (_e, bookId, pinned) => ({
-  result: library.setPinned(dataDir(), bookId, pinned),
-}));
+/**
+ * 设置 / 取消优先级。
+ *
+ * 返回里带上**写入之后的完整书目**：渲染层拿到就能直接重画，
+ * 不必再发一次 `writer:list` 去读。少一次往返，也就没有
+ * 「pin 已成功、界面还显示 0 本」这种读了旧数据的空档。
+ */
+ipcMain.handle('writer:pin', (_e, bookId, pinned) => {
+  const result = library.setPinned(dataDir(), bookId, pinned);
+  return { result, books: library.listBooks(dataDir()) };
+});
+
+/**
+ * 只查「哪本是优先级作品」，不返回作品列表。
+ *
+ * 为什么要单独一个接口：数据看板默认要定位到优先级作品，但作品列表只在
+ * 进入「创作中心」时才加载。用户开机后直接点「数据看板」，渲染层手里没有书目，
+ * 就不知道哪一本是优先级，于是看板「维持原样」——这正是本次要修的问题。
+ * 这个接口只读 index.json，很轻，所以可以在启动时先取一次。
+ *
+ * 排序规则复用 book-priority.js（渲染层那份），保证两边判断完全一致。
+ */
+ipcMain.handle('writer:priority', () => {
+  const books = library.listBooks(dataDir());
+  // 内置功能：远程书没有平台书号，看板里对不上号，不能用来定位
+  const hit = bookPriority.pickPriority(books, { requirePlatform: true });
+  if (!hit) return null;
+  return {
+    bookId: String(hit.bookId || ''),
+    platformBookId: String(hit.platformBookId || ''),
+    name: String(hit.name || ''),
+    pinnedAt: Number(hit.pinnedAt) || 0,
+  };
+});
 ipcMain.handle('writer:delete', (_e, bookId) => ({ deleted: library.deleteBook(dataDir(), bookId) }));
 ipcMain.handle('writer:import', async () => {
   const picked = await dialog.showOpenDialog(win, {
@@ -705,7 +740,7 @@ ipcMain.handle('writer:import', async () => {
   }
 });
 
-// ---- 插件中心：插件只读入沙箱页面，通过白名单 API 与应用通信 ----
+// ---- 功能中心：内置功能与自装扩展都只读入沙箱页面，通过白名单 API 与应用通信 ----
 
 ipcMain.handle('plugins:list', () => ({ plugins: plugins.list(dataDir()) }));
 ipcMain.handle('plugins:get', (_e, id) => plugins.get(dataDir(), id));
@@ -849,6 +884,144 @@ ipcMain.handle('storage:reset', () => {
 });
 
 ipcMain.handle('data:dir', () => dataDir());
+
+// ---------------------------------------------------------------- 版本变化
+//
+// 手动下载完整包覆盖安装时，问一句「要不要接着用旧数据」；
+// 软件自己提示并安装的更新直接跳过——数据本来就该接着用，不必打断用户。
+// 判定在启动时做一次（evaluateVersionChange），记录上次版本后就不再重复问。
+
+/**
+ * 启动时算一次「这次版本是怎么变的」，并把当前版本写回偏好。
+ *
+ * 必须写回：否则每次启动都会重新判定成「手动安装」，变成天天弹窗。
+ */
+function evaluateVersionChange() {
+  const prefs = readPrefsFile();
+  const last = String(prefs.lastRunVersion || '');
+  const current = app.getVersion();
+
+  versionChange = updater.decideVersionChange({
+    current,
+    last,
+    autoInstalled: autoInstalledThisBoot,
+  });
+
+  // 首次运行也要记下来，否则第二次启动会被当成「从空版本升上来」
+  if (last !== current) {
+    prefs.lastRunVersion = current;
+    prefs.lastRunAt = new Date().toISOString();
+    writePrefsFile(prefs);
+  }
+}
+
+/**
+ * 渲染层来问「要不要继承旧数据」。
+ * 只有 manual-update 才返回询问；其余一律 ask=false。
+ */
+ipcMain.handle('version:change', () => ({
+  ...versionChange,
+  ask: versionChange.kind === 'manual-update',
+}));
+
+/**
+ * 用户选择「不继承，从空白开始」。
+ * 先备份（datamanager 内部保证），再清空，由渲染层调 app:relaunch 重启。
+ */
+ipcMain.handle('version:reset-data', () => {
+  const targets = currentTargets();
+  const manifest = datamanager.createBackup(backupRoot(), backupTargets(), { reason: 'before-reset' });
+  datamanager.reset(targets);
+  return { ok: true, backupName: manifest.name, backupSize: datamanager.humanSize(manifest.bytes) };
+});
+
+// ---------------------------------------------------------------- 备份 / 清除 / 恢复
+//
+// 目的是让「完整跑一遍新用户流程」可逆：清干净 → 当新用户测 → 测完把真实数据放回来。
+// 备份落在 %APPDATA%\刺猬猫作家助手-数据备份\（userData 的兄弟目录），清 userData 时不会被连带删。
+
+function backupRoot() {
+  return datamanager.backupRoot(app.getPath('appData'));
+}
+
+function currentTargets() {
+  return datamanager.resetTargets({
+    dataDir: dataDir(),
+    userData: app.getPath('userData'),
+  });
+}
+
+/**
+ * 备份时只保留「用户真正在乎的东西」：数据目录、密码本、保存位置偏好。
+ *
+ * 登录态分区（Partitions）有几十上百 MB 的 Chromium 缓存，备份它既慢又没意义——
+ * 恢复之后照样要重新登录，cookie 也未必还有效。
+ */
+function backupTargets() {
+  return currentTargets().filter((t) => t.scope !== 'session');
+}
+
+ipcMain.handle('data:backups', () => ({
+  root: backupRoot(),
+  backups: datamanager.listBackups(backupRoot()).map((b) => ({
+    name: b.name,
+    createdAt: b.createdAt,
+    files: b.files,
+    bytes: b.bytes,
+    sizeText: datamanager.humanSize(b.bytes),
+    reason: b.reason || '',
+  })),
+}));
+
+/** 只备份不清除：用户在「恢复数据」之前先手动留一份 */
+ipcMain.handle('data:backup-now', () => {
+  const manifest = datamanager.createBackup(backupRoot(), backupTargets(), { reason: 'manual' });
+  return {
+    ok: true,
+    name: manifest.name,
+    files: manifest.files,
+    sizeText: datamanager.humanSize(manifest.bytes),
+  };
+});
+
+/**
+ * 清除所有数据。
+ *
+ * 顺序固定：先备份 → 备份成功才删。备份失败时抛错，前端会显示原因，
+ * 绝不出现「清掉了但没备份」这种不可逆结果。
+ */
+ipcMain.handle('data:reset', (_e, opts) => {
+  const options = opts || {};
+  const targets = currentTargets();
+  const manifest = datamanager.createBackup(backupRoot(), backupTargets(), { reason: 'before-reset' });
+  const removed = datamanager.reset(targets, { skip: options.keepSession ? ['session'] : [] });
+  return {
+    ok: true,
+    backupName: manifest.name,
+    backupSize: datamanager.humanSize(manifest.bytes),
+    removedCount: removed.length,
+  };
+});
+
+/**
+ * 从备份恢复。
+ * 恢复前会自动把当前状态再备份一次（reason=restore-pre），恢复错了也能退回。
+ */
+ipcMain.handle('data:restore', (_e, name) => {
+  const target = String(name || '').trim();
+  if (!target) throw new Error('没有指定要恢复的备份');
+  const res = datamanager.restoreBackup(backupRoot(), target, backupTargets());
+  return { ok: true, ...res };
+});
+
+/** 重启：数据被清空或恢复后必须重启，窗口里残留的内存状态才算真的回到初始 */
+ipcMain.handle('app:relaunch', () => {
+  // 先保证不会把退出拦成「最小化到托盘」
+  quitting = true;
+  app.relaunch();
+  setTimeout(() => app.exit(0), 200);
+  return { ok: true };
+});
 
 ipcMain.handle('data:read', async (_e, name) => {
   const f = path.join(dataDir(), String(name).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_'));
@@ -1067,6 +1240,34 @@ ipcMain.handle('vault:fill', async (_e, id) => {
 
 ipcMain.handle('vault:remove', (_e, id) => ({ ok: vault.remove(String(id)), items: vault.list() }));
 
+/** 打开登录页之前先看看「这个作者名有没有存过账号」，有就提示可一键填入 */
+ipcMain.handle('vault:by-author', (_e, authorName) => ({ item: vault.findByAuthor(authorName) }));
+
+/**
+ * 从当前作者后台页面读作者名，并绑定到指定记录（不传则绑定最近用过的那条）。
+ *
+ * 为什么要主进程做：作者名只存在于平台页面里，渲染进程拿不到页面上下文；
+ * 而且「最近用过哪条记录」也只有主进程知道。
+ */
+ipcMain.handle('vault:bind-author', async (_e, id) => {
+  const wc = vaultPage();
+  const authorName = await wc.executeJavaScript(
+    adapter.pageSource('readAuthorName'), true,
+  ).catch(() => '');
+  const target = String(id || '') || vault.lastFilledId();
+  if (!authorName) return { ok: false, reason: 'no-author-name', items: vault.list() };
+  if (!target) return { ok: false, reason: 'no-record', authorName, items: vault.list() };
+  const item = vault.bindAuthor(target, authorName);
+  return { ok: !!item, authorName, item, items: vault.list() };
+});
+
+/** 手动标作者名：自动读取失败时的兜底，不依赖平台页面 */
+ipcMain.handle('vault:set-author', (_e, id, authorName) => {
+  const item = vault.bindAuthor(String(id), authorName);
+  if (!item) throw new Error('记录不存在，或作者名为空');
+  return { ok: true, item, items: vault.list() };
+});
+
 /**
  * 导出 TXT：弹保存对话框后写盘。
  * 统一加 UTF-8 BOM —— Windows 记事本与不少国产编辑器对无 BOM 的 UTF-8
@@ -1202,6 +1403,10 @@ function skippedList() {
  * 2. state.from === 当前版本 → 新版本没起来，cmd 已经回滚，提示一次
  * 3. 版本对不上 → 清掉，避免状态永远卡住
  */
+let versionChange = { kind: 'same-version', direction: 'same', from: '', to: '' };
+/** 这次启动是否由更新器自己装上的（决定要不要问「是否继承旧数据」） */
+let autoInstalledThisBoot = false;
+
 function recoverUpdateState() {
   const dir = dataDir();
   const version = app.getVersion();
@@ -1210,6 +1415,7 @@ function recoverUpdateState() {
   if (st && st.stage === 'installing' && st.to === version) {
     // 更新助手仍在执行：先确认启动，不清理它正在读取的脚本、锁和备份。
     // 收尾由助手收到确认后统一完成，避免新进程删掉正在执行的 cmd。
+    autoInstalledThisBoot = true;
     fs.writeFileSync(updater.okFlagPath(dir), version, 'utf8');
     updateNotice = {
       kind: 'updated', from: String(st.from || ''), to: String(version), at: String(st.at || ''),
@@ -1589,6 +1795,8 @@ if (!gotLock) {
     app.setAppUserModelId('com.ciweimao.author.tool');
     // 升级自检要尽早做：run-update.cmd 正在等待新版本确认启动。
     try { recoverUpdateState(); } catch (_) { /* 自检失败不阻断启动 */ }
+    // 版本变化判定要排在 recoverUpdateState 之后：它依赖「是否自动安装」这个结论
+    try { evaluateVersionChange(); } catch (_) { /* 判定失败就当作没换版本 */ }
     await ensureInitialStorageChoice();
     plugins.installBundled(dataDir(), path.join(app.getAppPath(), 'bundled-plugins'));
     createWindow();

@@ -208,7 +208,147 @@
     box.appendChild(svg);
   }
 
-  const api = { lineChart, shortNum, dayToTime };
+  /**
+   * 多系列折线图（道具趋势用：推荐票 / 月票 / 打赏 / 刀片 四条线同图）。
+   *
+   * 与 lineChart 的区别不只是"多条线"，还有几处刻意的处理：
+   * - **Y 轴按所有系列的最大值统一**。各系列共用一个刻度才看得出量级差
+   *   （打赏常常是几百，刀片是个位数，分开画会让人误以为量级接近）。
+   * - **某天某系列为 null 时，那个点断开**而不是画成 0 —— 0 是"当天没有"，
+   *   null 是"当天没抓到"，把两者画成一样会编造数据。
+   * - 图例按传进来的顺序画，颜色也按顺序取（调用方负责顺序与配色一致）。
+   *
+   * @param {HTMLElement} box
+   * @param {Object} opts
+   *   days     ['2026-11-01', ...]  横轴日期，升序
+   *   series   [{ key, label, color, values: number|null[] }]
+   */
+  function multiLineChart(box, opts) {
+    const days = (opts && opts.days) || [];
+    const series = ((opts && opts.series) || []).filter((s) => s && Array.isArray(s.values));
+    const GRID = cssVar('--chart-grid', '#f0e7d3');
+    const INK_3 = cssVar('--chart-ink', '#a79d89');
+    const DOT = cssVar('--chart-dot', '#ffffff');
+    const HEIGHT_M = 240;
+    box.innerHTML = '';
+
+    const allValues = [];
+    for (const s of series) {
+      for (const v of s.values) {
+        if (v !== null && v !== undefined && Number.isFinite(Number(v))) allValues.push(Number(v));
+      }
+    }
+    if (!days.length || !allValues.length) {
+      box.appendChild(el('div', { class: 'chart-empty' }, '还没有可用于画趋势的数据'));
+      return;
+    }
+
+    const width = Math.max(360, box.clientWidth || 680);
+    const svg = el('svg', {
+      width: '100%',
+      height: HEIGHT_M,
+      viewBox: `0 0 ${width} ${HEIGHT_M}`,
+      preserveAspectRatio: 'xMidYMid meet',
+      role: 'img',
+    });
+
+    const tMin = dayToTime(days[0]);
+    const tMax = dayToTime(days[days.length - 1]);
+    let yHi = Math.max.apply(null, allValues);
+    const yLo = 0;   // 道具数量非负，从 0 起才看得出涨落比例
+    if (yHi === yLo) yHi = 1;
+    yHi += (yHi - yLo) * 0.15;
+
+    const plotL = PAD.left;
+    const plotR = width - PAD.right;
+    const plotT = PAD.top;
+    const plotB = HEIGHT_M - PAD.bottom;
+
+    const xOf = (day) => {
+      const t = dayToTime(day);
+      if (!isFinite(tMin) || tMax === tMin) return (plotL + plotR) / 2;
+      return plotL + ((t - tMin) / (tMax - tMin)) * (plotR - plotL);
+    };
+    const yOf = (v) => plotB - ((v - yLo) / (yHi - yLo)) * (plotB - plotT);
+
+    // 网格 + Y 刻度
+    const ticks = 4;
+    for (let i = 0; i <= ticks; i++) {
+      const v = yLo + ((yHi - yLo) * i) / ticks;
+      const y = yOf(v);
+      svg.appendChild(el('line', {
+        x1: plotL, y1: y, x2: plotR, y2: y, stroke: GRID, 'stroke-width': 1,
+      }));
+      svg.appendChild(el('text', {
+        x: plotL - 10, y: y + 3.5, 'text-anchor': 'end', 'font-size': 10, fill: INK_3,
+      }, shortNum(v)));
+    }
+
+    // X 轴日期：最多 8 个，首尾必含
+    const n = days.length;
+    const maxLabels = 8;
+    const idxSet = new Set();
+    if (n <= maxLabels) {
+      for (let i = 0; i < n; i++) idxSet.add(i);
+    } else {
+      for (let i = 0; i < maxLabels; i++) {
+        idxSet.add(Math.round((i * (n - 1)) / (maxLabels - 1)));
+      }
+    }
+    Array.from(idxSet).sort((a, b) => a - b).forEach((i) => {
+      svg.appendChild(el('text', {
+        x: xOf(days[i]), y: plotB + 18, 'text-anchor': 'middle', 'font-size': 10, fill: INK_3,
+      }, mmdd(days[i])));
+    });
+
+    // 各系列折线：null 处断开（分段画），不补 0
+    series.forEach((s) => {
+      const color = s.color || cssVar('--chart-line', '#c89600');
+      let seg = [];
+      const flush = () => {
+        if (seg.length >= 2) {
+          svg.appendChild(el('path', {
+            d: seg.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' '),
+            fill: 'none',
+            stroke: color,
+            'stroke-width': 2,
+            'stroke-linejoin': 'round',
+            'stroke-linecap': 'round',
+          }));
+        }
+        // 只有一个点也画出来，否则那一天的数据等于没显示
+        if (seg.length === 1) {
+          svg.appendChild(el('circle', {
+            cx: seg[0].x, cy: seg[0].y, r: 2.5, fill: color,
+          }));
+        }
+        seg = [];
+      };
+
+      s.values.forEach((v, i) => {
+        if (v === null || v === undefined || !Number.isFinite(Number(v))) {
+          flush();
+          return;
+        }
+        const x = xOf(days[i]);
+        const y = yOf(Number(v));
+        seg.push({ x, y });
+
+        svg.appendChild(el('circle', {
+          cx: x, cy: y, r: 3, fill: DOT, stroke: color, 'stroke-width': 2,
+        }));
+        const hit = el('circle', { cx: x, cy: y, r: 10, fill: 'transparent' });
+        hit.appendChild(el('title', null,
+          `${days[i]}　${s.label} ${Number(v).toLocaleString('zh-CN')}`));
+        svg.appendChild(hit);
+      });
+      flush();
+    });
+
+    box.appendChild(svg);
+  }
+
+  const api = { lineChart, multiLineChart, shortNum, dayToTime };
 
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.Chart = api;

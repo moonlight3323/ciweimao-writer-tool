@@ -82,6 +82,9 @@ function readState(dataDir) {
 function list(dataDir) {
   const root = pluginsDir(dataDir);
   const state = readState(dataDir);
+  // 内置功能的注册表：installBundled 每次启动都会写，用它标出「自带」的那些。
+  // 界面上内置功能只允许停用、不允许删除 —— 删了没有重新安装的入口。
+  const bundled = readJson(path.join(dataDir, 'bundled-plugins.json'), {});
   const result = [];
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
@@ -96,10 +99,16 @@ function list(dataDir) {
           description: '插件目录名必须与 manifest.json 中的 id 一致',
           enabled: false,
           invalid: true,
+          builtin: false,
         });
         continue;
       }
-      result.push({ ...manifest, enabled: state.enabled[manifest.id] !== false, invalid: false });
+      result.push({
+        ...manifest,
+        enabled: state.enabled[manifest.id] !== false,
+        invalid: false,
+        builtin: Object.prototype.hasOwnProperty.call(bundled, manifest.id),
+      });
     } catch (err) {
       result.push({
         id: entry.name,
@@ -108,6 +117,7 @@ function list(dataDir) {
         description: String((err && err.message) || err),
         enabled: false,
         invalid: true,
+        builtin: Object.prototype.hasOwnProperty.call(bundled, entry.name),
       });
     }
   }
@@ -296,8 +306,18 @@ function importZip(dataDir, file) {
   }
 }
 
+/**
+ * 删除插件目录。
+ *
+ * 内置功能不允许删除：它们没有「重新安装」的入口，删掉就只能重装整个软件。
+ * 想让它不起作用请用停用（setEnabled）。这里直接抛错，让界面能显示原因。
+ */
 function remove(dataDir, id) {
   const pluginId = safeId(id);
+  const bundled = readJson(path.join(dataDir, 'bundled-plugins.json'), {});
+  if (Object.prototype.hasOwnProperty.call(bundled, pluginId)) {
+    throw new Error('内置功能不能删除，只能停用');
+  }
   const target = path.join(pluginsDir(dataDir), pluginId);
   if (!fs.existsSync(target)) return false;
   fs.rmSync(target, { recursive: true, force: true });
@@ -347,7 +367,7 @@ function createTemplate(dataDir) {
     '  }',
     '});',
   ].join('\n'), 'utf8');
-  fs.writeFileSync(path.join(folder, 'README.md'), '修改 manifest.json、page.html、style.css 和 main.js 后，在插件中心点击“重新加载”。\n', 'utf8');
+  fs.writeFileSync(path.join(folder, 'README.md'), '修改 manifest.json、page.html、style.css 和 main.js 后，在功能中心点击“重新加载”。\n', 'utf8');
   setEnabled(dataDir, id, true);
   return { id, folder };
 }

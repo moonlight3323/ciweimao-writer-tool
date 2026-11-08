@@ -1,7 +1,7 @@
 'use strict';
 
 const $ = (sel) => document.querySelector(sel);
-const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+const $$ = (sel, scope) => Array.from((scope || document).querySelectorAll(sel));
 
 /**
  * 输入弹窗。
@@ -67,7 +67,7 @@ const VIEW_TITLES = {
   rank: '平台榜单',
   miaoyu: '喵语数据',
   sync: '抓取与同步',
-  plugins: '插件中心',
+  plugins: '功能中心',
   settings: '设置',
 };
 
@@ -131,6 +131,317 @@ window.addEventListener('resize', syncMiaoyuBounds);
 
 // ------------------------------------------------------------ 视图切换
 
+/* ------------------------------------------------------------ 侧边栏自定义 */
+
+/**
+ * 侧边栏自定义的界面部分。
+ *
+ * 排序规则全在 nav-order.js（那边有单测），这里只负责：
+ * 把文字包成 span（好让工具条独立存在）、按顺序重排 DOM、接住工具条的点击。
+ *
+ * 关键约束：span 工具条放在 button 内部，点击必须用 capture 阶段拦下来并
+ * stopPropagation，否则会先冒泡到「切换视图」的监听，变成点一下就跳页面。
+ */
+/* ------------------------------------------------------------ 侧边栏：调整态 / 草稿 / 保存
+ *
+ * 三个状态要分清，之前混在一起出过问题：
+ *
+ *   navEditing  是否处于「调整态」——决定 ▲▼× 这几个按钮显不显示
+ *   navDraft    未保存的草稿顺序（null = 没改动）
+ *   Prefs       已保存的顺序
+ *
+ * 交互：
+ *   点「调整侧边栏」→ navEditing = true，侧边栏露出 ▲▼×
+ *   点 ▲▼×          → 只改 navDraft，侧边栏立刻按草稿重排（预览），不落盘
+ *   点「保存排列」  → 草稿写进 Prefs，并**退出调整态**（按钮收起）
+ *   点「撤销修改」  → 丢掉草稿，退出调整态
+ *   点「恢复初始」  → 立刻恢复默认顺序并落盘，保持调整态（接着还能调）
+ *
+ * **调整态刻意不持久化**：以前它绑在 Prefs.navCustom 上，于是保存之后按钮
+ * 仍在显示、还能继续改动，用户以为「保存」没生效。现在它只活在本次会话里，
+ * 保存即结束——重启软件也一定回到「不显示按钮」的干净状态。
+ */
+
+/** 是否处于调整态（不持久化：保存 / 撤销 / 离开设置页都会结束） */
+let navEditing = false;
+/** 草稿顺序；null 表示没有未保存的改动 */
+let navDraft = null;
+/** 上次保存时间，用于状态提示 */
+let navSavedAt = '';
+
+/** 已保存的顺序（不含草稿） */
+function savedNavOrder() {
+  const saved = window.Prefs ? window.Prefs.get('navOrder', null) : null;
+  return window.NavOrder
+    ? window.NavOrder.normalize(saved || window.NavOrder.defaultOrder())
+    : [];
+}
+
+/** 界面应当显示的顺序：有草稿用草稿，否则用已保存的 */
+function currentNavOrder() {
+  return navDraft ? navDraft.slice() : savedNavOrder();
+}
+
+function navDirty() {
+  if (!navDraft) return false;
+  return navDraft.join(',') !== savedNavOrder().join(',');
+}
+
+function saveNavOrder(order) {
+  if (!window.Prefs || !window.NavOrder) return;
+  window.Prefs.set('navOrder', window.NavOrder.normalize(order));
+  navSavedAt = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  // 一并记下时间：重启软件后状态行还能显示「上次保存于几点」
+  window.Prefs.set('navOrderSavedAt', navSavedAt);
+}
+
+/** 改草稿：只动内存，等用户点保存 */
+function setNavDraft(order) {
+  navDraft = window.NavOrder ? window.NavOrder.normalize(order) : [];
+  applyNavOrder();
+}
+
+function navTimeText() {
+  return navSavedAt || '';
+}
+
+/** 侧边栏设置里的操作反馈。3 秒后自己消失，只在这一页可见 */
+let navFlashTimer = null;
+function navFlash(text, isError) {
+  const el = $('#navFlash');
+  if (!el) return;
+  clearTimeout(navFlashTimer);
+  el.hidden = !text;
+  el.textContent = text || '';
+  el.classList.toggle('is-error', !!isError);
+  if (text) {
+    navFlashTimer = setTimeout(() => { el.hidden = true; }, 3000);
+  }
+}
+
+/** 给每个 nav-item 补上「文字 span + 工具条」，重复调用无副作用 */
+function ensureNavStructure() {
+  const nav = $('#nav');
+  if (!nav) return;
+  $$('.nav-item').forEach((btn) => {
+    if (btn.dataset.pluginNav) return; // 插件动态项不参与排序
+    if (!btn.querySelector('.nav-label')) {
+      const label = document.createElement('span');
+      label.className = 'nav-label';
+      label.textContent = btn.textContent.trim();
+      btn.textContent = '';
+      btn.appendChild(label);
+    }
+    if (!btn.querySelector('.nav-tools')) {
+      const tools = document.createElement('span');
+      tools.className = 'nav-tools';
+      tools.innerHTML = '<span class="nav-tool" data-nav-tool="up" title="上移">▲</span>'
+        + '<span class="nav-tool" data-nav-tool="down" title="下移">▼</span>'
+        + '<span class="nav-tool" data-nav-tool="remove" title="从侧边栏移除">×</span>';
+      btn.appendChild(tools);
+    }
+    if (window.NavOrder && window.NavOrder.isLocked(btn.dataset.view)) {
+      const del = btn.querySelector('[data-nav-tool="remove"]');
+      if (del) del.remove();
+    }
+  });
+}
+
+function applyNavOrder() {
+  const nav = $('#nav');
+  if (!nav || !window.NavOrder) return;
+  ensureNavStructure();
+
+  const order = currentNavOrder();
+  const items = $$('.nav-item', nav).filter((b) => b.dataset.view && !b.dataset.pluginNav);
+  const byView = new Map(items.map((b) => [b.dataset.view, b]));
+
+  // appendChild 会移动已有节点，按目标顺序追加一遍就完成了重排
+  for (const view of order) {
+    const btn = byView.get(view);
+    if (!btn) continue;
+    btn.classList.remove('is-nav-hidden');
+    nav.appendChild(btn);
+  }
+  // 不在顺序里的视为用户主动移除
+  for (const [view, btn] of byView) {
+    if (!order.includes(view)) btn.classList.add('is-nav-hidden');
+  }
+
+  // 动态插件项永远紧跟「设置」之前，不受自定义顺序影响
+  const settings = byView.get('settings');
+  $$('.plugin-nav-item', nav).forEach((el) => nav.insertBefore(el, settings || null));
+
+  // 文字以 NavOrder 为准：改名只需要改一处，不用同步改 HTML
+  for (const [view, btn] of byView) {
+    const label = btn.querySelector('.nav-label');
+    const text = window.NavOrder.labelOf(view);
+    if (label && text && label.textContent !== text) label.textContent = text;
+  }
+
+  // 上移下移按钮的可用状态：第一项不能再上移，最后一项不能再下移
+  const visible = order.filter((v) => byView.has(v));
+  visible.forEach((view, i) => {
+    const btn = byView.get(view);
+    const up = btn.querySelector('[data-nav-tool="up"]');
+    const down = btn.querySelector('[data-nav-tool="down"]');
+    if (up) up.classList.toggle('is-disabled', i === 0);
+    if (down) down.classList.toggle('is-disabled', i === visible.length - 1);
+  });
+
+  nav.classList.toggle('is-editing', navEditing);
+  renderNavCustomHint();
+}
+
+function renderNavCustomHint() {
+  const hint = $('#navCustomHint');
+  const tag = $('#navCustomTag');
+  const adjustBtn = $('#btnNavAdjust');
+  const saveBtn = $('#btnNavSave');
+  const discardBtn = $('#btnNavDiscard');
+  const resetBtn = $('#btnNavReset');
+  const box = $('#panelNav');
+  if (!window.NavOrder) return;
+
+  const order = currentNavOrder();
+  const hidden = window.NavOrder.hiddenOf(order);
+  const isDefault = order.join(',') === window.NavOrder.defaultOrder().join(',');
+  const dirty = navDirty();
+
+  // 「调整侧边栏」只在未进入调整态时出现；进入后换成「保存排列 / 撤销修改」。
+  // 这样保存完按钮自动收起，用户不会以为还能继续改。
+  if (adjustBtn) adjustBtn.hidden = navEditing;
+  if (saveBtn) { saveBtn.hidden = !navEditing; saveBtn.disabled = !dirty; }
+  if (discardBtn) { discardBtn.hidden = !navEditing; discardBtn.disabled = !dirty; }
+  if (resetBtn) resetBtn.hidden = navEditing;
+
+  if (box) box.classList.toggle('is-dirty', navEditing && dirty);
+
+  if (tag) {
+    tag.textContent = navEditing
+      ? (dirty ? '调整中 · 未保存' : '调整中')
+      : (isDefault ? '默认排列' : '已自定义');
+  }
+
+  if (!hint) return;
+  if (navEditing) {
+    hint.textContent = dirty
+      ? '正在调整：点「保存排列」生效，点「撤销修改」还原'
+        + (hidden.length ? ` · ${hidden.length} 项将移出侧边栏（${hidden.map((v) => window.NavOrder.labelOf(v)).join('、')}）` : '')
+      : '正在调整：用左侧各项右侧的 ▲▼× 重排或移除，改完点「保存排列」';
+    return;
+  }
+  if (isDefault) {
+    hint.textContent = '当前：默认排列。点「调整侧边栏」可以重排';
+    return;
+  }
+  const when = navTimeText();
+  hint.textContent = (hidden.length
+    ? `已保存 · ${hidden.length} 项不在侧边栏（${hidden.map((v) => window.NavOrder.labelOf(v)).join('、')}）`
+    : '已保存 · 自定义顺序')
+    + (when ? ` · ${when}` : '');
+}
+
+$('#nav').addEventListener('click', (e) => {
+  const tool = e.target.closest('[data-nav-tool]');
+  if (!tool) return;
+  // capture 阶段就拦下来：否则会冒泡到「切换视图」，点一下直接跳页
+  e.preventDefault();
+  e.stopPropagation();
+  const item = tool.closest('.nav-item');
+  if (!item || !window.NavOrder) return;
+  // 不在调整态时这些按钮本来就不显示，这里再兜一层：万一被点到也不该改东西
+  if (!navEditing) return;
+  const view = item.dataset.view;
+  const kind = tool.dataset.navTool;
+
+  if (kind === 'remove') {
+    const res = window.NavOrder.remove(currentNavOrder(), view);
+    if (!res.removed) {
+      if (res.reason) navFlash(res.reason, true);
+      return;
+    }
+    setNavDraft(res.order);
+    // 删的正好是当前页就跳走，避免停在一个从侧栏消失的页面里。
+    // 跳到排在最前面的那一项（而不是固定回概览）——概览本身也可能被删掉。
+    if (lastView === view) {
+      const fallback = res.order.find((v) => v !== view) || 'settings';
+      setActiveView(fallback);
+    }
+    return;
+  }
+
+  const delta = kind === 'up' ? -1 : 1;
+  setNavDraft(window.NavOrder.move(currentNavOrder(), view, delta));
+}, true);
+
+/** 进入调整态：露出 ▲▼×，草稿从已保存的顺序起步 */
+function beginNavAdjust() {
+  if (!window.NavOrder || navEditing) return;
+  navEditing = true;
+  navDraft = savedNavOrder();
+  applyNavOrder();
+  navFlash('已进入调整：用侧边栏各项右侧的 ▲▼× 重排，改完点「保存排列」');
+}
+
+/** 退出调整态：草稿清空，按钮收起 */
+function endNavAdjust() {
+  navEditing = false;
+  navDraft = null;
+  applyNavOrder();
+}
+
+$('#btnNavAdjust').addEventListener('click', () => beginNavAdjust());
+
+$('#btnNavSave').addEventListener('click', () => {
+  if (!navEditing) return;
+  if (!navDirty()) {
+    // 没改动也允许「保存」，效果就是单纯结束调整——比让按钮灰着更符合直觉
+    endNavAdjust();
+    navFlash('排列未变化');
+    return;
+  }
+  saveNavOrder(navDraft);
+  endNavAdjust();
+  navFlash('排列已保存，立即生效');
+});
+
+$('#btnNavDiscard').addEventListener('click', () => {
+  if (!navEditing) return;
+  const had = navDirty();
+  endNavAdjust();
+  navFlash(had ? '已撤销未保存的调整' : '已结束调整');
+});
+
+$('#btnNavReset').addEventListener('click', () => {
+  // 「恢复初始」是明确动作：立刻恢复默认并落盘，然后保持调整态让用户接着调
+  if (!window.NavOrder) return;
+  const wasEditing = navEditing;
+  navDraft = null;
+  saveNavOrder(window.NavOrder.defaultOrder());
+  navSavedAt = '';
+  window.Prefs.set('navOrderSavedAt', '');
+  if (!wasEditing) {
+    navEditing = true;
+    navDraft = window.NavOrder.defaultOrder();
+  }
+  applyNavOrder();
+  navFlash('已恢复初始排列，可继续调整或直接离开');
+});
+
+function initNavCustom() {
+  if (!window.NavOrder) return;
+  // 上次保存时间从偏好里读回来，重启后状态行不至于变成空白
+  navSavedAt = (window.Prefs && window.Prefs.get('navOrderSavedAt', '')) || '';
+  // 每次启动都从「非调整态」开始：▲▼× 默认不出现，
+  // 想看就点一次「调整侧边栏」。这一点不要改成读偏好——
+  // 以前按偏好恢复,结果保存后按钮一直挂着，用户以为保存没生效。
+  navEditing = false;
+  navDraft = null;
+  applyNavOrder();
+}
+
+
 function setActiveNav(name, pluginId) {
   $$('.nav-item').forEach((button) => {
     const active = pluginId
@@ -143,6 +454,12 @@ function setActiveNav(name, pluginId) {
 function setActiveView(name) {
   // 离开创作中心就退出专注模式，否则侧栏一直藏着、别的页面全被挤没
   if (name !== 'writer' && writerFocusOn) setWriterFocus(false);
+  // 离开「设置」页就退出侧边栏的调整态：草稿还原、▲▼× 收起。
+  // 不这么做的话，用户点完「调整侧边栏」切去别的页面再回来，
+  // 按钮还挂在那儿，和他「刚才好像已经弄完了」的印象对不上。
+  if (name !== 'settings' && typeof navEditing === 'boolean' && navEditing) {
+    endNavAdjust();
+  }
   lastView = name;
   setActiveNav(name, '');
   $$('.view').forEach((s) => s.classList.toggle('is-active', s.dataset.view === name));
@@ -171,6 +488,9 @@ function setActiveView(name) {
     loadWriterBadwordWords().then(() => { if (writerEditorBook) scanWriterBadwords(); });
   }
   if (name === 'writing-stats') loadWritingStats().then(renderWritingStats);
+  if (name === 'books') ensureBoardReady();
+  // 道具获得是数据看板的一部分，进这一页就跟着一起画
+
   // 回到抓取页时按已有数据重算引导状态（读过列表 / 抓过没抓过）
   if (name === 'sync') renderCrawlGuide();
   // 普通插件页随导航退出；常驻插件持有独立 iframe，继续运行。
@@ -583,7 +903,12 @@ window.api.browser.onEvent((data) => {
     }
     // 应用启动时通常停在登录页。登录成功后即使没有跳到 book_manage，
     // 也要检查已绑定作品的章节目录，不能只等用户手动点一次创作中心。
-    if (data.url && !data.isLoginPage && wasLoginPage) scheduleAdoptNewBooks();
+    if (data.url && !data.isLoginPage && wasLoginPage) {
+      scheduleAdoptNewBooks();
+      // 刚登录成功，后台页面上才有作者名。这时候绑一次，密码本里的
+      // 「账号」和「笔名」就对上号了，多账号用户下次能按笔名选。
+      bindAuthorQuietly('');
+    }
   } else if (data.type === 'browser-error') {
     $('#pageCrumb').textContent = `加载失败 ${data.code} ${data.desc || ''}`;
   } else if (data.type === 'miaoyu-state') {
@@ -615,6 +940,8 @@ window.api.browser.onEvent((data) => {
 // 密码的解密与填入都在主进程里完成，这里拿不到、也不需要明文。
 
 let vaultItems = [];
+/** 多选管理里勾中的记录 id（只在界面内有效，不落盘） */
+const vaultPicked = new Set();
 
 function ipcError(err) {
   return String((err && err.message) || err)
@@ -629,21 +956,57 @@ function setVaultHint(text, kind) {
   el.classList.toggle('is-ok', kind === 'ok');
 }
 
+/** 下拉里的显示名：有作者名就以作者名为主，账号放后面 */
+function vaultOptionLabel(it) {
+  const author = String(it.authorName || '').trim();
+  const account = String(it.username || '');
+  const suffix = it.mode === 'email' ? '（邮箱登录）' : '';
+  if (!author) return `${account}${suffix} · 未标作者名`;
+  if (author === account) return `${author}${suffix}`;
+  return `${author} · ${account}${suffix}`;
+}
+
 function renderVaultPick() {
   const sel = $('#vaultPick');
   if (!vaultItems.length) {
     sel.innerHTML = '<option value="">还没有保存的账号</option>';
     sel.disabled = true;
     $('#btnVaultFill').disabled = true;
-    $('#btnVaultDelete').disabled = true;
+    renderVaultManage();
     return;
   }
   sel.innerHTML = vaultItems.map((it) => (
-    `<option value="${escapeHtml(it.id)}">${escapeHtml(it.username)}${it.mode === 'email' ? '（邮箱登录）' : ''}</option>`
+    `<option value="${escapeHtml(it.id)}">${escapeHtml(vaultOptionLabel(it))}</option>`
   )).join('');
   sel.disabled = false;
   $('#btnVaultFill').disabled = false;
-  $('#btnVaultDelete').disabled = false;
+  renderVaultManage();
+}
+
+/** 多选管理面板：勾选后可以批量删除，也可以逐条标作者名 */
+function renderVaultManage() {
+  const box = $('#vaultManageList');
+  if (!box) return;
+  const count = $('#vaultManageCount');
+  if (count) count.textContent = `已选 ${vaultPicked.size} 条`;
+
+  if (!vaultItems.length) {
+    box.innerHTML = '<div class="vault-manage-row vault-manage-empty">还没有保存的账号</div>';
+    return;
+  }
+  box.innerHTML = vaultItems.map((it) => {
+    const author = String(it.authorName || '').trim();
+    // 用 div 而不是 label：行内还有「填入」「标作者名」两个按钮，
+    // 放在 label 里点按钮会连带切换复选框，行为很怪
+    return `
+      <div class="vault-manage-row">
+        <input type="checkbox" data-vault-pick="${escapeHtml(it.id)}" ${vaultPicked.has(it.id) ? 'checked' : ''} />
+        <span class="vault-manage-author${author ? '' : ' is-missing'}">${escapeHtml(author || '未标作者名')}</span>
+        <span class="vault-manage-account">${escapeHtml(it.username)}${it.mode === 'email' ? '（邮箱）' : ''}</span>
+        <button class="link-btn" data-vault-fill="${escapeHtml(it.id)}" type="button">填入</button>
+        <button class="link-btn" data-vault-author="${escapeHtml(it.id)}" type="button">${author ? '改作者名' : '标作者名'}</button>
+      </div>`;
+  }).join('');
 }
 
 async function refreshVault(keepHint) {
@@ -658,17 +1021,21 @@ async function refreshVault(keepHint) {
       $('#vaultPick').disabled = true;
       $('#btnVaultFill').disabled = true;
       $('#btnVaultCapture').disabled = true;
-      $('#btnVaultDelete').disabled = true;
+      $('#btnVaultBind').disabled = true;
       if (!keepHint) setVaultHint('系统加密不可用，出于安全考虑不保存密码', 'error');
       return;
     }
 
     $('#btnVaultCapture').disabled = false;
+    $('#btnVaultBind').disabled = false;
     renderVaultPick();
     if (!keepHint) {
+      const unbound = vaultItems.filter((it) => !String(it.authorName || '').trim()).length;
       setVaultHint(
         vaultItems.length
-          ? `已保存 ${vaultItems.length} 个账号 · 密码加密后仅存本机`
+          ? `已保存 ${vaultItems.length} 个账号`
+            + (unbound ? ` · ${unbound} 条还没标作者名` : ' · 都已标作者名')
+            + ' · 密码加密后仅存本机'
           : '先在页面里手动登录一次，再点「记住这次输入」',
         ''
       );
@@ -762,6 +1129,8 @@ $('#btnVaultCapture').addEventListener('click', async () => {
     renderVaultPick();
     if (res.item) $('#vaultPick').value = res.item.id;
     setVaultHint(`已保存：${res.item ? res.item.username : ''} · 下次点「填入」即可`, 'ok');
+    // 登录页还开着，趁后台能读就顺手把作者名认下来
+    bindAuthorQuietly(res.item && res.item.id);
   } catch (err) {
     setVaultHint(ipcError(err), 'error');
   } finally {
@@ -769,14 +1138,126 @@ $('#btnVaultCapture').addEventListener('click', async () => {
   }
 });
 
-$('#btnVaultDelete').addEventListener('click', async () => {
-  const id = $('#vaultPick').value;
-  if (!id) return;
-  const item = vaultItems.find((x) => x.id === id);
-  if (!window.confirm(`确定从本机删除「${item ? item.username : '这条记录'}」？此操作不可恢复。`)) return;
+/** 静默尝试绑定作者名：读不到很正常（登录页上本来就没有作者名），不打扰用户 */
+async function bindAuthorQuietly(id) {
   try {
-    const res = await window.api.vault.remove(id);
+    const res = await window.api.vault.bindAuthor(id || '');
+    if (res && res.ok) {
+      vaultItems = res.items || [];
+      renderVaultPick();
+      setVaultHint(`作者名已记为「${res.authorName}」`, 'ok');
+    }
+    return res;
+  } catch (_) {
+    return null;
+  }
+}
+
+/* ---------- 密码本：作者名匹配与多选管理 ---------- */
+
+function toggleVaultManage(show) {
+  const box = $('#vaultManage');
+  if (!box) return;
+  box.hidden = show === undefined ? !box.hidden : !show;
+  if (!box.hidden) renderVaultManage();
+}
+
+$('#btnVaultManage').addEventListener('click', () => toggleVaultManage());
+
+$('#btnVaultManageClose').addEventListener('click', () => toggleVaultManage(false));
+
+/** 手动认作者名：读当前后台页面；读不到就让用户手填，不瞎猜 */
+$('#btnVaultBind').addEventListener('click', async () => {
+  const btn = $('#btnVaultBind');
+  btn.disabled = true;
+  setVaultHint('正在读取当前后台的作者名…');
+  try {
+    const res = await window.api.vault.bindAuthor('');
+    if (res && res.ok) {
+      vaultItems = res.items || [];
+      renderVaultPick();
+      setVaultHint(`作者名已记为「${res.authorName}」`, 'ok');
+    } else if (res && res.reason === 'no-author-name') {
+      setVaultHint('页面上没找到作者名，可以点「管理」逐条手填', 'error');
+    } else {
+      setVaultHint('还没有可绑定的记录，先「记住这次输入」', 'error');
+    }
+  } catch (err) {
+    setVaultHint(ipcError(err), 'error');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$('#vaultManageList').addEventListener('change', (e) => {
+  const box = e.target.closest('[data-vault-pick]');
+  if (!box) return;
+  if (box.checked) vaultPicked.add(box.dataset.vaultPick);
+  else vaultPicked.delete(box.dataset.vaultPick);
+  const count = $('#vaultManageCount');
+  if (count) count.textContent = `已选 ${vaultPicked.size} 条`;
+});
+
+$('#vaultManageList').addEventListener('click', async (e) => {
+  const fillBtn = e.target.closest('[data-vault-fill]');
+  if (fillBtn) {
+    $('#vaultPick').value = fillBtn.dataset.vaultFill;
+    $('#btnVaultFill').click();
+    return;
+  }
+  const authorBtn = e.target.closest('[data-vault-author]');
+  if (!authorBtn) return;
+  const id = authorBtn.dataset.vaultAuthor;
+  const item = vaultItems.find((x) => x.id === id);
+  const name = await askText({
+    title: '这条账号的作者名',
+    hint: '填你在刺猬猫用的笔名，以后就能按笔名认出这个账号',
+    value: (item && item.authorName) || '',
+    okText: '保存',
+  });
+  if (name === null) return;
+  const trimmed = name.trim();
+  if (!trimmed) {
+    setVaultHint('作者名不能为空', 'error');
+    return;
+  }
+  try {
+    const res = await window.api.vault.setAuthor(id, trimmed);
     vaultItems = res.items || [];
+    renderVaultPick();
+    setVaultHint(`已记为「${trimmed}」`, 'ok');
+  } catch (err) {
+    setVaultHint(ipcError(err), 'error');
+  }
+});
+
+$('#btnVaultSelectAll').addEventListener('click', () => {
+  vaultItems.forEach((it) => vaultPicked.add(it.id));
+  renderVaultManage();
+});
+
+$('#btnVaultSelectNone').addEventListener('click', () => {
+  vaultPicked.clear();
+  renderVaultManage();
+});
+
+$('#btnVaultDeletePicked').addEventListener('click', async () => {
+  if (!vaultPicked.size) {
+    setVaultHint('先勾选要删除的记录', 'error');
+    return;
+  }
+  const names = vaultItems
+    .filter((it) => vaultPicked.has(it.id))
+    .map((it) => String(it.authorName || '').trim() || it.username);
+  if (!window.confirm(`确定从本机删除这 ${names.length} 条记录？\n\n${names.join('、')}\n\n此操作不可恢复。`)) return;
+  try {
+    let items = vaultItems;
+    for (const id of Array.from(vaultPicked)) {
+      const res = await window.api.vault.remove(id);
+      items = res.items || items;
+    }
+    vaultItems = items;
+    vaultPicked.clear();
     renderVaultPick();
     setVaultHint(`已删除 · 还剩 ${vaultItems.length} 个账号`, 'ok');
   } catch (err) {
@@ -1729,6 +2210,70 @@ let statsBusy = false;
 /** 看板查看范围：'' = 全部作品合计，否则为某本书的 bookId */
 let boardBookId = '';
 let bookOptionsKey = '';
+/** 用户是否手动动过「查看范围」下拉。没动过时跟随优先级作品，动过就尊重用户选择 */
+let boardBookTouched = false;
+
+/**
+ * 优先级作品缓存。
+ *
+ * 不能只靠 writerBooks：作品列表只在进入「创作中心」时才加载，
+ * 用户开机后直接点「数据看板」的话手里没有书目，优先级就成了未知。
+ * 所以启动时单独查一次（主进程只读 index.json，很轻），点亮星标后再刷新。
+ */
+let priorityInfo = null;
+
+async function refreshPriorityInfo() {
+  try {
+    priorityInfo = await window.api.writer.priority();
+  } catch (_) {
+    priorityInfo = null;
+  }
+  return priorityInfo;
+}
+
+/**
+ * 进数据看板前确认「优先级作品」是已知的。
+ *
+ * 开机后直接点「数据看板」时，作品列表还没加载过、优先级缓存也是空的，
+ * 这时候画出来的看板必然「维持原样」。所以这里补一次查询再重画。
+ */
+async function ensureBoardReady() {
+  if (!priorityInfo) {
+    await refreshPriorityInfo();
+    renderBoard();
+  }
+  // 道具获得是这一页的下半部分：作品下拉依赖作品库，所以顺手补一次。
+  // 已经在「创作中心」加载过就直接用，不会重复发请求。
+  if (!Array.isArray(writerBooks) || !writerBooks.length) {
+    await loadWriterBooks().catch(() => {});
+  }
+  syncPropsBookOptions();
+  renderProps();
+}
+
+/**
+ * 创作中心里点亮星标的那本（优先级最高的）。
+ *
+ * 规则在 book-priority.js 里，那边有单测。这里只负责把它接到当前书目上。
+ */
+function priorityBook() {
+  if (!window.BookPriority) return null;
+  return window.BookPriority.pickPriority(writerBooks, { requirePlatform: true });
+}
+
+/**
+ * 优先级作品在数据看板里的 bookId；没有就返回空串。
+ *
+ * 先用已加载的书目算（能反映刚点的星标），书目为空时退回启动时查到的缓存。
+ */
+function priorityBoardBookId() {
+  if (window.BookPriority && Array.isArray(writerBooks) && writerBooks.length) {
+    return window.BookPriority.boardBookIdOf(writerBooks);
+  }
+  return priorityInfo && priorityInfo.platformBookId
+    ? String(priorityInfo.platformBookId)
+    : '';
+}
 
 function fmtNum(n) {
   if (n == null || Number.isNaN(n)) return '—';
@@ -1775,20 +2320,28 @@ function syncBookOptions(books) {
       list.map((b) => `<option value="${escapeHtml(String(b.bookId))}">《${escapeHtml(b.name)}》</option>`).join('');
   }
 
-  let fellBack = false;
-  if (boardBookId && !list.some((b) => String(b.bookId) === boardBookId)) {
-    boardBookId = '';
-    fellBack = true;
-  }
+  // 选哪一本的规则抽在 book-priority.js（那边有单测）：
+  // 用户没动过下拉就跟随优先级作品，动过就尊重用户，选中的书当天没数据则退回全部。
+  const decided = window.BookPriority
+    ? window.BookPriority.resolveBoardBookId({
+      current: boardBookId,
+      touched: boardBookTouched,
+      priority: priorityBoardBookId(),
+      available: list.map((b) => String(b.bookId)),
+    })
+    : { id: boardBookId, fellBack: false };
+  boardBookId = decided.id;
 
   sel.value = boardBookId;
   sel.disabled = list.length === 0;
   // 单本视图下副标题已写明书名，这里不再重复「共 N 部作品」
-  $('#boardScopeHint').textContent = fellBack
+  $('#boardScopeHint').textContent = decided.fellBack
     ? '这本书在这一天还没有记录，已切回全部作品'
-    : (!boardBookId && list.length ? `共 ${list.length} 部作品` : '');
+    : (!boardBookId && list.length
+      ? `共 ${list.length} 部作品`
+      : (boardBookId && !boardBookTouched ? '已按创作中心的优先级自动定位' : ''));
 
-  return { fellBack };
+  return { fellBack: decided.fellBack };
 }
 
 function renderBoard() {
@@ -1834,7 +2387,12 @@ function renderBoard() {
   $('#btnPrevDay').hidden = older.length === 0;
 
   renderTotals(totalsBox, scoped.totals, single, cur.totals);
-  renderBookCards(booksBox, scoped.books, !!single);
+  // 优先级作品排在第一位：这是「点亮星标」在数据看板里的直接体现，
+  // 不依赖查看范围下拉——即使正在看全部作品，那一本也要在最前面
+  const boardBooks = window.BookPriority
+    ? window.BookPriority.sortForBoard(scoped.books, priorityBoardBookId())
+    : scoped.books;
+  renderBookCards(booksBox, boardBooks, !!single);
   renderSingleExtra(extraBox, single);
   renderBookChart(single);
 }
@@ -2089,6 +2647,8 @@ function renderSingleExtra(box, b) {
 
 $('#boardBook').addEventListener('change', (e) => {
   boardBookId = e.target.value || '';
+  // 用户亲手选过了：即使之后点了别处的星标，也不再自动把他拽走
+  boardBookTouched = true;
   renderBoard();
 });
 
@@ -2097,6 +2657,7 @@ $('#boardBooks').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-book]');
   if (!btn) return;
   boardBookId = btn.dataset.book;
+  boardBookTouched = true;
   renderBoard();
 });
 
@@ -2183,10 +2744,419 @@ async function captureStatsSnapshot(onProgress) {
   }
 }
 
+/* ------------------------------------------------------------ 道具获得
+ *
+ * 位置：数据看板里、现有统计内容的下方一栏（不再是独立页面）。
+ * 版式照作者后台「统计中心 → 道具获得」：选作品 + 查看 → 四张卡 → 趋势 → 明细。
+ *
+ * 平台只有四项：总推荐票 / 总月票 / 总打赏 / 总刀片。**没有「宝箱」**——
+ * 之前按猜测写过五项，多出来的那项永远读不到、只会显示「—」。
+ *
+ * 数据按「作品 + 统计日」存：道具必然是某一本书的，混在一起没有意义。
+ */
+
+/**
+ * 道具获得页的候选地址。
+ *
+ * 平台把它放在「作者钱包 → 统计中心」下面，具体路径改过版，所以这里给几个候选；
+ * 抓之前会逐个打开、检查页面里有没有「道具获得」四个字，命中就停。
+ * 用户在后台已经手动翻到这一页时，直接用当前页，不重新导航。
+ */
+const PROPS_URLS = [
+  'https://author.ciweimao.com/money_manage/index',
+  'https://author.ciweimao.com/money_manage/statistics',
+  'https://author.ciweimao.com/money_manage/prop',
+];
+
+/** 全部道具快照：[{ day, bookId, bookName, capturedAt, items, detail, scanned, raw }] */
+let propsSnapshots = [];
+let propsBusy = false;
+/** 道具区块当前看的粒度：7 / 30 / 0（0 = 按月，用全部历史近似） */
+let propsGrain = 7;
+
+/** 统计日（与数据看板同口径：6 点为界） */
+let propsTodayOverride = '';
+function propsToday() {
+  // 固定统计日的钩子只给界面测试用（见 __setPropsToday），生产流程里永远是空串
+  if (propsTodayOverride) return propsTodayOverride;
+  return window.Stats ? window.Stats.statDay() : new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * 供无 GUI 环境下的界面测试固定「统计日」。
+ *
+ * 不这么做的话，测试里的样例日期会随真实日期漂移：
+ * 今天写 2026-11-08，明天跑就变成「昨天」，差值全对不上，测试会假红。
+ */
+window.__setPropsToday = (day) => {
+  propsTodayOverride = String(day || '');
+  renderProps();
+};
+
+/** 可以查道具的书：必须带平台书号，否则后台选不到这本 */
+function propsBooks() {
+  return (Array.isArray(writerBooks) ? writerBooks : [])
+    .filter((b) => b && String(b.platformBookId || '').trim())
+    .map((b) => ({
+      bookId: String(b.platformBookId),
+      name: String(b.name || '未命名作品'),
+    }));
+}
+
+/** 用户亲手选过的作品；空串表示还没选过，此时跟随优先级作品 */
+let propsBookChosen = '';
+
+/**
+ * 当前选中的书。
+ *
+ * **不能直接读下拉框的 value**：下拉一旦填上选项，浏览器就会默认选第一项，
+ * 于是「没选过就跟随优先级作品」这条逻辑永远轮不到执行——
+ * 表现就是「点亮了星标，道具区块却盯着另一本书」。
+ * 所以用一个独立的标记记住「用户是否亲手选过」，和看板的 boardBookTouched 同一思路。
+ */
+function propsBookId() {
+  const list = propsBooks();
+  if (propsBookChosen && list.some((b) => b.bookId === propsBookChosen)) return propsBookChosen;
+  const priority = priorityBoardBookId();
+  if (priority && list.some((b) => b.bookId === priority)) return priority;
+  return list.length ? list[0].bookId : '';
+}
+
+function propsBookName(bookId) {
+  const hit = propsBooks().find((b) => b.bookId === String(bookId || ''));
+  return hit ? hit.name : '';
+}
+
+/** 这一天这本的快照 */
+function propsSnapshotOf(day, bookId) {
+  return window.PropsDiff.findDay(propsSnapshots, day, bookId);
+}
+
+async function loadPropsSnapshots() {
+  try {
+    const store = await window.api.data.read('props-snapshots.json');
+    const rows = store && Array.isArray(store.snapshots) ? store.snapshots : [];
+    // 丢掉没有作品归属的记录：道具必然是某一本书的，
+    // 早期版本没记 bookId 的那几条混进来会把别的书的数字显示到当前书上
+    propsSnapshots = rows.filter((s) => s && s.day && String(s.bookId || '').trim());
+  } catch (_) { propsSnapshots = []; }
+  syncPropsBookOptions();
+  renderProps();
+}
+
+/** 作品下拉：与看板的「查看范围」各自独立（后台道具页必须选一本，没有「全部」） */
+function syncPropsBookOptions() {
+  const sel = $('#propsBook');
+  if (!sel) return;
+  const list = propsBooks();
+  const sig = list.map((b) => `${b.bookId}:${b.name}`).join('|');
+  if (sel.dataset.sig !== sig) {
+    sel.dataset.sig = sig;
+    sel.innerHTML = list.length
+      ? list.map((b) => `<option value="${escapeHtml(b.bookId)}">《${escapeHtml(b.name)}》</option>`).join('')
+      : '<option value="">尚未读取作品</option>';
+  }
+  sel.disabled = list.length === 0;
+
+  const want = propsBookId();
+  if (want) sel.value = want;
+  const hint = $('#propsBookHint');
+  if (hint) {
+    hint.textContent = list.length
+      ? (list.length > 1 ? `共 ${list.length} 本可选` : '')
+      : '先在「创作中心」同步作者库，才能选作品';
+  }
+}
+
+/**
+ * 把道具区块画出来。
+ *
+ * 三块内容各自独立降级：卡片（数据）、趋势（本地累积）、明细（平台表格）。
+ * 平台明细经常是「暂无任何数据」，这不算失败，别把它画成错误。
+ */
+function renderProps() {
+  if (!window.PropsDiff) return;
+  syncPropsBookOptions();
+
+  const bookId = propsBookId();
+  const today = propsToday();
+  const snap = propsSnapshotOf(today, bookId);
+  const prev = window.PropsDiff.findPrevious(propsSnapshots, today, bookId);
+  const rows = window.PropsDiff.diffAgainst(prev ? prev.items : null, snap ? snap.items : {});
+
+  // ---- 四张卡 ----
+  const grid = $('#propsGrid');
+  if (grid) {
+    grid.innerHTML = rows.map((row) => {
+      const missing = row.value === null;
+      const diffLabel = !snap ? '今日尚未读取'
+        : prev ? `较前一日 ${window.PropsDiff.diffText(row.diff)}` : '首次读取，明日可对比';
+      return `
+        <div class="props-card">
+          <div class="props-card-head"><span class="props-label">${escapeHtml(row.label)}</span></div>
+          <div class="props-value${missing ? ' is-missing' : ''}">${escapeHtml(missing ? '—' : String(row.value))}</div>
+          <div class="props-diff" data-tone="${row.tone}">${escapeHtml(diffLabel)}</div>
+          <div class="props-hint">${escapeHtml(row.hint)}</div>
+        </div>`;
+    }).join('');
+  }
+
+  const empty = $('#propsEmptyInline');
+  if (empty) empty.hidden = !!snap;
+
+  // ---- 顶部状态标签 ----
+  const tag = $('#propsScanTag');
+  if (tag) {
+    if (!snap) tag.textContent = '今日未读取';
+    else {
+      const got = rows.filter((r) => r.value !== null).length;
+      tag.textContent = got === rows.length ? `${snap.day} 已读取` : `${snap.day} · 识别 ${got}/${rows.length}`;
+    }
+  }
+
+  // ---- 趋势 + 图例 ----
+  renderPropsChart(bookId, today);
+
+  // ---- 明细 ----
+  renderPropsDetail(snap);
+
+  // ---- 识别情况（折叠区，只在有内容时露出） ----
+  const note = $('#propsNote');
+  if (note) {
+    const raw = snap && Array.isArray(snap.raw) ? snap.raw : [];
+    const got = rows.filter((r) => r.value !== null).length;
+    if (!snap) {
+      note.hidden = true;
+    } else {
+      note.hidden = false;
+      const detailTag = $('#propsScanDetailTag');
+      if (detailTag) detailTag.textContent = `${got}/${rows.length} 项`;
+      $('#propsNoteText').textContent = got === rows.length
+        ? `四项全部识别成功，扫描了 ${snap.scanned || 0} 个文本块。`
+        : `识别到 ${got} 项，扫描了 ${snap.scanned || 0} 个文本块。没识别的显示为「—」，`
+          + '说明当前页面没有这几个字样，或者后台改版了。下面是实际读到的内容，可以截图反馈。';
+      $('#propsRaw').innerHTML = raw.length
+        ? raw.map((r) => `<div class="props-raw-row">${escapeHtml(r.key || '')}：`
+          + `${escapeHtml(r.text || '')}`
+          + `${r.ambiguous ? '（同一块里数字不唯一，已跳过）' : ''}</div>`).join('')
+        : '<div class="props-raw-row">没有命中任何关键词</div>';
+    }
+  }
+}
+
+/** 趋势图：四条线共用一套 Y 轴，量级差看得见 */
+function renderPropsChart(bookId, today) {
+  const box = $('#propsChartCanvas');
+  const legend = $('#propsLegend');
+  const sub = $('#propsChartSub');
+  if (!box || !window.Chart || !window.PropsDiff) return;
+
+  const grain = propsGrain;
+  const list = propsSnapshots.filter((s) => s && String(s.bookId || '') === String(bookId || ''));
+  const picked = grain > 0
+    ? window.PropsDiff.seriesFor(propsSnapshots, bookId, { days: grain, today })
+    : list.slice().sort((a, b) => String(a.day).localeCompare(String(b.day)));
+
+  const colors = ['--props-c1', '--props-c2', '--props-c3', '--props-c4'];
+  const series = window.PropsDiff.ITEMS.map((item, i) => ({
+    key: item.key,
+    label: item.short,
+    color: cssColor(colors[i], '#c89600'),
+    values: picked.map((s) => {
+      const v = s.items ? s.items[item.key] : null;
+      return v === null || v === undefined ? null : Number(v);
+    }),
+  }));
+
+  box.innerHTML = '';
+  if (!picked.length) {
+    box.innerHTML = '<div class="chart-empty">这本还没有任何道具快照，点「查看」抓一次就有了</div>';
+  } else {
+    window.Chart.multiLineChart(box, {
+      days: picked.map((s) => s.day),
+      series,
+    });
+  }
+
+  if (sub) {
+    sub.textContent = picked.length
+      ? `${grain > 0 ? `最近 ${grain} 天` : '全部历史（按月对照平台口径）'} · 共 ${picked.length} 天有记录 · 空白处表示那天没抓到`
+      : '按本地每天抓到的数据累积';
+  }
+
+  if (legend) {
+    legend.innerHTML = series.map((s) => `
+      <span class="props-legend-item">
+        <i style="background:${escapeHtml(s.color)}"></i>${escapeHtml(s.label)}
+      </span>`).join('');
+  }
+}
+
+/** 读 CSS 变量的实际值：SVG 属性不认 var()，必须拿到字符串 */
+function cssColor(varName, fallback) {
+  try {
+    const v = getComputedStyle(document.documentElement)
+      .getPropertyValue(varName).trim();
+    return v || fallback;
+  } catch (_) { return fallback; }
+}
+
+/** 明细表：平台有数据就画表，没有就说明「本期没有」 */
+function renderPropsDetail(snap) {
+  const box = $('#propsDetailBody');
+  if (!box) return;
+  const rows = snap && Array.isArray(snap.detail) ? snap.detail : [];
+  if (!rows.length) {
+    box.innerHTML = '<div class="props-detail-empty">'
+      + (snap ? '平台本期没有道具获得明细' : '读取一次后显示')
+      + '</div>';
+    return;
+  }
+  const cols = rows[0].cols && rows[0].cols.length ? rows[0].cols : [];
+  const head = cols.length
+    ? `<thead><tr>${cols.map((c) => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead>`
+    : '';
+  const body = rows.map((r) => `<tr>${r.cells.map((c) => `<td>${escapeHtml(c)}</td>`).join('')}</tr>`).join('');
+  box.innerHTML = `<div class="props-detail-scroll"><table class="props-table">${head}<tbody>${body}</tbody></table></div>`;
+}
+
+async function savePropsSnapshot(snap) {
+  propsSnapshots = window.PropsDiff.mergeSnapshot(propsSnapshots, snap);
+  await window.api.data.write('props-snapshots.json', { snapshots: propsSnapshots });
+  renderProps();
+}
+
+/**
+ * 去作者后台读一次道具获得。
+ *
+ * 三步：找到道具获得页 → 选作品并点「查看」→ 读四项数字。
+ * 全程只读（除了点平台自己的「查看」，那是重新查询，不改任何数据）。
+ */
+async function captureProps() {
+  if (propsBusy) return;
+  const btn = $('#btnPropsRefresh');
+  const notice = $('#propsNotice');
+  const bookId = propsBookId();
+
+  const say = (text, isError) => {
+    if (!notice) return;
+    notice.hidden = false;
+    notice.classList.toggle('is-error', !!isError);
+    notice.textContent = text;
+  };
+
+  if (!bookId) {
+    say('还没有可选的作品。先到「创作中心」点「同步作者库」，再来读道具数据。', true);
+    return;
+  }
+  const state = await window.api.browser.state().catch(() => null);
+  if (!state || !state.url) {
+    say('请先在「抓取与同步」打开并登录作者后台，再回到这里点「查看」。', true);
+    return;
+  }
+  if (state.isLoginPage) {
+    say('当前停在登录页，请先完成登录。', true);
+    return;
+  }
+
+  propsBusy = true;
+  if (btn) { btn.disabled = true; btn.textContent = '读取中…'; }
+  notice && (notice.hidden = true);
+
+  try {
+    // 1) 找到道具获得页：先看当前页，不是再逐个试候选地址
+    say('正在定位「道具获得」页面…');
+    const looksLikeProps = async () => {
+      const hit = await window.api.browser
+        .evalInPage('document.body ? document.body.innerText.indexOf("道具获得") >= 0 : false')
+        .catch(() => false);
+      return !!hit;
+    };
+
+    let onPropsPage = await looksLikeProps();
+    if (!onPropsPage) {
+      for (const url of PROPS_URLS) {
+        say('正在打开 ' + url.replace(/^https?:\/\/[^/]+/, ''));
+        try {
+          await window.api.browser.goto(url);
+          await window.api.browser.waitIdle(15000);
+        } catch (_) { continue; }
+        const where = await window.api.browser.evalInPage('location.href').catch(() => '');
+        if (/\/login/i.test(String(where || ''))) throw new Error('登录态已失效，请重新登录作者后台');
+        if (await looksLikeProps()) { onPropsPage = true; break; }
+      }
+    }
+    if (!onPropsPage) {
+      throw new Error('没找到「道具获得」页面。可以在后台手动翻到该页（作者钱包 → 统计中心 → 道具获得），'
+        + '再回来点「查看」。');
+    }
+
+    // 2) 选作品并点「查看」
+    say('正在切换作品…');
+    const sel = await window.api.browser
+      .evalInPage(window.CiweimaoAdapter.pageSource('selectPropsBook', bookId))
+      .catch(() => null);
+    if (sel && sel.clicked) {
+      // 点完「查看」页面会重新请求一次，等它回来
+      await window.api.browser.waitIdle(15000);
+      await new Promise((r) => setTimeout(r, 900));
+    } else if (sel && !sel.picked) {
+      say('后台的作品下拉里没有这本书（可能刚建还没同步）。读的是当前默认作品的数据。');
+    }
+
+    // 3) 读数
+    say('正在读取…');
+    const res = await window.api.browser
+      .evalInPage(window.CiweimaoAdapter.pageSource('extractProps'))
+      .catch(() => null);
+    if (!res) throw new Error('页面读取失败，可能是后台改版了');
+
+    const items = window.PropsDiff.normalizeItems(res.items || {});
+    const snap = {
+      day: propsToday(),
+      bookId,
+      bookName: propsBookName(bookId) || String(res.bookId || ''),
+      capturedAt: new Date().toISOString(),
+      items,
+      detail: Array.isArray(res.detail) ? res.detail : [],
+      raw: Array.isArray(res.raw) ? res.raw : [],
+      scanned: Number(res.scanned) || 0,
+    };
+    await savePropsSnapshot(snap);
+
+    const got = window.PropsDiff.keys().filter((k) => items[k] !== null).length;
+    const total = window.PropsDiff.keys().length;
+    say(got === total
+      ? `读取完成：${snap.day}，四项都拿到了。`
+      : `读取完成：${snap.day}，认出 ${got}/${total} 项。没认出的请看下方「识别情况」。`,
+    got !== total);
+  } catch (err) {
+    say('读取失败：' + ipcError(err), true);
+  } finally {
+    propsBusy = false;
+    if (btn) { btn.disabled = false; btn.textContent = '查看'; }
+  }
+}
+
+$('#btnPropsRefresh').addEventListener('click', () => captureProps());
+
+$('#propsBook').addEventListener('change', (e) => {
+  // 记下用户的选择，之后就固定看这本，不再被优先级抢走
+  propsBookChosen = e.target.value || '';
+  renderProps();
+});
+
+$('#propsGrain').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-grain]');
+  if (!btn) return;
+  propsGrain = Number(btn.dataset.grain) || 0;
+  $$('#propsGrain button').forEach((b) => b.classList.toggle('is-active', b === btn));
+  renderPropsChart(propsBookId(), propsToday());
+});
+
 // 每日 06:00 自动更新：已过边界且当天还没快照时补采一次。
 // 前提是用户已建立过基准（至少一份快照），避免首次启动就被自动流程惊到。
 let lastAutoDay = null;
-
 async function tickAutoCapture() {
   if (!snapshots.length) return;
   if (statsBusy) return;
@@ -3491,14 +4461,18 @@ function renderWriterBookCard(book, i) {
     ? `<img class="writer-book-cover-img" src="${escapeHtml(cover)}" alt="" loading="lazy" />`
     : '';
   const id = escapeHtml(String(book.bookId));
+  // 优先级星标放封面左上角：它是「这本书排第一」的开关，位置要固定、好找。
+  // 远程作品不能点亮（没有本地归档，数据看板也定位不到）。
   const pinButton = book.source === 'remote' ? '' : `
       <button class="writer-book-pin${book.pinned ? ' is-pinned' : ''}" data-writer-pin="${id}"
-              type="button" title="${book.pinned ? '取消置顶' : '置顶到上方栏'}" aria-label="${book.pinned ? '取消置顶' : '置顶到上方栏'}"
+              type="button" title="${book.pinned ? '取消优先级' : '设为优先：创作中心排第一、数据看板默认显示这本'}"
+              aria-label="${book.pinned ? '取消优先级' : '设为优先'}"
               aria-pressed="${book.pinned ? 'true' : 'false'}">${book.pinned ? '★' : '☆'}</button>`;
   return `
     <article class="writer-book-card${book.pinned ? ' is-pinned' : ''}" data-writer-book="${id}">
       <div class="writer-book-cover tone-${i % 5}${cover ? ' has-cover' : ''}">
         ${coverTag}
+        ${pinButton}
         <span class="writer-book-source">${writerSourceLabel(book.source)}</span>
         <span class="writer-book-feather">✎</span>
       </div>
@@ -3506,7 +4480,6 @@ function renderWriterBookCard(book, i) {
         <h3>${escapeHtml(book.name || '未命名作品')}</h3>
         <div class="writer-book-meta">
           <p>${writerFormatNumber(book.words)} 字 · ${Number(book.chapters) || 0} 章</p>
-          ${pinButton}
         </div>
       </div>
       <button class="writer-book-delete" data-writer-delete="${id}" type="button" title="从本地作品库删除">•••</button>
@@ -3515,9 +4488,16 @@ function renderWriterBookCard(book, i) {
 }
 
 function renderWriterBooks() {
-  const pinned = writerBooks.filter((book) => !!book.pinned && book.source !== 'remote')
-    .sort((a, b) => (Number(b.pinnedAt) || 0) - (Number(a.pinnedAt) || 0));
-  const other = writerBooks.filter((book) => !book.pinned || book.source === 'remote');
+  // 分组规则在 book-priority.js 里（有单测）：优先级作品 vs 其他作品。
+  // 数据看板用的是同一份规则，避免两边对「哪本是优先级」判断不一致。
+  const group = window.BookPriority
+    ? window.BookPriority.partition(writerBooks)
+    : {
+      priority: writerBooks.filter((b) => !!b.pinned && b.source !== 'remote'),
+      other: writerBooks.filter((b) => !b.pinned || b.source === 'remote'),
+    };
+  const pinned = group.priority;
+  const other = group.other;
   const pinnedPanel = $('#writerPinnedPanel');
   const pinnedGrid = $('#writerPinnedGrid');
   const grid = $('#writerBookGrid');
@@ -4328,15 +5308,40 @@ $('#writerLibrary').addEventListener('click', async (e) => {
     pin.disabled = true;
     try {
       const result = await window.api.writer.pin(book.bookId, !book.pinned);
-      if (!result || !result.result) throw new Error('置顶状态保存失败');
+      if (!result || !result.result) throw new Error('优先级状态保存失败');
+      const on = !!result.result.pinned;
+
+      // 主进程已经把写入后的完整书目一起返回了，直接用它重画。
+      // 比再发一次 list 更稳：不会再出现「pin 成功但界面还是 0 本」的空档。
+      if (Array.isArray(result.books)) {
+        const ids = new Set(result.books.flatMap((b) => [b.bookId, b.platformBookId]
+          .filter(Boolean).map(String)));
+        writerRemoteBooks = writerRemoteBooks.filter((b) => !ids.has(String(b.bookId)));
+        writerBooks = result.books.concat(writerRemoteBooks);
+        renderWriterBooks();
+      } else {
+        await loadWriterBooks();
+      }
+
+      // 看板刷新单独兜起来：它要用快照、图表等一堆东西，
+      // 万一这里抛错，不能连带把「优先级已保存」这个结果变成失败提示。
+      try {
+        await refreshPriorityInfo();
+        if (on) boardBookTouched = false;
+        renderBoard();
+      } catch (err) {
+        console.warn('刷新数据看板失败', err);
+      }
+
       writerNotice(
-        result.result.pinned ? `《${book.name}》已置顶` : `《${book.name}》已取消置顶`,
+        on
+          ? `《${book.name}》已设为优先：创作中心排第一，数据看板默认显示这本`
+          : `《${book.name}》已取消优先`,
         false,
         3000,
       );
-      await loadWriterBooks();
     } catch (err) {
-      writerNotice(`置顶失败：${err.message || err}`, true);
+      writerNotice(`设置优先级失败：${err.message || err}`, true);
       pin.disabled = false;
     }
     return;
@@ -5194,7 +6199,7 @@ $('#writingRange').addEventListener('click', async (e) => {
   renderWritingStats();
 });
 
-// ------------------------------------------------------------ 插件中心
+// ------------------------------------------------------------ 功能中心
 
 let pluginItems = [];
 let activePlugin = null;
@@ -5332,20 +6337,30 @@ async function refreshBuiltInIncomeEditorStat() {
   renderPluginEditorStats();
 }
 
-function renderPlugins() {
-  $('#pluginEmpty').hidden = !!pluginItems.length;
-  $('#pluginGrid').innerHTML = pluginItems.map((plugin) => `
+/**
+ * 功能中心的卡片渲染。
+ *
+ * 内置功能和自己导入的扩展分两组画：内置的没有「删除」，只有开关——
+ * 它们没有重新安装的入口，删掉就只能重装软件。分组也让用户一眼看出
+ * 哪些是软件自带、哪些是自己装的。
+ */
+function renderPluginCard(plugin) {
+  const builtin = !!plugin.builtin;
+  return `
     <article class="plugin-card ${plugin.enabled ? '' : 'is-disabled'} ${plugin.invalid ? 'is-invalid' : ''}">
       <div class="plugin-card-top">
         <div class="plugin-icon">${escapeHtml((plugin.name || '?').slice(0, 1))}</div>
-        <div class="plugin-title"><h3>${escapeHtml(plugin.name)}</h3><span>v${escapeHtml(plugin.version || '—')}</span></div>
+        <div class="plugin-title">
+          <h3>${escapeHtml(plugin.name)}${builtin ? '<span class="plugin-builtin-tag">内置</span>' : ''}</h3>
+          <span>v${escapeHtml(plugin.version || '—')}</span>
+        </div>
         ${plugin.invalid ? '<span class="tag">无效</span>' : `
-          <label class="plugin-switch" title="启用或停用插件">
+          <label class="plugin-switch" title="${plugin.enabled ? '关闭这个功能' : '开启这个功能'}">
             <input type="checkbox" data-plugin-enable="${escapeHtml(plugin.id)}" ${plugin.enabled ? 'checked' : ''} />
             <i></i>
           </label>`}
       </div>
-      <p>${escapeHtml(plugin.description || '没有填写插件说明')}</p>
+      <p>${escapeHtml(plugin.description || '没有填写说明')}</p>
       <div class="plugin-permissions">
         ${(plugin.permissions || []).length
           ? plugin.permissions.map((p) => `<span>${escapeHtml(pluginPermissionLabel(p))}</span>`).join('')
@@ -5355,10 +6370,33 @@ function renderPlugins() {
         <span>${plugin.author ? `作者：${escapeHtml(plugin.author)}` : escapeHtml(plugin.id)}</span>
         <button class="btn primary btn-sm" data-plugin-open="${escapeHtml(plugin.id)}"
                 ${!plugin.enabled || plugin.invalid ? 'disabled' : ''} type="button">打开</button>
-        <button class="link-btn" data-plugin-remove="${escapeHtml(plugin.id)}" type="button">删除</button>
+        ${builtin
+          ? '<span class="plugin-builtin-note" title="内置功能不能删除，只能停用">随软件提供</span>'
+          : `<button class="link-btn" data-plugin-remove="${escapeHtml(plugin.id)}" type="button">删除</button>`}
       </div>
     </article>
-  `).join('');
+  `;
+}
+
+function renderPlugins() {
+  const builtin = pluginItems.filter((p) => p.builtin);
+  const external = pluginItems.filter((p) => !p.builtin);
+  $('#pluginEmpty').hidden = !!pluginItems.length;
+
+  const group = (title, list, hint) => {
+    if (!list.length) return '';
+    return `
+      <div class="plugin-group">
+        <div class="plugin-group-head">
+          <h3>${escapeHtml(title)}</h3>
+          <span>${escapeHtml(hint)}</span>
+        </div>
+        <div class="plugin-grid">${list.map(renderPluginCard).join('')}</div>
+      </div>`;
+  };
+
+  $('#pluginGrid').innerHTML = group('内置功能', builtin, `${builtin.length} 项 · 可开关，不可删除`)
+    + group('自己装的扩展', external, `${external.length} 个 · 来自导入或开发模板`);
 }
 
 function syncPluginNavigation() {
@@ -5936,8 +6974,19 @@ $('#pluginGrid').addEventListener('click', async (e) => {
   const remove = e.target.closest('[data-plugin-remove]');
   if (!remove) return;
   const plugin = pluginItems.find((item) => item.id === remove.dataset.pluginRemove);
-  if (!plugin || !confirm(`确定删除插件“${plugin.name}”吗？\n\n插件自己的存储数据会保留。`)) return;
-  await window.api.plugins.remove(plugin.id);
+  if (!plugin) return;
+  // 内置功能在卡片上就没有删除按钮，这里再兜一层：万一界面漏了也不该让主进程抛错
+  if (plugin.builtin) {
+    pluginNotice('内置功能不能删除，请在卡片右上角把它关掉', true);
+    return;
+  }
+  if (!confirm(`确定删除扩展“${plugin.name}”吗？\n\n扩展自己的存储数据会保留。`)) return;
+  try {
+    await window.api.plugins.remove(plugin.id);
+  } catch (err) {
+    pluginNotice('删除失败：' + ipcError(err), true);
+    return;
+  }
   await loadPlugins();
 });
 
@@ -5950,7 +6999,7 @@ $('#btnPluginImport').addEventListener('click', async () => {
   const result = await window.api.plugins.importZip();
   if (!result || result.canceled) return;
   if (!result.ok) { pluginNotice(`导入失败：${result.error}`, true); return; }
-  pluginNotice(`插件“${result.plugin.name}”导入成功`);
+  pluginNotice(`扩展“${result.plugin.name}”导入成功`);
   await loadPlugins();
 });
 $('#btnPluginTemplate').addEventListener('click', async () => {
@@ -5975,6 +7024,164 @@ async function refreshStoragePanel() {
     $('#kvUserData2').textContent = status.path;
   } catch (_) { /* ignore */ }
 }
+
+/* ------------------------------------------------------------ 数据管理（清除 / 恢复） */
+
+/**
+ * 「清除所有数据」的确认文案。
+ *
+ * 单独抽出来是为了能直接单测：这段话里必须把「清什么」「备份在哪」「会重启」
+ * 三件事都写清楚——清库是不可逆操作，不能只写一句「确定吗」。
+ */
+function dataResetConfirm(config) {
+  const scope = Array.isArray(config && config.scope) ? config.scope : [];
+  return {
+    badge: '危险操作',
+    title: '清除所有数据并重启？',
+    lead: '清完之后软件会像刚拿到手一样：没有作品、没有登录、没有偏好设置。'
+      + '清除前会自动备份一份，万一清错了可以在「数据管理」里恢复。',
+    steps: [
+      '会被清除：' + scope.join('、'),
+      `备份位置：${(config && config.backupRoot) || '本机数据备份目录'}`,
+      '清除后立刻自动重启，无法取消',
+    ],
+    secondary: { label: '先不清除' },
+    primary: { label: '清除并重启' },
+  };
+}
+
+/** 恢复确认：说清楚「从哪一份恢复」「恢复范围」「当前状态也会被备份」 */
+function dataRestoreConfirm(backup) {
+  const when = backup && backup.createdAt
+    ? new Date(backup.createdAt).toLocaleString('zh-CN')
+    : '未知时间';
+  return {
+    badge: '恢复数据',
+    title: '用这份备份覆盖当前数据？',
+    lead: `选中的备份创建于 ${when}，共 ${(backup && backup.files) || 0} 个文件、${(backup && backup.sizeText) || '未知大小'}。`,
+    steps: [
+      '恢复范围：作品库、章节草稿、敏感词库、插件与设置、界面偏好、密码本',
+      '当前的登录态不在备份里，恢复后需要重新登录作者后台',
+      '恢复前会自动把现在的状态再备份一份，选错了能退回来',
+      '恢复完成后自动重启',
+    ],
+    secondary: { label: '取消' },
+    primary: { label: '恢复并重启' },
+  };
+}
+
+let dataBackups = [];
+
+function renderDataBackups() {
+  const box = $('#dataBackupList');
+  if (!box) return;
+  if (!dataBackups.length) {
+    box.hidden = true;
+    box.innerHTML = '';
+    return;
+  }
+  box.hidden = false;
+  const rows = dataBackups.map((b) => {
+    const when = b.createdAt ? new Date(b.createdAt).toLocaleString('zh-CN') : '未知时间';
+    const why = b.reason === 'before-reset' ? '清除前自动备份'
+      : b.reason === 'restore-pre' ? '恢复前自动备份'
+        : b.reason === 'manual' ? '手动备份' : '备份';
+    return `
+      <div class="data-backup-row" data-backup="${escapeHtml(b.name)}">
+        <div class="data-backup-main">
+          <div class="data-backup-when">${escapeHtml(when)}</div>
+          <div class="data-backup-meta">${escapeHtml(why)} · ${b.files || 0} 个文件 · ${escapeHtml(b.sizeText || '')}</div>
+        </div>
+        <button class="btn ghost" data-backup-restore="${escapeHtml(b.name)}" type="button">恢复到这一份</button>
+      </div>`;
+  }).join('');
+  box.innerHTML = `<div class="data-backup-title">本机备份（${dataBackups.length} 份，新的在前）</div>${rows}`;
+}
+
+async function refreshDataManage() {
+  const rootEl = $('#dataBackupRoot');
+  try {
+    const res = await window.api.data.backups();
+    dataBackups = res.backups || [];
+    if (rootEl) rootEl.textContent = res.root || '—';
+    renderDataBackups();
+  } catch (err) {
+    dataBackups = [];
+    if (rootEl) rootEl.textContent = '读取失败：' + ipcError(err);
+    renderDataBackups();
+  }
+}
+
+/** 清除后重启。写进一个函数，方便以后改成「先提示再重启」而不动调用点 */
+async function relaunchNow() {
+  try { await window.api.app.relaunch(); } catch (_) { /* 主进程已经在退了 */ }
+}
+
+$('#btnBackupNow').addEventListener('click', async () => {
+  const btn = $('#btnBackupNow');
+  const hint = $('#dataManageHint');
+  btn.disabled = true;
+  try {
+    const res = await window.api.data.backupNow();
+    if (hint) {
+      hint.hidden = false;
+      hint.textContent = `已备份 ${res.files} 个文件（${res.sizeText}），备份名 ${res.name}`;
+    }
+    await refreshDataManage();
+  } catch (err) {
+    if (hint) { hint.hidden = false; hint.textContent = '备份失败：' + ipcError(err); }
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$('#btnDataReset').addEventListener('click', async () => {
+  const res = await window.api.data.backups().catch(() => ({ root: '' }));
+  const cfg = dataResetConfirm({
+    backupRoot: res.root,
+    scope: [
+      '作品库与章节草稿', '敏感词库', '插件与功能设置', '统计数据快照',
+      '界面偏好', '密码本', '登录态',
+    ],
+  });
+  showGuideDialog({
+    ...cfg,
+    primary: {
+      label: cfg.primary.label,
+      onClick: async () => {
+        try {
+          await window.api.data.reset();
+          await relaunchNow();
+        } catch (err) {
+          alert('清除失败：' + ipcError(err));
+        }
+      },
+    },
+  });
+});
+
+$('#dataBackupList').addEventListener('click', (event) => {
+  const btn = event.target.closest('[data-backup-restore]');
+  if (!btn) return;
+  const name = btn.dataset.backupRestore;
+  const backup = dataBackups.find((b) => b.name === name);
+  if (!backup) return;
+  const cfg = dataRestoreConfirm(backup);
+  showGuideDialog({
+    ...cfg,
+    primary: {
+      label: cfg.primary.label,
+      onClick: async () => {
+        try {
+          await window.api.data.restore(name);
+          await relaunchNow();
+        } catch (err) {
+          alert('恢复失败：' + ipcError(err));
+        }
+      },
+    },
+  });
+});
 
 /* ------------------------------------------------------------ 窗口行为 */
 
@@ -6302,6 +7509,9 @@ function maybeShowAfterLoginGuide(state) {
     reviewStrict = !!(window.Prefs && window.Prefs.get('reviewStrict', false));
     renderReviewStrict();
     window.Theme.boot();
+    // 侧边栏顺序依赖已加载的偏好，必须在 Prefs.ready() 之后应用，
+    // 否则首屏会先按 HTML 里的默认顺序闪一下再跳到用户排好的顺序
+    initNavCustom();
   } catch (_) { /* ignore */ }
 
   try {
@@ -6329,6 +7539,7 @@ function maybeShowAfterLoginGuide(state) {
   refreshExecLog();
   refreshAiPanel();
   await refreshStoragePanel();
+  await refreshDataManage();
   await loadPlugins();
 
   try {
@@ -6354,7 +7565,11 @@ function maybeShowAfterLoginGuide(state) {
     const store = await window.api.data.read('stats-snapshots.json');
     if (store && Array.isArray(store.snapshots)) snapshots = store.snapshots;
   } catch (_) { snapshots = []; }
+  // 优先级要先查到再画看板：否则开机直接进「数据看板」时，
+  // 手里没有书目也没有缓存，默认定位不到优先级作品
+  await refreshPriorityInfo();
   renderBoard();
+  await loadPropsSnapshots();
 
   try {
     const rs = await window.api.data.read('rank-history.json');
@@ -6373,4 +7588,59 @@ function maybeShowAfterLoginGuide(state) {
   // 声明卡片还开着就先挂着，关掉之后由 closeFreeNotice 接上。
   if ($('#freeNotice').hidden) setTimeout(maybeShowStartGuide, 700);
   else startGuidePending = true;
+
+  // 版本变化询问排在引导之后：先让用户看到声明/引导，再问数据继承，
+  // 两个弹层抢同一个位置会互相盖住。声明卡片可能一直开着，所以这里轮询等它关。
+  scheduleInheritAsk(0);
 })();
+
+/** 等声明/引导卡片关掉再问版本继承，最多等 30 秒（20 次 × 1.5s） */
+function scheduleInheritAsk(attempt) {
+  if ($('#guideDialog').hidden && $('#freeNotice').hidden) {
+    maybeAskInheritData();
+    return;
+  }
+  if (attempt >= 20) return;
+  setTimeout(() => scheduleInheritAsk(attempt + 1), 1500);
+}
+
+/**
+ * 手动装了新版本时问一句「要不要接着用旧数据」。
+ *
+ * 只在主进程判定为 manual-update 时才问；软件自己装的更新（auto-update）
+ * 与首次运行（first-run）都由主进程直接返回 ask=false，不打扰用户。
+ *
+ * 「继承」= 什么都不做：数据本来就在磁盘上，新版本读的是同一个目录。
+ * 「不继承」= 先备份再清空，然后重启，等于用新版本从零开始。
+ */
+async function maybeAskInheritData() {
+  if (!window.api.version || !$('#guideDialog').hidden || !$('#freeNotice').hidden) return;
+  let info;
+  try { info = await window.api.version.change(); } catch (_) { return; }
+  if (!info || !info.ask) return;
+
+  const dirText = info.direction === 'down' ? '降级' : '升级';
+  showGuideDialog({
+    badge: `版本${dirText}`,
+    title: '要不要接着用旧版本的数据？',
+    lead: `检测到版本从 ${info.from || '（未知）'} 变到 ${info.to}，看起来是你自己下载安装的。`
+      + '如果你的作品、敏感词库和设置都在原来那台电脑的这个软件里，选「继承」就能直接用。',
+    steps: [
+      '继承：作品库、章节草稿、敏感词库、密码本、偏好全部保留，行为与升级前一样',
+      '不继承：先自动备份一份，再清空全部数据并从空白开始，适合想重测完整流程',
+      '两种情况都不会动你导出到磁盘上的 TXT 文件',
+    ],
+    secondary: {
+      label: '不继承，从空白开始',
+      onClick: async () => {
+        try {
+          await window.api.version.resetData();
+          await relaunchNow();
+        } catch (err) {
+          alert('清除旧数据失败：' + ipcError(err));
+        }
+      },
+    },
+    primary: { label: '继承旧数据' },
+  });
+}

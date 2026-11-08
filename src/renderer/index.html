@@ -39,7 +39,7 @@
         <button class="nav-item" data-view="rank">平台榜单</button>
         <button class="nav-item" data-view="miaoyu">喵语数据</button>
         <button class="nav-item" data-view="sync">抓取与同步</button>
-        <button class="nav-item" data-view="plugins">插件中心</button>
+        <button class="nav-item" data-view="plugins">功能中心</button>
         <button class="nav-item" data-view="settings">设置</button>
       </nav>
 
@@ -83,9 +83,23 @@
           <select class="select select-sm" id="vaultPick"></select>
           <button class="btn primary btn-sm" id="btnVaultFill">填入</button>
           <button class="btn ghost btn-sm" id="btnVaultCapture" title="把页面里已经填好的账号密码存进密码本">记住这次输入</button>
-          <button class="btn ghost btn-sm" id="btnVaultDelete" title="删除选中的记录">删除</button>
+          <button class="btn ghost btn-sm" id="btnVaultBind" title="读取当前后台的作者名，绑到最近用过的那条记录">认作者名</button>
+          <button class="btn ghost btn-sm" id="btnVaultManage" title="多选管理：标作者名、批量删除">管理</button>
           <button class="btn ghost btn-sm" id="btnVaultHelp" title="再看一次密码本的用法">怎么用</button>
           <span class="vault-hint" id="vaultHint"></span>
+
+          <!-- 多选管理：必须内嵌在工具条里，不能用全屏遮罩——
+               平台页面是原生视图、盖在 HTML 之上，遮罩会被整个挡住 -->
+          <div class="vault-manage" id="vaultManage" hidden>
+            <div class="vault-manage-head">
+              <span id="vaultManageCount">已选 0 条</span>
+              <button class="link-btn" id="btnVaultSelectAll" type="button">全选</button>
+              <button class="link-btn" id="btnVaultSelectNone" type="button">清空选择</button>
+              <button class="link-btn" id="btnVaultDeletePicked" type="button">删除所选</button>
+              <button class="link-btn" id="btnVaultManageClose" type="button">收起</button>
+            </div>
+            <div class="vault-manage-list" id="vaultManageList"></div>
+          </div>
 
           <!-- 首次使用说明：做成工具条里的第二行，而不是全屏弹窗。
                平台页面是原生视图、盖在 HTML 之上，全屏遮罩会被它挡住；
@@ -253,20 +267,20 @@
             <div class="writer-library-filters" role="tablist" aria-label="作品筛选">
               <button class="writer-library-filter is-active" data-writer-filter="all" type="button" role="tab" aria-selected="true">全部作品</button>
               <button class="writer-library-filter" data-writer-filter="pinned" type="button" role="tab" aria-selected="false">
-                置顶书籍 <span class="writer-library-filter-count" id="writerPinnedCount">0</span>
+                优先级作品 <span class="writer-library-filter-count" id="writerPinnedCount">0</span>
               </button>
             </div>
             <div class="writer-notice" id="writerNotice" hidden></div>
             <section class="writer-pinned-panel" id="writerPinnedPanel" hidden>
               <div class="writer-pinned-head">
                 <div>
-                  <h3>置顶书籍</h3>
-                  <p>把正在连载的作品放在这里，打开作品更方便。</p>
+                  <h3>优先级作品</h3>
+                  <p>点亮封面上角的星标就会排到这里，数据看板也默认显示这一本。</p>
                 </div>
                 <span class="writer-pinned-badge" id="writerPinnedBadge">0 本</span>
               </div>
               <div class="writer-book-grid writer-pinned-grid" id="writerPinnedGrid"></div>
-              <div class="writer-pinned-empty" id="writerPinnedEmpty" hidden>还没有置顶书籍，点击作品卡片右下角的 ☆ 即可置顶。</div>
+              <div class="writer-pinned-empty" id="writerPinnedEmpty" hidden>还没有优先级作品。点作品封面左上角的 ☆，它就会排到最前面，数据看板也会默认看这一本。</div>
             </section>
             <div class="writer-other-label" id="writerOtherLabel">其他作品</div>
             <div class="writer-book-grid" id="writerBookGrid"></div>
@@ -619,6 +633,65 @@
           </div>
 
           <div class="notice" id="boardNotice" hidden></div>
+
+          <!-- ============ 道具获得 ============
+               版式照作者后台「统计中心 → 道具获得」的顺序：
+                 说明行 → 选作品 + 查看 → 四张卡 → 趋势 → 明细
+               平台只有这四项（推荐票 / 月票 / 打赏 / 刀片），没有「宝箱」。
+               刻意不做成 h2 大标题，用和上方一致的 panel 分节，视觉上仍是同一页。 -->
+          <div class="props-section" id="propsSection">
+            <div class="props-section-head">
+              <div>
+                <h3>道具获得</h3>
+                <p class="hint-line" id="propsSettle">平台按每日 06:00 至次日 06:00 结算，此处的数字属于同一个统计日</p>
+              </div>
+              <span class="tag" id="propsScanTag">未读取</span>
+            </div>
+
+            <div class="scope-bar props-scope">
+              <span class="scope-label">选择作品</span>
+              <select class="select" id="propsBook" disabled>
+                <option value="">尚未读取作品</option>
+              </select>
+              <button class="btn primary btn-sm" id="btnPropsRefresh">查看</button>
+              <span class="scope-hint" id="propsBookHint"></span>
+            </div>
+
+            <div class="props-grid" id="propsGrid"></div>
+
+            <div id="propsEmptyInline" class="hint-line props-empty-inline">
+              还没有这本的道具数据。点「查看」会去作者后台读一次当日的四项数字。
+            </div>
+
+            <div class="props-chart" id="propsChartBox">
+              <div class="chart-head">
+                <div>
+                  <div class="chart-title">道具获得趋势</div>
+                  <div class="chart-sub" id="propsChartSub">按本地每天抓到的数据累积</div>
+                </div>
+                <div class="segmented" id="propsGrain">
+                  <button type="button" data-grain="7" class="is-active">近7日</button>
+                  <button type="button" data-grain="30">近30日</button>
+                  <button type="button" data-grain="0">按月</button>
+                </div>
+              </div>
+              <div class="chart-canvas" id="propsChartCanvas"></div>
+              <div class="props-legend" id="propsLegend"></div>
+            </div>
+
+            <div class="props-detail" id="propsDetailBox">
+              <div class="chart-title">道具获得明细</div>
+              <div class="props-detail-body" id="propsDetailBody"></div>
+            </div>
+
+            <div class="panel props-note" id="propsNote" hidden>
+              <div class="panel-head"><h3>识别情况</h3><span class="tag" id="propsScanDetailTag">—</span></div>
+              <p class="hint-line" id="propsNoteText"></p>
+              <div class="props-raw" id="propsRaw"></div>
+            </div>
+
+            <div class="notice" id="propsNotice" hidden></div>
+          </div>
         </section>
 
         <section class="view" data-view="export">
@@ -831,31 +904,32 @@
           <div id="pluginManager">
             <div class="plugin-head">
               <div>
-                <h2>插件中心</h2>
-                <p>把自定义功能装进独立沙箱，需要什么就自己做什么。</p>
+                <h2>功能中心</h2>
+                <p>自带的功能都在这里，想用哪个就打开哪个；也可以把自己写的扩展装进来。</p>
               </div>
               <div class="plugin-actions">
                 <button class="btn primary" id="btnPluginTemplate" type="button">＋ 创建开发模板</button>
-                <button class="btn ghost" id="btnPluginImport" type="button">导入插件包</button>
-                <button class="btn ghost" id="btnPluginFolder" type="button">打开插件目录</button>
+                <button class="btn ghost" id="btnPluginImport" type="button">导入扩展包</button>
+                <button class="btn ghost" id="btnPluginFolder" type="button">打开目录</button>
                 <button class="btn ghost" id="btnPluginReload" type="button">重新加载</button>
               </div>
             </div>
             <div class="plugin-safety">
-              插件页面运行在隔离环境中，只能使用清单里声明并由宿主放行的接口。安装第三方插件前仍应确认来源可信。
+              「内置功能」随软件提供，可以随时开关，但不会删除——删掉就得重装整个软件。
+              自己导入的扩展运行在隔离环境中，只能使用清单里声明并由宿主放行的接口，安装前仍应确认来源可信。
             </div>
             <div class="writer-notice" id="pluginNotice" hidden></div>
-            <div class="plugin-grid" id="pluginGrid"></div>
+            <div class="plugin-groups" id="pluginGrid"></div>
             <div class="writer-empty" id="pluginEmpty" hidden>
               <div class="writer-empty-icon">⌘</div>
-              <h3>还没有安装插件</h3>
-              <p>点击“创建开发模板”，就能得到一个可以直接修改的示例插件。</p>
+              <h3>功能中心是空的</h3>
+              <p>内置功能会在启动时自动装回来；如果没有，试着点「重新加载」。</p>
             </div>
           </div>
 
           <div class="plugin-host" id="pluginHost" hidden>
             <div class="plugin-hostbar">
-              <button class="writer-tool" id="btnPluginBack" type="button">← 插件中心</button>
+              <button class="writer-tool" id="btnPluginBack" type="button">← 功能中心</button>
               <strong id="pluginHostTitle">插件</strong>
               <span id="pluginHostStatus"></span>
               <button class="writer-tool" id="btnPluginRefresh" type="button">刷新插件</button>
@@ -882,6 +956,44 @@
               <button type="button" data-close-behavior="minimize">最小化到托盘</button>
               <button type="button" data-close-behavior="quit">直接退出</button>
             </div>
+          </div>
+
+          <!-- 侧边栏调整：点「调整侧边栏」才露出 ▲▼×，保存后收起 -->
+          <div class="panel" id="panelNav">
+            <div class="panel-head"><h3>侧边栏</h3><span class="tag" id="navCustomTag">默认排列</span></div>
+            <p class="hint-line">
+              点「调整侧边栏」后，左边每一项右侧会出现上移、下移和删除按钮，按自己的习惯重排即可。
+              调整会立刻在左侧预览，<b>点「保存排列」生效并结束调整</b>；
+              不保存就离开这一页，改动会还原。<b>「设置」这一项不能删除</b>——它是恢复侧边栏的唯一入口。
+            </p>
+            <div class="toolbar nav-actions">
+              <button class="btn primary" id="btnNavAdjust" type="button">调整侧边栏</button>
+              <button class="btn primary" id="btnNavSave" type="button" disabled hidden>保存排列</button>
+              <button class="btn ghost" id="btnNavDiscard" type="button" disabled hidden>撤销修改</button>
+              <button class="btn ghost" id="btnNavReset" type="button">恢复初始</button>
+            </div>
+            <p class="hint-line nav-state" id="navCustomHint">当前：默认排列</p>
+            <p class="nav-flash" id="navFlash" hidden></p>
+          </div>
+
+          <!-- 数据管理：清除 / 恢复。清完自动重启，回到新用户第一次拿到软件的状态 -->
+          <div class="panel" id="panelDataManage">
+            <div class="panel-head"><h3>数据管理</h3><span class="tag" id="dataManageTag">本地备份</span></div>
+            <p class="hint-line">
+              「清除所有数据」会把作品库、章节草稿、敏感词库、插件设置、统计快照、界面偏好、密码本和登录态一起清掉，
+              清完自动重启，等同于刚拿到软件、还没登录过的状态。<b>清除前会自动备份一份</b>，
+              备份放在 <span class="mono" id="dataBackupRoot">读取中…</span>。
+            </p>
+            <p class="hint-line">
+              「恢复数据」的数据来源就是这台电脑上的自动备份（清除前一份、手动备份若干份），
+              恢复范围是备份当时的全部内容：作品库、密码本、偏好与插件。<b>恢复前会再把当前状态备份一次</b>，选错了还能退回来。
+            </p>
+            <div class="toolbar" style="margin-top:12px">
+              <button class="btn ghost" id="btnBackupNow" type="button">立即备份一份</button>
+              <button class="btn danger" id="btnDataReset" type="button">清除所有数据</button>
+            </div>
+            <div class="data-backup-list" id="dataBackupList" hidden></div>
+            <p class="hint-line" id="dataManageHint" hidden></p>
           </div>
 
           <div class="panel" id="panelUpdate">
@@ -1205,6 +1317,9 @@
   <script src="prefs.js"></script>
   <script src="dark-tone.js"></script>
   <script src="theme.js?v=20261106-1"></script>
+  <script src="nav-order.js?v=20261108-1"></script>
+  <script src="book-priority.js?v=20261108-1"></script>
+  <script src="props-diff.js?v=20261108-1"></script>
   <script src="chapter-order.js"></script>
   <script src="writer-sync.js?v=20261106-2"></script>
   <script src="writer-indent.js"></script>
