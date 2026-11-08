@@ -1,12 +1,11 @@
 {
   "id": "health-helper",
-  "name": "健康小助手",
-  "version": "1.0.6",
+  "name": "健康提醒",
+  "version": "1.1.1",
   "author": "CLOWN",
-  "description": "番茄钟 + 喝水提醒 + 睡觉提醒。支持侧边栏与悬浮球两种形态。",
+  "description": "喝水提醒 + 睡觉提醒，到点提示起身补水、按时收工。专注计时请用「番茄钟」插件。",
   "permissions": ["ui.editorStat"],
   "contributes": {
-    "editorStat": true,
-    "floatingWidget": true
+    "editorStat": true
   }
 }

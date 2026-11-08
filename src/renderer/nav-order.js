@@ -8,15 +8,27 @@
  * 所以「哪些项绝对不能删」必须是一条能被测试卡住的硬规则。
  *
  * 硬规则：
- * 1. **设置项永远不能删**。它是唯一的恢复入口，删了就只能去改配置文件。
+ * 1. **固定项不能删**，但**可以随意上下移动**。锁定的是「删除」，不是「排序」。
  * 2. 顺序里出现未知 view 时丢弃（旧版本的残留不会让界面错乱）。
  * 3. 顺序里缺失的已知项不自动补到末尾——缺失就是被用户删掉了。
  * 4. 恢复默认时回到 DEFAULT_NAV 的完整列表。
  */
 (function (root) {
 
-/** 设置项不能删：删了就再也进不去设置，无法恢复 */
-const LOCKED = ['settings'];
+/**
+ * 固定项：不显示删除按钮，也不能被移除。
+ *
+ * 挑的都是「删掉之后软件就不完整」的入口：
+ *   overview  概览    —— 首屏，删了打开软件是空白页
+ *   books     数据看板 —— 核心功能之一
+ *   sync      抓取与同步 —— 所有数据的来源，删了就再也抓不了
+ *   plugins   功能中心 —— 唯一的功能开关入口
+ *   settings  设置    —— 恢复侧边栏的唯一入口
+ *
+ * **它们仍然可以上下移动**：排序规则和别的项完全一样，
+ * 只是 `remove()` 会拒绝。用户的要求就是「关掉删除按钮，但排序照旧生效」。
+ */
+const LOCKED = ['overview', 'books', 'sync', 'plugins', 'settings'];
 
 /** 默认顺序与显示名（改名时只改这里，DOM 文案由它覆盖） */
 const DEFAULT_NAV = [
@@ -63,8 +75,17 @@ function normalize(input) {
     seen.add(view);
     out.push(view);
   }
-  // 设置项丢了就补回来：这是用户唯一的恢复入口，不能因为一次错误写入就永久丢失
-  if (!seen.has('settings')) out.push('settings');
+  // **固定项丢了就补回来。**
+  // 它们本身不能被用户删除（remove 会拒绝），所以「不在顺序里」只可能是：
+  // 老版本存下的数据、配置文件被手改过、或者某次写入出错。
+  // 无论哪种，让它们永久消失都是错的 —— 尤其「设置」是唯一的恢复入口。
+  // 补在末尾而不是原位：用户当前的排列不动，只是把丢的那几项找回来。
+  for (const view of LOCKED) {
+    if (!seen.has(view)) {
+      out.push(view);
+      seen.add(view);
+    }
+  }
   return out;
 }
 
@@ -98,7 +119,11 @@ function move(order, view, delta) {
 function remove(order, view) {
   const list = normalize(order);
   if (isLocked(view)) {
-    return { order: list, removed: false, reason: '设置项不能删除，它是恢复侧边栏的唯一入口' };
+    return {
+      order: list,
+      removed: false,
+      reason: '「' + labelOf(view) + '」是固定项，不能从侧边栏移除（但可以拖动顺序）',
+    };
   }
   const next = list.filter((x) => x !== view);
   if (next.length === list.length) return { order: list, removed: false, reason: '这一项已经不在侧边栏里' };

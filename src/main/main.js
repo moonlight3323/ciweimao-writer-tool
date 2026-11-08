@@ -743,6 +743,17 @@ ipcMain.handle('writer:import', async () => {
 // ---- 功能中心：内置功能与自装扩展都只读入沙箱页面，通过白名单 API 与应用通信 ----
 
 ipcMain.handle('plugins:list', () => ({ plugins: plugins.list(dataDir()) }));
+/**
+ * 补装/修复内置功能。
+ *
+ * 「重新加载」按钮走这里。内置功能没有单独的重装入口，
+ * 一旦 plugins 目录被清掉或写坏，用户就只能重装整个软件 ——
+ * 有了这个接口，点一下「重新加载」就能自己修回来。
+ */
+ipcMain.handle('plugins:repair', () => {
+  const installed = plugins.installBundled(dataDir(), path.join(app.getAppPath(), 'bundled-plugins'));
+  return { installed, plugins: plugins.list(dataDir()) };
+});
 ipcMain.handle('plugins:get', (_e, id) => plugins.get(dataDir(), id));
 ipcMain.handle('plugins:enable', (_e, id, enabled) => ({
   enabled: plugins.setEnabled(dataDir(), id, enabled),
@@ -927,12 +938,12 @@ ipcMain.handle('version:change', () => ({
 /**
  * 用户选择「不继承，从空白开始」。
  * 先备份（datamanager 内部保证），再清空，由渲染层调 app:relaunch 重启。
+ * 和「清除所有数据」走同一条路径：会话存储必须用 session API 清，
+ * 直接删 Local Storage 目录会 EPERM。
  */
-ipcMain.handle('version:reset-data', () => {
-  const targets = currentTargets();
-  const manifest = datamanager.createBackup(backupRoot(), backupTargets(), { reason: 'before-reset' });
-  datamanager.reset(targets);
-  return { ok: true, backupName: manifest.name, backupSize: datamanager.humanSize(manifest.bytes) };
+ipcMain.handle('version:reset-data', async () => {
+  const result = await resetAllData({});
+  return { ok: true, problem: resetProblemText(result), ...result };
 });
 
 // ---------------------------------------------------------------- 备份 / 清除 / 恢复
@@ -959,6 +970,99 @@ function currentTargets() {
  */
 function backupTargets() {
   return currentTargets().filter((t) => t.scope !== 'session');
+}
+
+/**
+ * 清掉 Chromium 自己的存储（cookie / localStorage / IndexedDB / 缓存 …）。
+ *
+ * **必须走 session API，不能删目录。**
+ * Local Storage / Network / Partitions 这些目录在运行期被 Chromium 用 LevelDB 打开着，
+ * `fs.rmSync` 一定报 `EPERM: Permission denied`——旧版本就是这么让
+ * 「清除所有数据」彻底不可用的（弹窗原文：无法删除 …\Local Storage: EPERM）。
+ *
+ * 覆盖三个会话：
+ *   defaultSession   —— 主界面与插件沙箱（界面偏好等）
+ *   persist:ciweimao —— 作者后台 WebContentsView，登录态在这里
+ *   persist:miaoyu   —— 喵语数据 WebContentsView
+ *
+ * 全程不往外抛：某一个会话清不掉也不该拦住整轮清除和随后的重启。
+ */
+async function clearSessionData() {
+  const names = [null, PARTITION, miaoyu.PARTITION];
+  const failed = [];
+  let cleared = 0;
+
+  for (const name of names) {
+    const label = name || 'default';
+    let ses;
+    try {
+      ses = name ? session.fromPartition(name) : session.defaultSession;
+    } catch (err) {
+      failed.push({ name: label, message: err.message });
+      continue;
+    }
+    try {
+      // 不传 storages 表示清全部：cookies / localstorage / indexeddb /
+      // cachestorage / serviceworkers / shadercache / websql
+      await ses.clearStorageData();
+      await ses.clearCache();
+      // HTTP 认证缓存里的旧凭据也一并清掉
+      if (typeof ses.clearAuthCache === 'function') await ses.clearAuthCache();
+      // 紧接着就要 relaunch，必须先把清空结果刷到磁盘，不能停在内存里
+      if (typeof ses.flushStorageData === 'function') ses.flushStorageData();
+      cleared += 1;
+    } catch (err) {
+      failed.push({ name: label, message: err.message });
+    }
+  }
+  return { cleared, failed };
+}
+
+/**
+ * 执行一次「清除所有数据」：备份 → 删我们的文件 → 清 Chromium 存储。
+ *
+ * 三件事的顺序有意义：
+ * 1. 先备份，失败就整体中止（宁可不清）
+ * 2. 再删数据目录 / 密码本 / 保存位置偏好（这些是我们自己的文件，fs 删得掉）
+ * 3. 最后清会话存储（走 session API）。放最后是因为它最不容易失败，
+ *    而且清完 cookies 就再也读不到东西了，没必要放在数据之前
+ */
+async function resetAllData(opts) {
+  const options = opts || {};
+  const targets = currentTargets();
+  const manifest = datamanager.createBackup(backupRoot(), backupTargets(), { reason: 'before-reset' });
+
+  const fsResult = datamanager.reset(targets, {
+    skip: options.keepSession ? ['session'] : [],
+  });
+
+  let sessionInfo = { cleared: 0, failed: [] };
+  if (!options.keepSession) {
+    sessionInfo = await clearSessionData();
+  }
+
+  return {
+    backupName: manifest.name,
+    backupSize: datamanager.humanSize(manifest.bytes),
+    removedCount: fsResult.removed.length,
+    failed: fsResult.failed,
+    session: sessionInfo,
+  };
+}
+
+/** 把 resetAllData 的结果翻译成给人看的结论；没有失败就返回空串 */
+function resetProblemText(result) {
+  const parts = [];
+  if (result.failed.length) {
+    const sample = result.failed.slice(0, 3).map((f) => f.path).join('、');
+    parts.push(`有 ${result.failed.length} 个文件被占用没能删掉（${sample}），`
+      + '通常是另一个窗口正在运行，关掉后重试即可');
+  }
+  if (result.session.failed.length) {
+    parts.push('登录态清理未完全成功（'
+      + result.session.failed.map((f) => f.name).join('、') + '）');
+  }
+  return parts.join('；');
 }
 
 ipcMain.handle('data:backups', () => ({
@@ -990,16 +1094,16 @@ ipcMain.handle('data:backup-now', () => {
  * 顺序固定：先备份 → 备份成功才删。备份失败时抛错，前端会显示原因，
  * 绝不出现「清掉了但没备份」这种不可逆结果。
  */
-ipcMain.handle('data:reset', (_e, opts) => {
-  const options = opts || {};
-  const targets = currentTargets();
-  const manifest = datamanager.createBackup(backupRoot(), backupTargets(), { reason: 'before-reset' });
-  const removed = datamanager.reset(targets, { skip: options.keepSession ? ['session'] : [] });
+ipcMain.handle('data:reset', async (_e, opts) => {
+  const result = await resetAllData(opts || {});
+  // 已经清掉的部分不会回来，所以「部分失败」不当成整体失败：
+  // 把能清的清掉、把清不掉的如实说出来，然后照常重启。
+  // 备份一定成功过（resetAllData 里先备份，失败会直接抛），所以随时能退回。
+  const problem = resetProblemText(result);
   return {
-    ok: true,
-    backupName: manifest.name,
-    backupSize: datamanager.humanSize(manifest.bytes),
-    removedCount: removed.length,
+    ok: !problem,
+    problem,
+    ...result,
   };
 });
 
@@ -1312,17 +1416,54 @@ ipcMain.handle('file:save-text', async (_e, opts) => {
  * rank-index 是未登录可访问的静态页，因此走主进程网络栈即可，
  * 不占用内嵌浏览器的视图，也不会打断用户正在看的后台页面。
  */
+/**
+ * 带超时的 fetch。
+ *
+ * `net.fetch` 本身**没有超时**：连接被中间设备吞掉、DNS 挂起、对方只握手不回包时，
+ * Promise 会一直挂着。IPC 调用跟着永不返回，渲染层的 `finally` 也就永远不执行，
+ * 按钮就卡死在「抓取中…」——用户只能重启软件。这是「点了刷新没反应」的直接原因。
+ *
+ * @param {number} timeoutMs 单次尝试的超时
+ * @param {number} retries   失败/超时后再试几次（网络抖动很常见，一次就放弃太脆）
+ */
+async function fetchWithTimeout(url, options, timeoutMs, retries) {
+  const limit = timeoutMs || 20000;
+  const tries = Math.max(1, (retries || 0) + 1);
+  let lastErr = null;
+
+  for (let i = 0; i < tries; i += 1) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), limit);
+    try {
+      return await net.fetch(url, { ...options, signal: ctrl.signal });
+    } catch (err) {
+      const aborted = err && (err.name === 'AbortError' || /aborted|abort/i.test(String(err.message)));
+      // AbortError 的原话是 "The operation was aborted"，对用户没有意义
+      lastErr = aborted
+        ? new Error(`请求超时（${Math.round(limit / 1000)} 秒无响应）`)
+        : new Error(`网络请求失败：${(err && err.message) || err}`);
+      // 还有下次就稍等再试，避免连续打同一个不通的地址
+      if (i < tries - 1) await new Promise((r) => setTimeout(r, 600));
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw lastErr || new Error('网络请求失败');
+}
+
 ipcMain.handle('rank:fetch', async () => {
   const url = 'https://www.ciweimao.com/rank-index';
-  const res = await net.fetch(url, {
+  // 单次 12 秒、最多试 2 次：最坏 25 秒左右给出明确结论，
+  // 比原来"永远等下去、界面卡死"好得多；正常 2 秒就回来，用户感知不到。
+  const res = await fetchWithTimeout(url, {
     headers: {
       'User-Agent':
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
         '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
       'Accept-Language': 'zh-CN,zh;q=0.9',
     },
-  });
-  if (!res.ok) throw new Error(`榜单页返回 ${res.status}`);
+  }, 12000, 1);
+  if (!res.ok) throw new Error(`榜单页返回 HTTP ${res.status}，稍后再试`);
   return await res.text();
 });
 

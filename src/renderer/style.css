@@ -1238,6 +1238,66 @@ input[type="checkbox"] { accent-color: var(--accent-line); cursor: pointer; }
 
 .board-books { display: flex; flex-direction: column; gap: 10px; }
 
+/* ---------- 数据看板概览：一行一本的作品卡 ----------
+   沿用六指标网格（和详情页同一套排布），区别只在整卡可点：
+   悬停浮起一层、右侧「详情 ›」变亮，明确告诉用户「点这里」。 */
+.book-card.is-clickable {
+  cursor: pointer;
+  transition: border-color .12s, background .12s, transform .12s;
+}
+
+.book-card.is-clickable:hover {
+  border-color: var(--accent-line);
+  background: var(--surface-2);
+  transform: translateY(-1px);
+}
+
+.book-card.is-clickable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.book-card-go {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+  color: var(--text-3);
+  transition: color .12s;
+}
+
+.book-card.is-clickable:hover .book-card-go { color: var(--accent-ink); }
+
+.board-list-empty {
+  padding: 18px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-3);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+}
+
+/* 详情页书籍卡上的星标：与「已入库 / 已上架」并排 */
+.book-card-star {
+  flex: 0 0 auto;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-3);
+}
+
+.book-card-star.is-on { color: var(--accent-ink); }
+
+/* 优先级作品：和创作中心的星标呼应，边框加深 + 一层浅强调底，
+   一眼就能看出「这本是我盯着的那本」，同时也是它被排到第一的原因 */
+.book-card.is-priority {
+  border-color: var(--accent-line);
+  background: var(--accent-weak);
+}
+
+.book-card.is-priority.is-clickable:hover {
+  border-color: var(--accent-line);
+  background: var(--accent-weak);
+}
+
 /* 查看范围：全部作品 / 指定单本 */
 .scope-bar {
   display: flex;
@@ -1524,6 +1584,12 @@ input[type="checkbox"] { accent-color: var(--accent-line); cursor: pointer; }
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 10px;
+}
+
+/* 窄窗口：六项指标排成三列两行，别把数字挤成竖排 */
+@media (max-width: 900px) {
+  .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .book-card-chapter { max-width: 100%; }
 }
 
 .metric {

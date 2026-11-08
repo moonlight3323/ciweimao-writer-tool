@@ -173,6 +173,35 @@ function copyPluginFolder(source, target) {
   }
 }
 
+/**
+ * 判断某个内置插件是否需要（重新）安装。
+ *
+ * **只看版本号是不够的**，这是踩过的坑：
+ * 数据目录被清掉（或用户手动删了 plugins 里的文件夹）之后，`bundled-plugins.json`
+ * 登记表可能还在（例如从旧备份恢复回来），于是 `registry[id] === manifest.version`
+ * 成立、不再复制，可磁盘上其实什么都没有 —— 功能中心变空，
+ * 而内置功能又没有「重新安装」入口，用户只能重装整个软件。
+ *
+ * 判据改成三条任一成立就装：
+ *   1. 登记表里没有这个 id（或版本不同）
+ *   2. 目标目录里读不出有效的 manifest.json（目录没了 / 文件残缺）
+ *   3. 目标目录里的版本与内置版本不一致（软件升级带来新版本插件）
+ *
+ * @param {string} target 安装目标目录
+ * @param {object} manifest 内置插件清单（readManifest 的归一化结果）
+ * @param {object} registry 登记表 { id: version }
+ */
+function needsBundledInstall(target, manifest, registry) {
+  if (!registry || registry[manifest.id] !== manifest.version) return true;
+  try {
+    const installed = readManifest(target);
+    return installed.version !== manifest.version;
+  } catch (_) {
+    // 目录不存在、manifest.json 缺失或损坏 —— 必须重装
+    return true;
+  }
+}
+
 function installBundled(dataDir, bundledRoot) {
   if (!bundledRoot || !fs.existsSync(bundledRoot)) return [];
   const registryPath = path.join(dataDir, 'bundled-plugins.json');
@@ -185,13 +214,22 @@ function installBundled(dataDir, bundledRoot) {
     try {
       const manifest = readManifest(source);
       const target = path.join(pluginsDir(dataDir), manifest.id);
-      if (registry[manifest.id] !== manifest.version) {
-        copyPluginFolder(source, target);
-        installed.push(manifest.id);
-        registry[manifest.id] = manifest.version;
-        changed = true;
-      }
-    } catch (_) { /* 单个内置插件损坏不能影响主程序启动 */ }
+      if (!needsBundledInstall(target, manifest, registry)) continue;
+
+      // 目标目录可能是残缺的（登记表说装过、文件却没了）。
+      // 先清掉再复制，避免旧残留文件跟新版本混在一起。
+      // 插件自己的数据在 plugin-storage 里，删目录不会丢。
+      try { fs.rmSync(target, { recursive: true, force: true }); } catch (_) { /* 删不掉就覆盖 */ }
+
+      copyPluginFolder(source, target);
+      installed.push(manifest.id);
+      registry[manifest.id] = manifest.version;
+      changed = true;
+    } catch (err) {
+      // 单个内置插件损坏不能影响主程序启动，但要留痕 ——
+      // 否则用户只看到「功能中心是空的」，完全没线索。
+      console.error(`内置功能 ${entry.name} 安装失败：`, (err && err.message) || err);
+    }
   }
   if (changed) writeJson(registryPath, registry);
   return installed;
@@ -393,6 +431,7 @@ function storageSet(dataDir, id, key, value) {
 
 module.exports = {
   pluginsDir,
+  needsBundledInstall,
   installBundled,
   list,
   get,

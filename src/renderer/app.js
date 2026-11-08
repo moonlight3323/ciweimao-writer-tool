@@ -78,7 +78,30 @@ let lastView = 'overview';
 let browserReturnView = 'writer';
 /** 专注模式：隐藏左侧导航/顶栏/右栏，只留目录与正文 */
 let writerFocusOn = false;
-let lastState = { isLoginPage: true, url: '' };
+/**
+ * 上一次收到的浏览器状态。
+ *
+ * 初始 `isLoginPage: false`：还没打开过任何页面，不该被当成「之前在登录页」——
+ * 否则第一次打开后台首页就会被误判成「从登录页跳出来 = 登录成功」。
+ */
+let lastState = { isLoginPage: false, url: '' };
+
+/**
+ * 这一次打开后台的过程中，用户是否**真的完成了一次登录**。
+ *
+ * 只在「之前停在登录页 → 现在离开登录页且到了作者后台」时置 true。
+ *
+ * 为什么不能只看「当前不是登录页」：点「打开作者后台」时，页面先加载
+ * `author.ciweimao.com/homepage`，这个 URL 不含 `/login`，于是
+ * `isLoginPage === false` —— 但它只是**还没跳转到登录页**，用户根本没登录。
+ * 旧判断（`!state.isLoginPage && state.url`）就在这一刻成立，
+ * 结果「登录成功」弹窗当场弹出、还把后台页面关掉了：
+ * 用户看到的就是「点了打开后台，直接跳到抓取指引，中间没让我登录」。
+ *
+ * 声明放在这里（而不是靠近它的使用处）：浏览器事件回调注册在文件前面，
+ * 若事件在 `let` 初始化之前到达，会抛 TDZ 错误让整个回调中断。
+ */
+let loginJustSucceeded = false;
 let rafPending = false;
 /**
  * 更新确认框打开期间暂存的内嵌页面状态。
@@ -348,6 +371,7 @@ function renderNavCustomHint() {
   const adjustBtn = $('#btnNavAdjust');
   const saveBtn = $('#btnNavSave');
   const discardBtn = $('#btnNavDiscard');
+  const exitBtn = $('#btnNavExit');
   const resetBtn = $('#btnNavReset');
   const box = $('#panelNav');
   if (!window.NavOrder) return;
@@ -357,11 +381,14 @@ function renderNavCustomHint() {
   const isDefault = order.join(',') === window.NavOrder.defaultOrder().join(',');
   const dirty = navDirty();
 
-  // 「调整侧边栏」只在未进入调整态时出现；进入后换成「保存排列 / 撤销修改」。
+  // 「调整侧边栏」只在未进入调整态时出现；进入后换成「保存排列 / 撤销修改 / 退出调整」。
   // 这样保存完按钮自动收起，用户不会以为还能继续改。
   if (adjustBtn) adjustBtn.hidden = navEditing;
   if (saveBtn) { saveBtn.hidden = !navEditing; saveBtn.disabled = !dirty; }
   if (discardBtn) { discardBtn.hidden = !navEditing; discardBtn.disabled = !dirty; }
+  // 退出**永远可点**：进去但一个按钮都没动时，保存和撤销都是灰的，
+  // 没有它就没有任何出口，用户只能关窗口。
+  if (exitBtn) { exitBtn.hidden = !navEditing; exitBtn.disabled = false; }
   if (resetBtn) resetBtn.hidden = navEditing;
 
   if (box) box.classList.toggle('is-dirty', navEditing && dirty);
@@ -375,9 +402,9 @@ function renderNavCustomHint() {
   if (!hint) return;
   if (navEditing) {
     hint.textContent = dirty
-      ? '正在调整：点「保存排列」生效，点「撤销修改」还原'
+      ? '正在调整：点「保存排列」生效，点「撤销修改」还原，点「退出调整」放弃'
         + (hidden.length ? ` · ${hidden.length} 项将移出侧边栏（${hidden.map((v) => window.NavOrder.labelOf(v)).join('、')}）` : '')
-      : '正在调整：用左侧各项右侧的 ▲▼× 重排或移除，改完点「保存排列」';
+      : '正在调整：用左侧各项右侧的 ▲▼× 重排或移除，改完点「保存排列」；不想改了直接点「退出调整」';
     return;
   }
   if (isDefault) {
@@ -462,20 +489,36 @@ $('#btnNavDiscard').addEventListener('click', () => {
   navFlash(had ? '已撤销未保存的调整' : '已结束调整');
 });
 
+/**
+ * 退出调整：不做任何保存，丢掉草稿并收起 ▲▼×。
+ *
+ * 存在的理由：进入调整态后如果一次都没点 ▲▼×，「保存排列」和「撤销修改」
+ * 都是禁用状态（没有改动可存、也没有改动可撤），而「调整侧边栏」在调整态下是隐藏的 ——
+ * 于是四个按钮里三个不可点、一个不显示，用户被卡在调整态里出不来，只能关窗口。
+ * 这个按钮**永远可点**。
+ */
+$('#btnNavExit').addEventListener('click', () => {
+  if (!navEditing) return;
+  const had = navDirty();
+  endNavAdjust();
+  navFlash(had ? '已退出调整，改动未保存' : '已退出调整');
+});
+
 $('#btnNavReset').addEventListener('click', () => {
-  // 「恢复初始」是明确动作：立刻恢复默认并落盘，然后保持调整态让用户接着调
+  // 「恢复初始」是一次性动作：回到默认顺序并**结束调整态**。
+  //
+  // 之前这里故意保持（甚至自动进入）调整态，想法是「恢复完还能接着调」，
+  // 结果用户点完发现 ▲▼× 又出现在每一项上、标签写着「调整中」，
+  // 直觉上就是「没恢复干净」。要接着调，再点一次「调整侧边栏」即可。
   if (!window.NavOrder) return;
-  const wasEditing = navEditing;
   navDraft = null;
   saveNavOrder(window.NavOrder.defaultOrder());
+  // 默认排列不算「自定义保存」，时间戳没意义，清掉免得状态行显示个旧时间
   navSavedAt = '';
   window.Prefs.set('navOrderSavedAt', '');
-  if (!wasEditing) {
-    navEditing = true;
-    navDraft = window.NavOrder.defaultOrder();
-  }
+  navEditing = false;
   applyNavOrder();
-  navFlash('已恢复初始排列，可继续调整或直接离开');
+  navFlash('已恢复初始排列');
 });
 
 function initNavCustom() {
@@ -940,11 +983,21 @@ function renderConn(state) {
 
 window.api.browser.onEvent((data) => {
   if (data.type === 'browser-state') {
-    const wasLoginPage = !!(lastState && lastState.isLoginPage);
+    // 必须是「之前确实停在某个登录页」，才谈得上从登录页跳出来。
+    // 注意还要 url 非空：lastState 的初始值是 { isLoginPage: true, url: '' }，
+    // 不加这个条件，新用户第一次打开后台（首页 → 还没跳登录页）就会被判定成登录成功。
+    const wasLoginPage = !!(lastState && lastState.isLoginPage && lastState.url);
     lastState = data;
     renderConn(data);
     updateVaultBar(data);
-    // 第一次连上后台（离开登录页）→ 引导去抓评论
+
+    // 「登录页 → 作者后台」= 这一次真的登录成功了。
+    // 只认这个转变：单纯打开后台首页（还没跳登录页）不算，
+    // 否则新用户刚点「打开作者后台」就会被当成登录成功。
+    if (wasLoginPage && !data.isLoginPage && isAuthorUrl(data.url)) {
+      loginJustSucceeded = true;
+    }
+    // 引导去抓评论：内部会再确认一次「确实登录成功」
     maybeShowAfterLoginGuide(data);
     // 后台的书目页加载完就去对一次账：新建的书在这里被补进作品库
     if (/author\.ciweimao\.com\/book_manage/i.test(String(data.url || ''))) {
@@ -2259,8 +2312,6 @@ let statsBusy = false;
 /** 看板查看范围：'' = 全部作品合计，否则为某本书的 bookId */
 let boardBookId = '';
 let bookOptionsKey = '';
-/** 用户是否手动动过「查看范围」下拉。没动过时跟随优先级作品，动过就尊重用户选择 */
-let boardBookTouched = false;
 
 /**
  * 优先级作品缓存。
@@ -2281,21 +2332,21 @@ async function refreshPriorityInfo() {
 }
 
 /**
- * 进数据看板前确认「优先级作品」是已知的。
+ * 进数据看板前把这一页依赖的东西准备好。
  *
- * 开机后直接点「数据看板」时，作品列表还没加载过、优先级缓存也是空的，
- * 这时候画出来的看板必然「维持原样」。所以这里补一次查询再重画。
+ * 优先级缓存**每次都刷新**，不只在为空时查：
+ * 主进程只是读一下 index.json，很轻；而一旦缓存过期，
+ * 用户明明在创作中心点了星标、看板却把另一本排在第一个，看起来就是功能失效。
  */
 async function ensureBoardReady() {
-  if (!priorityInfo) {
-    await refreshPriorityInfo();
-    renderBoard();
-  }
-  // 道具获得是这一页的下半部分：作品下拉依赖作品库，所以顺手补一次。
-  // 已经在「创作中心」加载过就直接用，不会重复发请求。
+  // 顺序：先把书目录进来，再查优先级，最后画。
+  // 反过来的话第一次画时 writerBooks 还是空的，只能退回缓存，白画一遍。
   if (!Array.isArray(writerBooks) || !writerBooks.length) {
     await loadWriterBooks().catch(() => {});
   }
+  await refreshPriorityInfo();
+  renderBoard();
+  // 道具获得是这一页的下半部分，作品下拉依赖作品库
   syncPropsBookOptions();
   renderProps();
 }
@@ -2369,28 +2420,27 @@ function syncBookOptions(books) {
       list.map((b) => `<option value="${escapeHtml(String(b.bookId))}">《${escapeHtml(b.name)}》</option>`).join('');
   }
 
-  // 选哪一本的规则抽在 book-priority.js（那边有单测）：
-  // 用户没动过下拉就跟随优先级作品，动过就尊重用户，选中的书当天没数据则退回全部。
-  const decided = window.BookPriority
-    ? window.BookPriority.resolveBoardBookId({
-      current: boardBookId,
-      touched: boardBookTouched,
-      priority: priorityBoardBookId(),
-      available: list.map((b) => String(b.bookId)),
-    })
-    : { id: boardBookId, fellBack: false };
-  boardBookId = decided.id;
+  // 默认停在「全部作品」，**不再自动跳到优先级作品**。
+  //
+  // 新交互下概览页就是一屏汇总 + 作品列表，优先级作品在列表里排第一并带星标；
+  // 自动跳进单本详情反而让人以为「回不到全部」。
+  // 唯一要处理的例外：选中的书当天没有快照（删了书 / 换了数据源），退回全部。
+  let fellBack = false;
+  if (boardBookId && !list.some((b) => String(b.bookId) === boardBookId)) {
+    boardBookId = '';
+    fellBack = true;
+  }
 
   sel.value = boardBookId;
   sel.disabled = list.length === 0;
-  // 单本视图下副标题已写明书名，这里不再重复「共 N 部作品」
-  $('#boardScopeHint').textContent = decided.fellBack
-    ? '这本书在这一天还没有记录，已切回全部作品'
-    : (!boardBookId && list.length
-      ? `共 ${list.length} 部作品`
-      : (boardBookId && !boardBookTouched ? '已按创作中心的优先级自动定位' : ''));
+  const hint = $('#boardScopeHint');
+  if (hint) {
+    hint.textContent = fellBack
+      ? '这本书在这一天还没有记录，已切回全部作品'
+      : (!boardBookId && list.length ? `共 ${list.length} 部作品 · 点一本看详情` : '');
+  }
 
-  return { fellBack: decided.fellBack };
+  return { fellBack };
 }
 
 function renderBoard() {
@@ -2409,6 +2459,10 @@ function renderBoard() {
     $('#boardDay').textContent = '尚无数据';
     $('#boardSub').textContent = '以每日 06:00 为结算分界';
     $('#btnPrevDay').hidden = true;
+    const backBtn = $('#btnBoardBack');
+    if (backBtn) backBtn.hidden = true;
+    const props = $('#propsSection');
+    if (props) props.hidden = true;
     bookOptionsKey = '';
     $('#boardBook').innerHTML = '<option value="">全部作品（合计）</option>';
     $('#boardBook').disabled = true;
@@ -2427,6 +2481,10 @@ function renderBoard() {
   const scoped = window.Stats.scopeSnapshot(cur, boardBookId) || cur;
   const single = scoped.books.length === 1 && !!scoped.scopedBookId ? scoped.books[0] : null;
 
+  // 优先级作品在两种模式下都要能认出来：列表里排第一并带星标，详情页标题旁也有星标。
+  // 「已入库 / 已上架」是平台状态，星标是我们自己的标记，两者并排不冲突。
+  const priorityId = priorityBoardBookId();
+
   $('#boardDay').textContent = `统计日 ${cur.day} · ${single ? '单看一本' : '全部作品'}`;
   $('#boardSub').textContent = prev
     ? `对比基准 ${prev.day} · 采集于 ${fmtTime(cur.capturedAt)}`
@@ -2436,14 +2494,56 @@ function renderBoard() {
   $('#btnPrevDay').hidden = older.length === 0;
 
   renderTotals(totalsBox, scoped.totals, single, cur.totals);
-  // 优先级作品排在第一位：这是「点亮星标」在数据看板里的直接体现，
-  // 不依赖查看范围下拉——即使正在看全部作品，那一本也要在最前面
-  const boardBooks = window.BookPriority
-    ? window.BookPriority.sortForBoard(scoped.books, priorityBoardBookId())
-    : scoped.books;
-  renderBookCards(booksBox, boardBooks, !!single);
-  renderSingleExtra(extraBox, single);
+
+  // 换了一本书，就把道具区块的「亲手挑过」清掉：让它跟着新书走，
+  // 否则从 A 的详情进到 B 的详情，道具还停在 A 上，看着像数据错了。
+  if (propsBoardLink !== boardBookId) {
+    propsBoardLink = boardBookId;
+    propsBookChosen = '';
+  }
+
+  // 两种模式互斥：
+  //   全部作品 → 汇总 + 一行一本的作品卡（整卡点进详情）
+  //   单本详情 → 完整指标卡 + 其他指标 + 趋势图 + 道具获得
+  // 道具获得是「某一本书」的数据，全部作品模式下没有意义，直接不显示。
+  const backBtn = $('#btnBoardBack');
+  const propsSection = $('#propsSection');
+  booksBox.hidden = false;
+  if (backBtn) backBtn.hidden = !single;
+  if (propsSection) propsSection.hidden = !single;
+
+  if (single) {
+    renderBookCards(booksBox, [single], true, priorityId);
+    renderSingleExtra(extraBox, single);
+    // 道具获得是这一页的一部分，换成另一本书就要跟着换。
+    // 放在 renderBoard 里而不是只在切页时刷新，才不会出现「点了行、上面变了、下面没变」。
+    renderProps();
+  } else {
+    // 优先级作品排第一：这是「点亮星标」在看板概览里的直接体现
+    renderBookCards(booksBox, orderForBoard(scoped.books, priorityId), false, priorityId);
+    extraBox.hidden = true;
+    extraBox.innerHTML = '';
+  }
   renderBookChart(single);
+}
+
+/**
+ * 概览列表排序：标星的那本提到第一位，其余保持原顺序。
+ *
+ * 规则本体在 book-priority.js（有单测），这里保留一份兜底实现：
+ * 万一那个脚本没加载，也绝不能变成「星标亮着、却排在第三行」——
+ * 那正是用户报过的现象，而且从界面上完全看不出是排序没执行。
+ */
+function orderForBoard(books, priorityId) {
+  const list = Array.isArray(books) ? books.slice() : [];
+  const want = String(priorityId || '').trim();
+  if (!want) return list;
+  if (window.BookPriority && typeof window.BookPriority.sortForBoard === 'function') {
+    return window.BookPriority.sortForBoard(list, want);
+  }
+  const idx = list.findIndex((b) => String(b && b.bookId) === want);
+  if (idx > 0) list.unshift(list.splice(idx, 1)[0]);
+  return list;
 }
 
 // ------------------------------------------------------------ 每日趋势折线图
@@ -2611,15 +2711,33 @@ function sumDiff(diff) {
   return `<div class="stat-sub ${up ? 'up' : 'down'}">${up ? '▲ +' : '▼ '}${fmtNum(diff)}</div>`;
 }
 
-/** 书籍卡。每个卡片可一键切到只看这本 */
-function renderBookCards(box, books, isSingle) {
-  box.innerHTML = books.map((b) => `
-    <div class="book-card">
+/**
+ * 书籍卡。
+ *
+ * 两处共用同一套六指标网格（「之前的数据排布」）：
+ *   概览（isSingle=false）→ 一行一本、整卡可点进详情，卡片头右侧是「详情 ›」
+ *   详情（isSingle=true） → 只画当前这本，头右侧是订阅最高的章节
+ * priorityId 命中时标题前带实心星，整卡加强调底色。
+ */
+function renderBookCards(box, books, isSingle, priorityId) {
+  if (!books.length) {
+    box.innerHTML = '<div class="board-list-empty">这一天还没有作品数据</div>';
+    return;
+  }
+  box.innerHTML = books.map((b) => {
+    const pinned = priorityId && String(b.bookId) === String(priorityId);
+    const clickable = !isSingle;
+    return `
+    <div class="book-card${pinned ? ' is-priority' : ''}${clickable ? ' is-clickable' : ''}"
+         ${clickable ? `data-book="${escapeHtml(String(b.bookId))}" role="button" tabindex="0"
+         title="查看《${escapeHtml(b.name)}》的完整数据"` : ''}>
       <div class="book-card-head">
+        <span class="book-card-star${pinned ? ' is-on' : ''}" aria-hidden="true">${pinned ? '★' : '☆'}</span>
         <span class="book-card-name">《${escapeHtml(b.name)}》</span>
-        <span class="badge">${escapeHtml(b.status || '')}</span>
-        <span class="book-card-chapter">${escapeHtml(b.maxSubChapter || '')}</span>
-        ${isSingle ? '' : `<button class="link-btn" data-book="${escapeHtml(String(b.bookId))}">只看这本</button>`}
+        ${b.status ? `<span class="badge">${escapeHtml(b.status)}</span>` : ''}
+        ${clickable
+          ? '<span class="book-card-go">详情 ›</span>'
+          : `<span class="book-card-chapter">${escapeHtml(b.maxSubChapter || '')}</span>`}
       </div>
       <div class="metrics">
         <div class="metric">
@@ -2654,7 +2772,8 @@ function renderBookCards(box, books, isSingle) {
         </div>
       </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
 /** 单本视图下的补充信息：月更新、更新天数、满勤、断更、订阅最高的一章 */
@@ -2696,19 +2815,40 @@ function renderSingleExtra(box, b) {
 
 $('#boardBook').addEventListener('change', (e) => {
   boardBookId = e.target.value || '';
-  // 用户亲手选过了：即使之后点了别处的星标，也不再自动把他拽走
-  boardBookTouched = true;
   renderBoard();
 });
 
-// 书籍卡上的「只看这本」：事件委托，避免每次重渲染都要重新绑定
-$('#boardBooks').addEventListener('click', (e) => {
-  const btn = e.target.closest('[data-book]');
-  if (!btn) return;
-  boardBookId = btn.dataset.book;
-  boardBookTouched = true;
-  renderBoard();
-});
+// 概览卡：整卡点进详情。卡片是 div[role=button]，Enter / Space 要自己转成点击。
+const boardBooksEl = $('#boardBooks');
+if (boardBooksEl) {
+  const openCard = (card) => {
+    if (!card || !card.dataset.book) return;
+    boardBookId = card.dataset.book;
+    renderBoard();
+    // 进详情后把视线带回顶部，否则会停在原来那张卡的位置、看不到汇总卡
+    const host = document.querySelector('section.view[data-view="books"]');
+    if (host && typeof host.scrollIntoView === 'function') host.scrollIntoView({ block: 'start' });
+  };
+  boardBooksEl.addEventListener('click', (e) => {
+    openCard(e.target.closest('.book-card.is-clickable'));
+  });
+  boardBooksEl.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const card = e.target.closest('.book-card.is-clickable');
+    if (!card) return;
+    e.preventDefault();
+    openCard(card);
+  });
+}
+
+// 详情页的返回：回到全部作品的作品卡列表
+const boardBackBtn = $('#btnBoardBack');
+if (boardBackBtn) {
+  boardBackBtn.addEventListener('click', () => {
+    boardBookId = '';
+    renderBoard();
+  });
+}
 
 $('#btnPrevDay').addEventListener('click', () => {
   const snap = currentSnapshot();
@@ -2852,8 +2992,10 @@ function propsBooks() {
     }));
 }
 
-/** 用户亲手选过的作品；空串表示还没选过，此时跟随优先级作品 */
+/** 用户亲手选过的作品；空串表示还没选过，此时跟随详情页的书 / 优先级作品 */
 let propsBookChosen = '';
+/** 上一次渲染时看板看的是哪本：用来判断「换书了」，换书就清掉上一条手动选择 */
+let propsBoardLink = '';
 
 /**
  * 当前选中的书。
@@ -2861,11 +3003,14 @@ let propsBookChosen = '';
  * **不能直接读下拉框的 value**：下拉一旦填上选项，浏览器就会默认选第一项，
  * 于是「没选过就跟随优先级作品」这条逻辑永远轮不到执行——
  * 表现就是「点亮了星标，道具区块却盯着另一本书」。
- * 所以用一个独立的标记记住「用户是否亲手选过」，和看板的 boardBookTouched 同一思路。
+ * 所以用一个独立的标记记住「用户是否亲手选过」。
  */
 function propsBookId() {
   const list = propsBooks();
+  // 用户在下拉里亲手挑过就听他的
   if (propsBookChosen && list.some((b) => b.bookId === propsBookChosen)) return propsBookChosen;
+  // 否则跟着详情页正在看的那本 —— 两块数据讲同一本书才讲得通
+  if (boardBookId && list.some((b) => b.bookId === String(boardBookId))) return String(boardBookId);
   const priority = priorityBoardBookId();
   if (priority && list.some((b) => b.bookId === priority)) return priority;
   return list.length ? list[0].bookId : '';
@@ -3412,6 +3557,23 @@ $('#btnPrevRank').addEventListener('click', () => {
   renderRank();
 });
 
+/**
+ * 给一个 Promise 加上「最多等多久」。
+ *
+ * 主进程侧已经给网络请求加了超时，但界面这一层也要有兜底：
+ * IPC 卡住的原因不止网络（主进程忙、通道异常），而按钮一旦永久禁用，
+ * 用户除了重启软件没有别的办法。宁可报一句「等太久了」也不能卡死。
+ */
+function withDeadline(promise, ms, message) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message || '操作超时，请重试')), ms);
+    Promise.resolve(promise).then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
+
 $('#btnRefreshRank').addEventListener('click', async () => {
   const btn = $('#btnRefreshRank');
   const notice = $('#rankNotice');
@@ -3424,9 +3586,13 @@ $('#btnRefreshRank').addEventListener('click', async () => {
   notice.textContent = '正在抓取榜单页…';
 
   try {
-    const html = await window.api.rank.fetch();
+    // 主进程侧 12 秒 × 2 次，这里给 30 秒上限，留出重试的余量。
+    // 没有这个上限，一旦 IPC 那头不返回，finally 永远不执行，按钮就卡死了。
+    const html = await withDeadline(
+      window.api.rank.fetch(), 30000, '抓取超时（30 秒无响应），请检查网络后重试',
+    );
     const parsed = window.Rank.parseRankHtml(html);
-    const total = ['click', 'collect'].reduce(
+    const total = window.Rank.RANK_KEYS.reduce(
       (s, k) => s + parsed[k].week.length + parsed[k].month.length, 0
     );
     if (!total) throw new Error('未解析到榜单条目，页面结构可能已变更');
@@ -3439,14 +3605,16 @@ $('#btnRefreshRank').addEventListener('click', async () => {
     renderRank();
 
     const prev = window.Rank.previousRecord(rankRecords, date);
+    notice.classList.remove('is-error');
     notice.textContent = prev
       ? `已更新 ${date}，共 ${total} 条，已与 ${prev.date} 对比。`
       : `已更新 ${date}，共 ${total} 条。这是第一份基准，明天再抓即可看到排名升降。`;
   } catch (err) {
     notice.hidden = false;
     notice.classList.add('is-error');
-    notice.textContent = '抓取失败：' + (err.message || err);
+    notice.textContent = '抓取失败：' + ((err && err.message) || err);
   } finally {
+    // 无论成功、失败、超时，按钮都要恢复 —— 这是「点了没反应」最后一道保险
     btn.disabled = false;
     btn.textContent = '刷新榜单';
   }
@@ -4372,20 +4540,44 @@ function updateWriterWordCount() {
   $('#writerBottomWords').textContent = writerFormatNumber(count);
 }
 
-function writerNotice(text, error, autoHideMs = 0) {
+/** 非错误提示的默认停留时间：够看清一句话，又不至于赖在界面上 */
+const WRITER_NOTICE_MS = 6000;
+/** 进度类提示更短：它会被下一条覆盖，没必要耗到 6 秒 */
+const WRITER_NOTICE_PROGRESS_MS = 2500;
+
+/**
+ * 创作中心的提示条。
+ *
+ * 默认**会自动消失**。之前的默认值是 0（永不消失），于是「读取完成：6 本共 1254 章」
+ * 这种一次性结果会一直挂在页面顶部，用户以为还要点掉它 —— 但它根本没有关闭按钮。
+ *
+ * 错误提示（error=true）默认保留更久：读失败、同步失败这类要让人看清，
+ * 但也会在 12 秒后消失，不制造「关不掉的弹窗」。
+ * 需要常驻的特殊情况显式传 0。
+ *
+ * @returns {number} 实际设定的停留毫秒数（0 = 常驻）。返回它是为了让测试
+ *   不必真等 6 秒就能断言「默认不会常驻」。
+ */
+function writerNotice(text, error, autoHideMs) {
   clearTimeout(writerNoticeTimer);
   writerNoticeTimer = null;
   const el = $('#writerNotice');
   el.hidden = !text;
   el.textContent = text || '';
   el.classList.toggle('is-error', !!error);
-  if (text && !error && Number(autoHideMs) > 0) {
+  if (!text) return 0;
+
+  const ttl = autoHideMs === undefined
+    ? (error ? WRITER_NOTICE_MS * 2 : WRITER_NOTICE_MS)
+    : Number(autoHideMs);
+  if (ttl > 0) {
     writerNoticeTimer = setTimeout(() => {
       el.hidden = true;
       el.textContent = '';
       writerNoticeTimer = null;
-    }, Number(autoHideMs));
+    }, ttl);
   }
+  return ttl;
 }
 
 // -------------------------------------------------- 作品库自动补建（后台新书）
@@ -4784,7 +4976,13 @@ async function syncWriterBoundBooks(remoteBooks) {
       }
       const remoteBook = remoteById.get(writerPlatformBookId(local));
       try {
-        const res = await pullWriterBookNewChapters(local, remoteBook, writerNotice);
+        // **不要**把 writerNotice 当进度回调传进去。
+        //
+        // 这条同步是登录成功后自动跑的（切到创作中心也会跑），用户没有点任何按钮。
+        // 以前进度直接写进页面顶部那条横幅，于是"从零开始打开创作中心"就冒出
+        // 「正在检查《…》的章节目录…」并且长时间不动 —— 1254 章要读好几分钟，
+        // 看起来就是卡死。后台任务不该占用用户的提示条，结果由下面统一汇报。
+        const res = await pullWriterBookNewChapters(local, remoteBook, () => {});
         added += res.added;
         failed += res.failed;
         conflicts += res.conflicts || 0;
@@ -5376,7 +5574,8 @@ $('#writerLibrary').addEventListener('click', async (e) => {
       // 万一这里抛错，不能连带把「优先级已保存」这个结果变成失败提示。
       try {
         await refreshPriorityInfo();
-        if (on) boardBookTouched = false;
+        // 概览列表里那一行会换成实心星并排到第一；详情页的星标也跟着变。
+        // 只是重画，不改查看范围 —— 用户正在看哪本就继续看哪本。
         renderBoard();
       } catch (err) {
         console.warn('刷新数据看板失败', err);
@@ -5384,7 +5583,7 @@ $('#writerLibrary').addEventListener('click', async (e) => {
 
       writerNotice(
         on
-          ? `《${book.name}》已设为优先：创作中心排第一，数据看板默认显示这本`
+          ? `《${book.name}》已设为优先：创作中心与数据看板都会排在第一个并显示星标`
           : `《${book.name}》已取消优先`,
         false,
         3000,
@@ -6333,10 +6532,38 @@ function pluginPermissionLabel(permission) {
   }[permission] || permission;
 }
 
-async function loadPlugins() {
+/**
+ * 读取功能列表并渲染。
+ *
+ * `autoRepair` 默认开着：列表为空时先让主进程补装一次内置功能再读一遍。
+ *
+ * 为什么需要它：`installBundled` 只在**启动时**跑一次。而「清除所有数据」失败后
+ * 用户往往不会重启（他只是看到报错），此时 data/plugins 已经被清空、界面还是旧进程，
+ * 功能中心就一直是空的 —— 用户看到的是「我的两个功能没了」，
+ * 而且内置功能没有单独的重装入口，除了重装软件没别的办法。
+ * 现在加载时会自愈，最多重试一次，不会递归。
+ */
+async function loadPlugins(opts) {
+  const allowRepair = !(opts && opts.autoRepair === false);
   try {
-    const result = await window.api.plugins.list();
-    pluginItems = (result && result.plugins) || [];
+    let result = await window.api.plugins.list();
+    let list = (result && result.plugins) || [];
+
+    if (!list.length && allowRepair
+      && window.api.plugins && typeof window.api.plugins.repair === 'function') {
+      const repaired = await window.api.plugins.repair().catch(() => null);
+      if (repaired && Array.isArray(repaired.plugins)) {
+        list = repaired.plugins;
+        if (Array.isArray(repaired.installed) && repaired.installed.length) {
+          const names = repaired.installed
+            .map((id) => (list.find((p) => p.id === id) || {}).name || id)
+            .join('、');
+          pluginNotice(`已自动恢复内置功能：${names}`);
+        }
+      }
+    }
+
+    pluginItems = list;
     if (activePlugin && !pluginItems.some((item) => item.id === activePlugin.id && item.enabled && !item.invalid)) {
       closePlugin();
     }
@@ -6820,7 +7047,16 @@ async function openPlugin(id) {
     }, { once: true });
     frame.src = `data:text/html;base64,${pluginUtf8Base64(documentText)}`;
   } catch (err) {
-    pluginNotice(`打开插件失败：${err.message || err}`, true);
+    // 原始错误长这样：Error invoking remote method 'plugins:get':
+    //   Error: 缺少有效的 manifest.json —— 对用户毫无意义。
+    // 它真正的含义是「这个功能的文件已经不在本机了」（目录被清掉 / 写坏），
+    // 而内置功能可以靠「重新加载」自动补装，所以直接把出路说出来。
+    const raw = String((err && err.message) || err);
+    if (/manifest|不存在|ENOENT/i.test(raw)) {
+      pluginNotice('这个功能的文件已经不在本机了。点「重新加载」，内置功能会自动补装回来。', true);
+    } else {
+      pluginNotice(`打开插件失败：${raw}`, true);
+    }
   }
 }
 
@@ -7041,8 +7277,32 @@ $('#pluginGrid').addEventListener('click', async (e) => {
 
 $('#btnPluginFolder').addEventListener('click', () => window.api.plugins.openFolder());
 $('#btnPluginReload').addEventListener('click', async () => {
-  for (const id of pluginFloatingRuntimes.keys()) disposeFloatingPlugin(id);
-  await loadPlugins();
+  const btn = $('#btnPluginReload');
+  btn.disabled = true;
+  try {
+    // 「重新加载」顺手做一次内置功能补装：
+    // 内置功能没有单独的重装入口，plugins 目录一旦被清掉或写坏，
+    // 用户除了重装整个软件没有别的办法。这一步让它自己能修回来。
+    let restored = [];
+    if (window.api.plugins && typeof window.api.plugins.repair === 'function') {
+      const res = await window.api.plugins.repair();
+      restored = (res && Array.isArray(res.installed)) ? res.installed : [];
+    }
+    for (const id of pluginFloatingRuntimes.keys()) disposeFloatingPlugin(id);
+    await loadPlugins();
+    if (restored.length) {
+      const names = restored
+        .map((id) => (pluginItems.find((p) => p.id === id) || {}).name || id)
+        .join('、');
+      pluginNotice(`已补装内置功能：${names}`);
+    } else if (!pluginItems.length) {
+      pluginNotice('没有可显示的功能。若是刚清过数据，请重启软件。', true);
+    }
+  } catch (err) {
+    pluginNotice(`重新加载失败：${err.message || err}`, true);
+  } finally {
+    btn.disabled = false;
+  }
 });
 $('#btnPluginImport').addEventListener('click', async () => {
   const result = await window.api.plugins.importZip();
@@ -7200,7 +7460,13 @@ $('#btnDataReset').addEventListener('click', async () => {
       label: cfg.primary.label,
       onClick: async () => {
         try {
-          await window.api.data.reset();
+          const res = await window.api.data.reset();
+          // 部分文件被占用时照样重启：已经清掉的不可能回来，
+          // 但要让用户知道哪一步没干净，别以为全清了。
+          if (res && res.problem) {
+            alert('清除基本完成，但有一处没清干净：\n\n' + res.problem
+              + '\n\n备份已保留，可在「数据管理」里恢复。');
+          }
           await relaunchNow();
         } catch (err) {
           alert('清除失败：' + ipcError(err));
@@ -7573,12 +7839,26 @@ function maybeShowStartGuide() {
   });
 }
 
-/** 第一次连上后台（不在登录页了）→ 告诉用户下一步去抓评论 */
+/** 是不是作者后台的地址（喵语数据是另一个域，不该触发登录引导） */
+function isAuthorUrl(url) {
+  return /^https:\/\/author\.ciweimao\.com\//i.test(String(url || ''));
+}
+
+/** 第一次连上后台（真的登录成功）→ 告诉用户下一步去抓评论 */
 function maybeShowAfterLoginGuide(state) {
   if (!state || state.isLoginPage || !state.url) return;
+  // 还在加载中：等它停下来再说，否则可能在重定向前就误判
+  if (state.isLoading) return;
+  // 必须已经在作者后台里
+  if (!isAuthorUrl(state.url)) return;
+  // 必须真的经历过「登录页 → 后台」这一步。
+  // 只是打开了后台首页不等于登录成功。
+  if (!loginJustSucceeded) return;
+
   if (window.Prefs && window.Prefs.get('guideAfterLoginShown', false)) return;
   if (!$('#freeNotice').hidden || !$('#guideDialog').hidden) return;
   if (window.Prefs) window.Prefs.set('guideAfterLoginShown', true);
+  loginJustSucceeded = false;
 
   // 平台视图压在 DOM 之上，弹窗会被整个盖住，所以先退回本地界面（页面不销毁，
   // 选「先看看后台」会原样挂回去），这样弹窗背后是正常界面而不是一片空白

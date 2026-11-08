@@ -107,14 +107,109 @@ test('清除只清目录内容，目录本身还在', () => {
     fs.mkdirSync(path.join(userData, 'Partitions'), { recursive: true });
     write(path.join(userData, 'data', 'vault.json'), '{}');
 
-    const removed = dm.reset(dm.resetTargets({ dataDir, userData }));
-    assert.ok(removed.length >= 2);
+    const result = dm.reset(dm.resetTargets({ dataDir, userData }));
+    assert.ok(result.removed.length >= 2);
+    assert.equal(result.failed.length, 0, '没有占用时不该有失败项');
     assert.ok(fs.existsSync(dataDir), '数据目录本身不该被删掉');
     assert.deepEqual(fs.readdirSync(dataDir), [], '数据目录里应当被清空');
-    assert.ok(!fs.existsSync(path.join(userData, 'Partitions')), '登录态分区应被删除');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('登录态目录交给 Electron，绝不用 fs 删（运行期必 EPERM）', () => {
+  // 这条是事故回归：旧实现把 Local Storage / Partitions 也丢给 fs.rmSync，
+  // 而这些目录被运行中的 Chromium 用 LevelDB 打开着，删必报
+  //   EPERM: Permission denied: '…\Local Storage'
+  // 于是「清除所有数据」一点就弹错、完全不可用。
+  const root = tmp('ciweimao-dm-session-');
+  try {
+    const userData = path.join(root, 'userData');
+    const dataDir = path.join(userData, 'data');
+    write(path.join(dataDir, 'ui-prefs.json'), '{}');
+    write(path.join(userData, 'Local Storage', 'leveldb', '000005.ldb'), 'x');
+    write(path.join(userData, 'Network', 'Cookies'), 'x');
+
+    const targets = dm.resetTargets({ dataDir, userData });
+    const sessionOnes = dm.sessionTargets(targets);
+    assert.ok(sessionOnes.length >= 2, 'Local Storage / Network 应标成 session 目标');
+    assert.ok(sessionOnes.every((t) => t.via === 'electron'),
+      'session 目标必须标记 via=electron，供主进程改走 session.clearStorageData');
+    assert.ok(dm.fsTargets(targets).every((t) => t.via !== 'electron'),
+      'fsTargets 只能返回我们自己的文件');
+
+    const result = dm.reset(targets);
+    // 关键：这些目录一个都不能被 fs 碰过
+    assert.ok(fs.existsSync(path.join(userData, 'Local Storage', 'leveldb', '000005.ldb')),
+      'session 目录不该被 fs 删除（运行期删不掉，只能交给 session API）');
+    assert.ok(result.removed.every((p) => !/[\\/]Local Storage[\\/]?/.test(p)),
+      'removed 里不能出现 session 路径');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('单个文件被占用时收集失败，不中断整轮清除', () => {
+  // 一个缓存文件被占用，不该让已经清掉的数据变成一场空，
+  // 更要紧的是不能把「清除」整体判死 —— 用户会以为功能坏了。
+  const root = tmp('ciweimao-dm-partial-');
+  try {
+    const userData = path.join(root, 'userData');
+    const dataDir = path.join(userData, 'data');
+    write(path.join(dataDir, 'a.json'), '{}');
+    write(path.join(dataDir, 'b.json'), '{}');
+
+    const targets = dm.resetTargets({ dataDir, userData });
+    // 造一个必然失败的清理目标：把一个普通文件当成「目录内容」去 readdir，
+    // ENOTDIR 会被 reset 收进 failed 而不是抛出去。
+    // 必须插到最前面 —— 后面的真实目标会把这个文件删掉，那时就测不到了。
+    targets.unshift({
+      scope: 'data', kind: 'contents', via: 'fs', path: path.join(dataDir, 'a.json'),
+    });
+
+    const result = dm.reset(targets);
+    assert.ok(result.removed.length >= 2, '其它文件仍应被删掉');
+    assert.ok(result.failed.length >= 1, '删不掉的那个应进 failed');
+    assert.ok(result.failed[0].path, '失败项要带路径，界面才能说清是哪一步');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('数据目录把 userData 圈进来时，跳过里面的会话目录', () => {
+  // 极端但真实：用户把「数据保存位置」选成了 userData 根目录。
+  // 这时「清数据目录内容」会连带看到 Local Storage —— 不清掉它这道防线，
+  // 同一条 EPERM 事故就换个入口复现了。
+  const root = tmp('ciweimao-dm-overlap-');
+  try {
+    const userData = path.join(root, 'userData');
+    write(path.join(userData, 'library', 'index.json'), '{}');
+    write(path.join(userData, 'Local Storage', 'leveldb', '000005.ldb'), 'x');
+
+    const targets = dm.resetTargets({ dataDir: userData, userData });
+    // 数据目录就是 userData：data scope 的 contents 指 userData
+    assert.equal(targets[0].kind, 'contents');
+    assert.equal(path.resolve(targets[0].path), path.resolve(userData));
+
+    const result = dm.reset(targets);
+    assert.deepEqual(result.failed, [], '不该出现失败（会话目录被提前跳过）');
+    assert.ok(!fs.existsSync(path.join(userData, 'library')), '普通数据应被清掉');
+    assert.ok(fs.existsSync(path.join(userData, 'Local Storage', 'leveldb', '000005.ldb')),
+      '会话目录必须保留给 Electron 清，不能在这里删');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('coversSessionDir 判断覆盖关系', () => {
+  const sep = path.sep;
+  const sessions = [path.resolve('C:', 'u', 'Local Storage'), path.resolve('C:', 'u', 'Network')];
+  assert.equal(dm.coversSessionDir(path.resolve('C:', 'u', 'Local Storage'), sessions), true, '同一路径算覆盖');
+  assert.equal(dm.coversSessionDir(path.resolve('C:', 'u', 'Network'), sessions), true);
+  assert.equal(dm.coversSessionDir(path.resolve('C:', 'u'), sessions), true, '祖先目录算覆盖（删它会连带删）');
+  assert.equal(dm.coversSessionDir(path.resolve('C:', 'u', 'library'), sessions), false, '兄弟目录不算');
+  assert.equal(dm.coversSessionDir(path.resolve('C:', 'u', 'Local Storage2'), sessions), false,
+    '名字前缀相同但不同目录不算');
 });
 
 test('清除可以按 scope 跳过（只清数据、保留登录态）', () => {
@@ -126,7 +221,8 @@ test('清除可以按 scope 跳过（只清数据、保留登录态）', () => {
     // Windows 目录名不能带冒号，这里用等价的普通名字代表登录态分区
     write(path.join(userData, 'Partitions', 'persist-ciweimao', 'Cookies'), 'x');
 
-    dm.reset(dm.resetTargets({ dataDir, userData }), { skip: ['session'] });
+    const result = dm.reset(dm.resetTargets({ dataDir, userData }), { skip: ['session'] });
+    assert.ok(result.skipped.includes('session'), 'session 应被跳过');
     assert.ok(fs.existsSync(path.join(userData, 'Partitions', 'persist-ciweimao', 'Cookies')),
       '跳过 session 时登录态应保留');
     assert.deepEqual(fs.readdirSync(dataDir), [], '数据仍应被清空');

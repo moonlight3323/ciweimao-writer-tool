@@ -1,0 +1,12 @@
+{
+  "id": "pomodoro",
+  "name": "番茄钟",
+  "version": "1.0.0",
+  "author": "CLOWN",
+  "description": "专注计时：工作 / 休息循环、常用节奏预设、悬浮球实时显示剩余时间。与喝水提醒相互独立，可单独开关。",
+  "permissions": ["ui.editorStat"],
+  "contributes": {
+    "editorStat": true,
+    "floatingWidget": true
+  }
+}

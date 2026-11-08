@@ -169,9 +169,23 @@ maybe('按 preload 真实结构加载页面：关键按钮全部能响应', asyn
   });
 
   try {
-    // 等脚本加载完（boot 是 async，给足时间）
-    await new Promise((r) => setTimeout(r, 1500));
+    // 等脚本真正加载完，而不是固定睡 1.5 秒。
+    //
+    // 固定睡眠是个脆弱的时序假设：测试整体变多以后 `node --test` 会并行跑多个文件，
+    // CPU 一紧张 1.5 秒就不够，页面还没就绪就开始点按钮，
+    // 报出来的是 `Cannot read properties of null (reading 'dataset')` 这种
+    // 完全看不出原因的错（而且单独跑这个文件又能通过）。
+    // 改成轮询真实标志：脚本都在、boot 里的首屏渲染已经跑过。
     const { window } = dom;
+    const ready = (w) => typeof w.renderBoard === 'function'
+      && typeof w.renderNavCustomHint === 'function'
+      && typeof w.setActiveView === 'function';
+    const deadline = Date.now() + 15000;
+    while (!ready(window) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 40));
+    }
+    assert.ok(ready(window), '页面脚本应在 15 秒内加载完成');
+
     const doc = window.document;
 
     // 脚本加载阶段不应该有未捕获错误

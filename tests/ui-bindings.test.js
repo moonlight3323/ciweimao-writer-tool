@@ -66,9 +66,9 @@ test('新版本的关键界面元素齐全', () => {
     'panelDataManage', 'btnDataReset', 'btnBackupNow', 'dataBackupList', 'dataBackupRoot',
     // 侧边栏自定义
     'panelNav', 'btnNavReset', 'navCustomHint', 'navCustomTag',
-    'btnNavAdjust', 'btnNavSave', 'btnNavDiscard', 'navFlash',
+    'btnNavAdjust', 'btnNavSave', 'btnNavDiscard', 'btnNavExit', 'navFlash',
     // 道具获得（数据看板的下半部分，不再是独立页面）
-    'propsSection', 'propsGrid', 'btnPropsRefresh', 'propsNote', 'propsRaw',
+    'boardBooks', 'btnBoardBack', 'propsSection', 'propsGrid', 'btnPropsRefresh', 'propsNote', 'propsRaw',
     'propsNotice', 'propsScanTag', 'propsNoteText', 'propsBook', 'propsBookHint',
     'propsGrain', 'propsChartCanvas', 'propsLegend', 'propsDetailBody', 'propsEmptyInline',
     'propsSettle', 'propsScanDetailTag', 'propsChartSub',

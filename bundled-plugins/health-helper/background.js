@@ -1,7 +1,10 @@
-/* 健康小助手 · 常驻后台
+/* 健康提醒 · 常驻后台
+ *
  * 与页面共用同一份 storage 状态，靠时间戳各自计算，天然同步。
- * 这里负责把倒计时推到码字台右侧的指标面板，并在选择悬浮球模式时
- * 推送给宿主的全局悬浮组件。
+ * 这里只负责把「下次喝水」推到码字台右侧的指标面板。
+ *
+ * 不再挂悬浮球：悬浮球归「番茄钟」独占 —— 专注进度需要一直看得见，
+ * 而喝水/睡觉本质是到点提醒，两个插件各挂一颗球会叠在一起。
  */
 (() => {
   'use strict';
@@ -13,14 +16,9 @@
   let lastRead = 0;
 
   const DEFAULT_STATE = {
-    mode: 'ball',
-    work: 25,
-    rest: 5,
-    rounds: 4,
     waterMin: 45,
-    timer: { phase: 'idle', startedAt: 0, round: 1, pausedRemain: 0 },
+    sleep: '23:30',
     water: { lastAt: 0 },
-    ball: { edge: 'br' },
   };
 
   const pad = (n) => String(n).padStart(2, '0');
@@ -32,25 +30,11 @@
   async function readState() {
     const saved = await PluginAPI.storage.get('state').catch(() => null);
     S = Object.assign({}, DEFAULT_STATE, saved || {});
-    S.timer = Object.assign({}, DEFAULT_STATE.timer, S.timer || {});
+    if (typeof S.water === 'number') { S.waterMin = S.water; S.water = { lastAt: 0 }; }
     S.water = Object.assign({}, DEFAULT_STATE.water, S.water || {});
-    S.ball = Object.assign({}, DEFAULT_STATE.ball, S.ball || {});
+    S.waterMin = Number(S.waterMin) || 45;
     if (!saved) await PluginAPI.storage.set('state', S).catch(() => {});
     lastRead = Date.now();
-  }
-
-  function phaseSeconds() {
-    if (!S) return 0;
-    const t = S.timer || {};
-    return (t.phase === 'rest' ? (S.rest || 5) : (S.work || 25)) * 60;
-  }
-
-  function remainSec() {
-    if (!S) return 0;
-    const t = S.timer || {};
-    if (t.phase === 'idle') return (S.work || 25) * 60;
-    const elapsed = (Date.now() - Number(t.startedAt || 0)) / 1000;
-    return Math.max(0, phaseSeconds() - elapsed);
   }
 
   function waterRemain() {
@@ -65,38 +49,18 @@
   async function push() {
     if (!S) return;
 
-    const t = S.timer || {};
-    const isIdle = t.phase === 'idle';
-    const isRest = t.phase === 'rest';
-    const rem = remainSec();
     const wr = waterRemain();
+    const due = wr <= 0;
+    const value = due ? '该喝水' : fmt(wr);
+    const detail = due
+      ? '点开插件点「我喝了」重新计时'
+      : `每 ${S.waterMin || 45} 分钟提醒 · 睡觉 ${S.sleep || '23:30'}`;
 
-    const label = isIdle ? '🍅 健康助手' : isRest ? '☕ 休息中' : '🍅 专注中';
-    const value = fmt(rem);
-    const total = Math.max(1, phaseSeconds());
-    const progress = Math.round(Math.min(1, Math.max(0, 1 - rem / total)) * 360);
-
-    let detail;
-    if (isIdle) {
-      detail = `点「开始专注」进入 ${S.work || 25}+${S.rest || 5} 节奏`;
-    } else {
-      const round = `第 ${t.round || 1}/${S.rounds || 4} 轮`;
-      detail = wr <= 0 ? `${round} · 💧 该喝水了` : `${round} · 下次喝水 ${fmt(wr)}`;
-    }
-
-    await PluginAPI.ui.setEditorStat({ label, value, detail }).catch(() => {});
-    if (PluginAPI.ui && typeof PluginAPI.ui.setFloatingWidget === 'function') {
-      const state = wr <= 0 ? 'due' : isRest ? 'rest' : isIdle ? 'idle' : 'work';
-      await PluginAPI.ui.setFloatingWidget({
-        visible: S.mode === 'ball',
-        title: '健康小助手',
-        icon: isRest ? '☕' : isIdle ? '⏸' : '🍅',
-        label: value,
-        progress,
-        state,
-        edge: S.ball && S.ball.edge,
-      }).catch(() => {});
-    }
+    await PluginAPI.ui.setEditorStat({
+      label: due ? '💧 该喝水' : '💧 下次喝水',
+      value,
+      detail,
+    }).catch(() => {});
   }
 
   async function loop() {

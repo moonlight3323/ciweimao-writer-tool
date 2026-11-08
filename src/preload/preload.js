@@ -103,6 +103,8 @@ contextBridge.exposeInMainWorld('api', {
     importZip: () => ipcRenderer.invoke('plugins:import'),
     createTemplate: () => ipcRenderer.invoke('plugins:create-template'),
     remove: (id) => ipcRenderer.invoke('plugins:remove', id),
+    /** 补装/修复内置功能：「重新加载」按钮用，内置功能没有单独的重装入口 */
+    repair: () => ipcRenderer.invoke('plugins:repair'),
     storageGet: (id, key) => ipcRenderer.invoke('plugins:storage-get', id, key),
     storageSet: (id, key, value) => ipcRenderer.invoke('plugins:storage-set', id, key, value),
   },

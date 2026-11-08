@@ -57,8 +57,14 @@ function backupRoot(appDataPath) {
 /**
  * 需要清除的目标清单。
  *
- * 返回的是「绝对路径 + 是否整目录删除」的描述，调用方按 kind 处理。
+ * 返回的是「绝对路径 + 是否整目录删除 + 用什么方式清」的描述，调用方按 kind/via 处理。
  * 做成纯函数是为了能直接单测：改清除范围时必须能一眼看到全貌。
+ *
+ * `via` 是个关键区分，之前没有它才出的 bug：
+ *   'fs'       → 我们自己的 JSON/文件，用 fs 删（这是唯一正确的方式）
+ *   'electron' → Chromium 自己的存储目录（Local Storage / Network / Partitions …），
+ *                它们被运行中的进程用 LevelDB 打开着，**fs 删一定 EPERM**，
+ *                必须走 Electron 的 session.clearStorageData()
  *
  * @param {{dataDir:string, userData:string}} o
  */
@@ -69,17 +75,20 @@ function resetTargets(o) {
 
   // 1) 数据目录里的全部内容（不删 dataDir 本身，用户可能选了自己的文件夹，
   //    删掉文件夹会让用户以为丢了盘符上的目录）
-  targets.push({ scope: 'data', kind: 'contents', path: dataDir });
+  targets.push({ scope: 'data', kind: 'contents', via: 'fs', path: dataDir });
 
   // 2) 密码本：vault.js 写死在 userData/data/vault.json
   const vaultDir = path.join(userData, 'data');
   if (path.resolve(vaultDir) !== dataDir) {
-    targets.push({ scope: 'vault', kind: 'contents', path: vaultDir });
+    targets.push({ scope: 'vault', kind: 'contents', via: 'fs', path: vaultDir });
   }
 
-  // 3) 登录态与界面存储。缺哪一个都正常（首次运行还没生成），删的时候忽略不存在
+  // 3) 登录态与界面存储。缺哪一个都正常（首次运行还没生成）。
+  //    这些全部交给 session API 清，**不要用 fs 删**——它们在运行时是被锁住的，
+  //    rmSync 会抛 EPERM「Permission denied: …\Local Storage」，整个清除就此失败。
+  //    路径仍然列出来，一是让调用方知道要清哪些会话分区，二是界面上能说清清除范围。
   for (const item of [
-    'Partitions',            // persist:ciweimao 登录态分区
+    'Partitions',            // persist:ciweimao / persist:miaoyu 登录态分区
     'Local Storage',
     'Session Storage',
     'IndexedDB',
@@ -87,7 +96,12 @@ function resetTargets(o) {
     'Cookies',
     'Cookies-journal',
   ]) {
-    targets.push({ scope: 'session', kind: 'path', path: path.join(userData, item) });
+    targets.push({
+      scope: 'session',
+      kind: 'path',
+      via: 'electron',
+      path: path.join(userData, item),
+    });
   }
 
   // 4) 「数据保存在哪里」这个选择本身。留着它，重启后不会重新问一遍，
@@ -95,10 +109,21 @@ function resetTargets(o) {
   targets.push({
     scope: 'storage',
     kind: 'path',
+    via: 'fs',
     path: path.join(userData, 'storage-location.json'),
   });
 
   return targets;
+}
+
+/** 需要走文件系统删除的目标（我们自己写的文件），null 安全 */
+function fsTargets(targets) {
+  return (Array.isArray(targets) ? targets : []).filter((t) => t && t.via !== 'electron');
+}
+
+/** 需要走 Electron session API 清理的目标（Chromium 自己的存储） */
+function sessionTargets(targets) {
+  return (Array.isArray(targets) ? targets : []).filter((t) => t && t.via === 'electron');
 }
 
 /** 目录大小（字节）；不存在返回 0 */
@@ -242,26 +267,70 @@ function restoreBackup(root, name, targets, meta) {
 }
 
 /**
- * 执行清除。
+ * 判断要删的路径是否「覆盖了某个会话目录」。
+ *
+ * 用在清数据目录的时候：万一用户把「数据保存位置」选成了 userData 根目录，
+ * 清它的内容就又会撞上 Local Storage / Network 这些被 Chromium 锁住的目录，
+ * 于是同一条 EPERM 事故换个入口复现。这里提前跳过。
+ */
+function coversSessionDir(targetPath, sessionPaths) {
+  const t = path.resolve(targetPath);
+  for (const sp of sessionPaths) {
+    if (t === sp) return true;
+    // t 是会话目录的祖先（删 t 等于连带删会话目录）
+    if (sp.startsWith(t + path.sep)) return true;
+  }
+  return false;
+}
+
+/**
+ * 执行清除（只负责文件系统部分）。
+ *
+ * 之所以只清 `via !== 'electron'` 的目标：Chromium 的 Local Storage / Network /
+ * Partitions 在运行期被进程占用，rmSync 必定 EPERM。早期版本在这里抛错，
+ * 结果「清除所有数据」一点就弹
+ *   `无法删除 …\Local Storage: EPERM, Permission denied`
+ * 整个功能等于不可用。会话数据改由调用方用 session.clearStorageData() 清。
+ *
+ * 单个目标删不掉不再中断整轮：收集到 failed 里一起返回，由调用方决定怎么报。
+ * 这样「一个缓存文件被占用」不会把已经清掉的其它数据变成一场空。
+ *
  * @param {Array} targets resetTargets() 的结果
  * @param {{skip?:string[]}} opts skip 里的 scope 不删（例如只清数据、保留登录态）
+ * @returns {{removed:string[], failed:Array<{path:string,message:string}>, skipped:string[]}}
  */
 function reset(targets, opts) {
   const skip = new Set((opts && opts.skip) || []);
   const removed = [];
+  const failed = [];
+  const skipped = [];
+
+  // 会话目录的绝对路径：清任何目录内容时都要避开它们
+  const sessionPaths = (Array.isArray(targets) ? targets : [])
+    .filter((t) => t && t.via === 'electron')
+    .map((t) => path.resolve(t.path));
+
   for (const t of targets) {
-    if (skip.has(t.scope)) continue;
+    if (!t) continue;
+    // 会话数据交给 Electron，文件系统碰不得
+    if (t.via === 'electron') { skipped.push(t.scope); continue; }
+    if (skip.has(t.scope)) { skipped.push(t.scope); continue; }
     if (!fs.existsSync(t.path)) continue;
+
     if (t.kind === 'contents') {
       // 只清内容、保留目录本身
-      for (const name of fs.readdirSync(t.path)) {
+      let names = [];
+      try { names = fs.readdirSync(t.path); }
+      catch (err) { failed.push({ path: t.path, message: err.message }); continue; }
+      for (const name of names) {
         const full = path.join(t.path, name);
+        // 数据目录正好把 userData 圈进来时，跳过里面的会话目录
+        if (coversSessionDir(full, sessionPaths)) continue;
         try {
           fs.rmSync(full, { recursive: true, force: true });
           removed.push(full);
         } catch (err) {
-          // 清不掉通常是文件被占用（另一个实例在跑）：报错而不是假装成功
-          throw new Error(`无法删除 ${full}：${err.message}`);
+          failed.push({ path: full, message: err.message });
         }
       }
     } else {
@@ -269,11 +338,12 @@ function reset(targets, opts) {
         fs.rmSync(t.path, { recursive: true, force: true });
         removed.push(t.path);
       } catch (err) {
-        throw new Error(`无法删除 ${t.path}：${err.message}`);
+        failed.push({ path: t.path, message: err.message });
       }
     }
   }
-  return removed;
+
+  return { removed, failed, skipped };
 }
 
 /** 人类可读体积，与更新器里的口径保持一致 */
@@ -289,6 +359,9 @@ module.exports = {
   BACKUP_DIR_NAME,
   backupRoot,
   resetTargets,
+  fsTargets,
+  sessionTargets,
+  coversSessionDir,
   dirSize,
   copyTree,
   createBackup,

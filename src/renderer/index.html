@@ -606,10 +606,15 @@
             <select class="select" id="boardBook" disabled>
               <option value="">全部作品（合计）</option>
             </select>
+            <!-- 单本详情页的返回入口：和下拉并排，符合「刚才从哪儿来的」直觉 -->
+            <button class="btn ghost btn-sm" id="btnBoardBack" type="button" hidden>← 返回全部作品</button>
             <span class="scope-hint" id="boardScopeHint"></span>
           </div>
 
           <div class="stat-row" id="boardTotals"></div>
+
+          <!-- 全部作品：一行一本的作品卡（六指标网格），整卡点进详情。
+               详情页复用同一个容器，只画当前这一本。 -->
           <div id="boardBooks" class="board-books"></div>
           <div id="boardExtra" class="single-extra" hidden></div>
 
@@ -964,12 +969,17 @@
             <p class="hint-line">
               点「调整侧边栏」后，左边每一项右侧会出现上移、下移和删除按钮，按自己的习惯重排即可。
               调整会立刻在左侧预览，<b>点「保存排列」生效并结束调整</b>；
-              不保存就离开这一页，改动会还原。<b>「设置」这一项不能删除</b>——它是恢复侧边栏的唯一入口。
+              不保存就离开这一页，改动会还原。
+              <b>概览、数据看板、抓取与同步、功能中心、设置是固定项</b>——没有删除按钮，
+              但仍然可以上下移动。
             </p>
             <div class="toolbar nav-actions">
               <button class="btn primary" id="btnNavAdjust" type="button">调整侧边栏</button>
               <button class="btn primary" id="btnNavSave" type="button" disabled hidden>保存排列</button>
               <button class="btn ghost" id="btnNavDiscard" type="button" disabled hidden>撤销修改</button>
+              <!-- 常显可点：进去没做任何改动时，保存/撤销都是灰的，
+                   没有这个按钮就退不出调整态 -->
+              <button class="btn ghost" id="btnNavExit" type="button" hidden>退出调整</button>
               <button class="btn ghost" id="btnNavReset" type="button">恢复初始</button>
             </div>
             <p class="hint-line nav-state" id="navCustomHint">当前：默认排列</p>

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>番茄钟</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app" data-mode="sidebar">
+
+  <!-- ============ 侧边栏形态 ============ -->
+  <aside id="sidebar" class="sidebar">
+    <header class="sb-head">
+      <span class="sb-title">番茄钟</span>
+      <button class="icon-btn" id="toBall" title="切换为悬浮球">◎</button>
+    </header>
+
+    <div class="sb-phase" id="sbPhase">准备开始</div>
+    <div class="sb-time" id="sbTime">25:00</div>
+
+    <div class="bar"><i id="sbBar"></i></div>
+    <div class="sb-meta">
+      <span id="sbRound">第 1 / 4 轮</span>
+      <span id="sbState">待机</span>
+    </div>
+
+    <div class="sb-actions">
+      <button class="btn primary" id="btnStart">开始专注</button>
+      <button class="btn ghost" id="btnReset">重置</button>
+    </div>
+
+    <div class="sb-presets">
+      <div class="preset-title">常用节奏</div>
+      <div class="preset-list" id="presetList"></div>
+    </div>
+
+    <button class="link-btn" id="openSettings">详细设置</button>
+  </aside>
+
+  <!-- ============ 悬浮球形态 ============ -->
+  <div id="ball" class="ball hidden" title="点开查看倒计时">
+    <svg class="ring" viewBox="0 0 100 100">
+      <circle class="ring-bg" cx="50" cy="50" r="44"></circle>
+      <circle class="ring-fg" id="ballRing" cx="50" cy="50" r="44"></circle>
+    </svg>
+    <div class="ball-core">
+      <span class="ball-icon" id="ballIcon">🍅</span>
+      <span class="ball-pct" id="ballPct">0%</span>
+    </div>
+  </div>
+
+  <!-- 悬浮球点开后的弹窗 -->
+  <div id="popover" class="popover hidden">
+    <div class="po-head">
+      <span id="poPhase">专注中</span>
+      <button class="icon-btn" id="poSettings" title="设置">⚙</button>
+    </div>
+    <div class="po-time" id="poTime">25:00</div>
+    <div class="bar"><i id="poBar"></i></div>
+    <div class="po-meta">
+      <span id="poRound">第 1 / 4 轮</span>
+      <span id="poHint">保持专注</span>
+    </div>
+    <div class="po-actions">
+      <button class="btn primary btn-sm" id="poStart">开始</button>
+      <button class="btn ghost btn-sm" id="poReset">重置</button>
+    </div>
+  </div>
+
+  <!-- ============ 设置面板 ============ -->
+  <div id="settings" class="sheet hidden">
+    <div class="sheet-card">
+      <header class="sheet-head">
+        <b>番茄钟设置</b>
+        <button class="icon-btn" id="closeSettings">×</button>
+      </header>
+
+      <div class="sheet-body">
+        <div class="field">
+          <label>形态</label>
+          <div class="seg" id="modeSeg">
+            <button data-v="sidebar">侧边栏</button>
+            <button data-v="ball">悬浮球</button>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <div class="fg-head">
+            <span class="fg-title">🍅 专注节奏</span>
+            <span class="fg-desc">工作与休息交替，跑完设定轮次结束</span>
+          </div>
+
+          <div class="field-row">
+            <div class="field">
+              <label>工作（分钟）</label>
+              <input type="number" id="inWork" min="1" max="180" step="1">
+            </div>
+            <div class="field">
+              <label>休息（分钟）</label>
+              <input type="number" id="inRest" min="1" max="60" step="1">
+            </div>
+            <div class="field">
+              <label>轮次</label>
+              <input type="number" id="inRounds" min="1" max="12" step="1">
+            </div>
+          </div>
+
+          <div class="field">
+            <label>保存为常用节奏</label>
+            <div class="save-row">
+              <input type="text" id="inPresetName" placeholder="例如：40+10 深读" maxlength="12">
+              <button class="btn btn-sm" id="btnSavePreset">保存</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>已保存的节奏</label>
+            <div class="preset-list" id="presetListFull"></div>
+          </div>
+        </div>
+
+        <p class="tip">悬浮球可拖动，松手会自动吸附到边缘。点球展开倒计时。</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+<script src="main.js"></script>
+</body>
+</html>
