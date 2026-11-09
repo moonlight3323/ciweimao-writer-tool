@@ -1776,11 +1776,64 @@
   function pageHookPublish() {
     if (window.__wbHooked) return { ok: true, already: true };
 
+    /**
+     * 在站点页面顶部弹一条自己的提示。
+     *
+     * 位置刻意选在页面内部：宿主窗口那边有顶栏状态条，但最少要等一拍轮询（1.2 秒）
+     * 才亮；而作者点完按钮视线就在按钮附近，这一拍的空档看起来就是「没反应」。
+     * 样式全内联、不依赖站点 CSS，站点改版也不会变成白底白字。
+     */
+    function pageToast(text, kind, holdMs) {
+      var host = document.body || document.documentElement;
+      if (!host) return;
+      var el = document.getElementById('__wbCheckToast');
+      if (!el) {
+        el = document.createElement('div');
+        el.id = '__wbCheckToast';
+        el.setAttribute('style',
+          'position:fixed;left:50%;top:16px;transform:translateX(-50%);z-index:2147483647;'
+          + 'max-width:70%;padding:9px 18px;border-radius:8px;color:#fff;'
+          + 'font:13px/1.7 -apple-system,BlinkMacSystemFont,"Microsoft YaHei",sans-serif;'
+          + 'box-shadow:0 8px 24px rgba(0,0,0,.28);pointer-events:none;transition:opacity .25s;');
+        host.appendChild(el);
+      }
+      var bg = 'rgba(28,28,30,.94)';
+      if (kind === 'ok') bg = 'rgba(22,116,62,.96)';
+      else if (kind === 'error') bg = 'rgba(176,42,42,.96)';
+      else if (kind === 'warn') bg = 'rgba(178,110,20,.96)';
+      el.textContent = text;
+      el.style.background = bg;
+      el.style.opacity = '1';
+      if (el.__wbHide) { clearTimeout(el.__wbHide); el.__wbHide = null; }
+      // 「进行中」不自动收，等 settle 换成结果；其余按 holdMs 淡出
+      if (kind === 'busy') return;
+      el.__wbHide = setTimeout(function () {
+        el.style.opacity = '0';
+        el.__wbHide = setTimeout(function () {
+          if (el.parentNode) el.parentNode.removeChild(el);
+        }, 300);
+      }, holdMs || 3200);
+    }
+
     function doCheck(buttonValue) {
       var bv = buttonValue || 'dosubmit';
+
+      // 防重入：站点按钮的内联 onclick 万一没摘干净（站点换写法、我们摘漏了），
+      // 或者用户手快连点两下，都不能让两个请求同时飞出去抢同一个结果槽。
+      // 后到的直接忽略 —— 前一个请求的结果才是要的。
+      if (window.__wbChecking) return;
+      window.__wbChecking = true;
+
+      // 每次请求一个序号。超时之后用户点「重试」会开一个新请求，
+      // 而旧请求的 ajax 回调可能这时才姗姗来迟 —— 没有序号的话它会把
+      // 新请求的结果覆盖成旧结果，界面于是显示上一轮的错误，越点越乱。
+      var seq = (window.__wbSeq || 0) + 1;
+      window.__wbSeq = seq;
+
       var $jq = window.jQuery || window.$;
       var form = document.getElementById('myform');
       if (!form || !$jq) {
+        window.__wbChecking = false;
         window.__wbCheckResult = { phase: 'error', at: Date.now(), error: '页面还没就绪（表单或 jQuery 不在）' };
         return;
       }
@@ -1791,6 +1844,44 @@
 
       window.__wbCheckResult = { phase: 'pending', at: Date.now(), buttonValue: bv };
 
+      // 页面里立刻给一条反馈。
+      // 为什么要它：宿主那边靠 1.2 秒一次的轮询，顶栏状态条最快也要一拍才亮；
+      // 作者点完按钮视线还在按钮上，这一拍的空档就是「点了没反应」。
+      // 这条提示直接画在页面上，几百毫秒内就能看到，且跟着页面的主题走不掉。
+      pageToast('正在提交校验…', 'busy');
+
+      // 超时兜底：站点这个接口正常 2 秒内回。
+      // 以前这里没有 timer，ajax 一旦挂住（断网、被拦、会话失效但连接不关），
+      // __wbCheckResult 就永远停在 pending，宿主轮询对 pending 是直接跳过的，
+      // 于是界面从头到尾没有任何反馈 —— 这是「卡住」的另一半原因。
+      function settle(obj) {
+        if (!window.__wbChecking) return;      // 已经结束过了，别覆盖真实结果
+        if (window.__wbSeq !== seq) return;    // 上一轮请求的回调，丢掉
+        window.__wbChecking = false;
+        if (timer) { clearTimeout(timer); timer = null; }
+        window.__wbCheckResult = obj;
+
+        if (obj.phase === 'error') {
+          pageToast(obj.error || '提交失败', 'error', 6000);
+        } else if (obj.suggestion === 'pass') {
+          pageToast('发布成功 ✓ 正在跳转…', 'ok');
+        } else if (obj.suggestion === 'error') {
+          pageToast(obj.msg || '站点没有接收这一章', 'error', 6000);
+        } else {
+          pageToast('站点报出敏感内容，这一章没有发出去', 'warn', 6000);
+        }
+      }
+      var timer = setTimeout(function () {
+        settle({
+          phase: 'error',
+          at: Date.now(),
+          buttonValue: bv,
+          error: '提交校验 25 秒没有响应，可能后台掉线了，点这里重新登录后再发',
+          needLogin: false,
+          timeout: true,
+        });
+      }, 25000);
+
       $jq.ajax({
         url: 'https://author.ciweimao.com/book_manage/add_chapter',
         type: 'post',
@@ -1798,7 +1889,16 @@
         dataType: 'json',
         success: function (data) {
           var suggestion = String((data && data.suggestion) || '');
-          window.__wbCheckResult = {
+          // 站点偶尔不给 url（或者给空串）。以前这种情况什么都不做 ——
+          // 结果是：章节确实发出去了，页面却一动不动，作者以为没发出去，又点一遍。
+          // 所以这里先把「该跳哪儿」算出来，空就兜底到这本书的章节管理页。
+          var target = (data && data.url) ? String(data.url) : '';
+          if (!target) {
+            var bidEl = document.querySelector('input[name=book_id]');
+            var bid = bidEl ? String(bidEl.value || '') : '';
+            target = '/book_manage/view_chapter_info' + (bid ? ('?book_id=' + bid) : '');
+          }
+          settle({
             phase: 'done',
             at: Date.now(),
             buttonValue: bv,
@@ -1806,22 +1906,32 @@
             msg: String((data && data.msg) || ''),
             url: String((data && data.url) || ''),
             hintWords: String((data && data.hint_words) || ''),
-          };
-          // 通过：站点原本会弹一个「确认」再跳转，这里直接跳，别让人多点一次
-          if (suggestion === 'pass' && data && data.url) {
-            try { window.location.href = data.url; } catch (e1) { /* ignore */ }
+            navTo: target,
+          });
+          // 通过：站点原本会弹一个「确认」再跳转，这里直接跳，别让人多点一次。
+          //
+          // 但要先让宿主读到结果再跳：跳转会让页面卸载，宿主那边的轮询就再也拿不到
+          // 这次成功，侧栏会一直停在「已填入后台」，用户以为没发出去，又点一遍。
+          // sessionStorage 在同源内跨页面共享，所以先把结果备份进去，跳完宿主还能捞回来。
+          if (suggestion === 'pass') {
+            try {
+              window.sessionStorage.setItem('__wbCheckResult', JSON.stringify(window.__wbCheckResult));
+            } catch (e1) { /* 隐私模式禁用了也不影响主流程 */ }
+            setTimeout(function () {
+              try { window.location.href = target; } catch (e2) { /* ignore */ }
+            }, 60);
           }
         },
         error: function (xhr) {
           var body = '';
-          try { body = String((xhr && xhr.responseText) || '').slice(0, 300); } catch (e2) { body = ''; }
-          window.__wbCheckResult = {
+          try { body = String((xhr && xhr.responseText) || '').slice(0, 300); } catch (e3) { body = ''; }
+          settle({
             phase: 'error',
             at: Date.now(),
             buttonValue: bv,
             needLogin: /inputAccount|J_ChangeLoginType|\/login/i.test(body),
             error: '提交校验失败（HTTP ' + ((xhr && xhr.status) || '?') + '）',
-          };
+          });
         },
       });
     }
@@ -1831,28 +1941,82 @@
     window.__wbDoCheck = doCheck;
 
     // 再硬一层：把两个按钮换成同名同貌的克隆节点。
-    // cloneNode + replaceChild 会把站点之前绑在这两个节点上的事件一起丢掉，
-    // 所以不管它是 bind / on / 内联，点下去都只走 doCheck。
-    ['dosubmit', 'savedraft'].forEach(function (id) {
-      var btn = document.getElementById(id);
+    // cloneNode + replaceChild 会把站点用 addEventListener / jQuery .on 绑的事件一起丢掉，
+    // 但**内联 onclick 属性会被原样复制**（它是 DOM 属性，不是监听器）。
+    // 站点这两个按钮正是 `onclick="check_special()"` 这种写法，于是点一次会跑两遍：
+    //   ① 克隆保留的内联 onclick → window.check_special → 我们的 doCheck
+    //   ② 我们自己 addEventListener 的 click → doCheck
+    // 两个请求抢同一个 window.__wbCheckResult：后发的立刻把先发的 done 覆盖成 pending，
+    // 宿主轮询只认 done/error，于是界面一直停在「什么都没发生」——就是用户说的「卡住了」。
+    // 所以克隆之后必须把内联事件属性摘掉。
+    var INLINE_EVENTS = [
+      'onclick', 'onmousedown', 'onmouseup', 'ondblclick',
+      'onkeydown', 'onkeyup', 'onkeypress', 'onsubmit',
+    ];
+
+    /**
+     * 找按钮：先按 id，找不到再按可见文字。
+     *
+     * 只认 id 有个隐患：站点哪天把 <input id="dosubmit"> 改成
+     * <button class="btn btn-warning">发布章节</button>，接管就整个失效 ——
+     * 而失效是完全静默的：用户点的是站点原生按钮，站点自己提交、自己跳转，
+     * 我们的轮询永远等不到结果，侧栏一直停在「已填入后台」，
+     * 用户看到的就是「点了发布，然后卡住了」。
+     */
+    function findButton(id, label) {
+      var byId = document.getElementById(id);
+      if (byId) return byId;
+      var all = document.querySelectorAll('input[type=button], input[type=submit], button');
+      for (var i = 0; i < all.length; i += 1) {
+        var t = String(all[i].value || all[i].textContent || '').replace(/\s+/g, '');
+        if (t === label) return all[i];
+      }
+      return null;
+    }
+
+    var hooked = 0;
+    [
+      { id: 'dosubmit', label: '发布章节', bv: 'dosubmit' },
+      { id: 'savedraft', label: '保存草稿', bv: 'savedraft' },
+    ].forEach(function (spec) {
+      var btn = findButton(spec.id, spec.label);
       if (!btn || btn.getAttribute('data-wb-hooked') === '1') return;
       var clone = btn.cloneNode(true);
       clone.setAttribute('data-wb-hooked', '1');
+      for (var k = 0; k < INLINE_EVENTS.length; k += 1) {
+        clone.removeAttribute(INLINE_EVENTS[k]);
+      }
       clone.addEventListener('click', function (e) {
         if (e && e.preventDefault) e.preventDefault();
-        doCheck(id === 'savedraft' ? 'savedraft' : 'dosubmit');
+        if (e && e.stopPropagation) e.stopPropagation();
+        doCheck(spec.bv);
       });
       btn.parentNode.replaceChild(clone, btn);
+      hooked += 1;
     });
 
     window.__wbHooked = true;
     window.__wbCheckResult = null;
-    return { ok: true, hooked: true };
+    // hooked 告诉宿主到底接管上了没有：0 说明站点改版了，
+    // 此时点页面上的按钮走的是站点原生流程，界面必须把这件事说出来
+    return { ok: true, hooked: true, buttons: hooked };
   }
 
   /** 宿主轮询用：取最近一次被接管的校验结果 */
   function pageReadCheck() {
     var r = window.__wbCheckResult;
+
+    // 页面提交成功后站点会自己跳走，跳转那一刻页面卸载，__wbCheckResult 随之消失。
+    // 宿主是 1.2 秒轮询一次，很容易还没读到就跳没了 —— 侧栏便一直停在「已填入后台」，
+    // 用户以为没发出去，又点一遍，站点就报「重复提交」。
+    // 所以 doCheck 成功时会往 sessionStorage 里备份一份（同源跨页面共享），这里捞回来。
+    if (!r) {
+      try {
+        var bak = window.sessionStorage.getItem('__wbCheckResult');
+        if (bak) r = JSON.parse(bak);
+      } catch (e0) { /* 读不到就按 idle 处理 */ }
+    }
+
     if (!r) return { phase: 'idle', hooked: !!window.__wbHooked };
     return {
       phase: r.phase,
@@ -1863,14 +2027,18 @@
       msg: r.msg || '',
       url: r.url || '',
       hintWords: r.hintWords || '',
+      /** 通过后该跳到哪：站点给的 url，没有就是兜底的章节管理页 */
+      navTo: r.navTo || '',
       error: r.error || '',
       needLogin: !!r.needLogin,
+      fromStorage: !window.__wbCheckResult,
     };
   }
 
   /** 清掉已读的结果，避免同一份结果被反复处理 */
   function pageClearCheck() {
     window.__wbCheckResult = null;
+    try { window.sessionStorage.removeItem('__wbCheckResult'); } catch (e) { /* ignore */ }
     return true;
   }
 

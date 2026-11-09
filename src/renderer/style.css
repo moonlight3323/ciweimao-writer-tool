@@ -2791,6 +2791,9 @@ body.is-locked { overflow: hidden; }
   position: relative;
   overflow: hidden;
   border-radius: 8px;
+  /* 高度兜底下限：正常由下面的 aspect-ratio 决定，这里是最后一道保险 ——
+     封面容器一旦高度归零，整张卡片就只剩一行标题，看着像坏了。 */
+  min-height: 120px;
   background: linear-gradient(145deg, #dce7f5, #8aa7cc);
   box-shadow: 0 5px 16px rgba(33, 52, 78, .18), inset 7px 0 rgba(255,255,255,.18);
 }
@@ -2864,13 +2867,16 @@ body.is-locked { overflow: hidden; }
   cursor: pointer;
 }
 .writer-book-delete:hover { background: var(--surface); color: var(--danger-ink); }
-/* 优先级星标：压在封面右上角。
+/* 优先级星标：视觉上压在封面右上角，但**定位参照是卡片**（.writer-book-card）。
+   放在封面里会有个致命问题：封面 overflow:hidden，高度又完全由封面图决定，
+   没读到封面时高度为 0，星标被裁掉 —— 看得见点不着，加了星就取消不了。
+   卡片有 8px 内边距（配 -8px 外边距），所以 14px = 距封面边缘 6px，看上去位置不变。
    左上角是「来源」标签（作者库 / 导入 / 原创）的位置，两个都放左边会叠在一起，
    所以星标固定走右侧。半透明底保证在任何封面上都看得清。 */
 .writer-book-pin {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 14px;
+  right: 14px;
   z-index: 2;
   width: 26px;
   height: 26px;
@@ -2928,6 +2934,63 @@ body.is-locked { overflow: hidden; }
 .writer-toolbar { flex-wrap: wrap; }
 
 /* ---- 投递进度浮层（敏感词详情在独立侧栏窗口显示） ---- */
+/* 顶栏发布状态条：唯一不会被内嵌网页盖住的反馈位置 */
+.pub-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 260px;
+  flex: 0 1 auto;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.pub-status[hidden] { display: none; }
+.pub-status-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.pub-status-text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.pub-status-x {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.pub-status-x:hover { background: var(--surface); color: var(--text); }
+.pub-status.is-busy .pub-status-dot {
+  background: var(--accent);
+  animation: pubStatusPulse 1.2s ease-in-out infinite;
+}
+.pub-status.is-ok .pub-status-dot { background: var(--ok-ink); }
+.pub-status.is-ok .pub-status-text { color: var(--ok-ink); }
+.pub-status.is-error .pub-status-dot { background: var(--danger-ink); }
+.pub-status.is-error .pub-status-text { color: var(--danger-ink); font-weight: 600; }
+
+@keyframes pubStatusPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .45; transform: scale(.82); }
+}
+
 .publish-toast {
   position: absolute;
   right: 18px;

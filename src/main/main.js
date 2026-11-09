@@ -472,13 +472,28 @@ ipcMain.handle('browser:state', async () => {
  * 这是所有数据抓取的统一入口：脚本运行在 author.ciweimao.com 源下，
  * 因此自带登录 cookie，可直接 fetch 同源接口或读取 DOM。
  */
-ipcMain.handle('browser:eval', async (_e, code) => {
+ipcMain.handle('browser:eval', async (_e, code, timeoutMs) => {
   const view = ensureBrowserView();
   const wc = view.webContents;
   if (!wc.getURL()) {
     throw new Error('平台页面尚未加载，请先打开作者后台');
   }
-  return await wc.executeJavaScript(code, true);
+  // 必须带超时。页面正在跳转时 executeJavaScript 可能永远不 resolve：
+  // 旧文档已经销毁、新文档还没就绪，请求就那么挂着。而发布轮询有 pollBusy 闸门
+  // （同一时刻只查一次），一次挂住就再也不轮询 —— 表现是点完发布之后界面
+  // 从头到尾没有任何反应，实际上章节早就发出去了。
+  const limit = Number(timeoutMs) > 0 ? Number(timeoutMs) : 10000;
+  let timer = null;
+  try {
+    return await Promise.race([
+      wc.executeJavaScript(code, true),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('页面响应超时（可能正在跳转）')), limit);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 });
 
 /** 跳转到指定后台路径（相对 author.ciweimao.com） */

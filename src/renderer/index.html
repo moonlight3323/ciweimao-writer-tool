@@ -52,7 +52,7 @@
           <span class="conn-dot"></span>
           <span class="conn-text">后台未打开</span>
         </div>
-        <div class="version">v1.0.8</div>
+        <div class="version">v1.0.9</div>
       </div>
     </aside>
 
@@ -63,6 +63,15 @@
           <span class="crumb" id="pageCrumb"></span>
         </div>
         <div class="topbar-right">
+          <!-- 发布结果必须放在这里。后台页面是原生 WebContentsView，盖在 #content
+               之上，右下角那个 #publishToast 就在 #content 里面 —— 页面一开就被整个
+               盖住。作者点「发布章节」后提示确实弹了，只是弹在看不见的地方，
+               表现就是「点了没反应，可章节其实已经发出去了」。顶栏在视图之外。 -->
+          <div class="pub-status" id="pubStatus" hidden role="status" aria-live="polite">
+            <span class="pub-status-dot"></span>
+            <span class="pub-status-text" id="pubStatusText"></span>
+            <button class="pub-status-x" id="btnPubStatusClose" type="button" title="收起">×</button>
+          </div>
           <!-- 原来这里是浏览器式的「后退 / 前进」。后台页是内嵌的，真正想回的是
                刚才那个界面（改完章节 → 投到后台 → 再回去接着改），所以换成回本地视图。
                后台页面只是从窗口上摘下来，不销毁，再开还是填了一半的那张表单。 -->
@@ -275,12 +284,12 @@
               <div class="writer-pinned-head">
                 <div>
                   <h3>优先级作品</h3>
-                  <p>点亮封面上角的星标就会排到这里，数据看板也默认显示这一本。</p>
+                  <p>点亮封面右上角的星标就会排到这里，数据看板也默认显示这一本。</p>
                 </div>
                 <span class="writer-pinned-badge" id="writerPinnedBadge">0 本</span>
               </div>
               <div class="writer-book-grid writer-pinned-grid" id="writerPinnedGrid"></div>
-              <div class="writer-pinned-empty" id="writerPinnedEmpty" hidden>还没有优先级作品。点作品封面左上角的 ☆，它就会排到最前面，数据看板也会默认看这一本。</div>
+              <div class="writer-pinned-empty" id="writerPinnedEmpty" hidden>还没有优先级作品。点作品封面右上角的 ☆，它就会排到最前面，数据看板也会默认看这一本。</div>
             </section>
             <div class="writer-other-label" id="writerOtherLabel">其他作品</div>
             <div class="writer-book-grid" id="writerBookGrid"></div>
@@ -292,7 +301,7 @@
             <div class="writer-filter-empty" id="writerFilterEmpty" hidden>
               <div class="writer-empty-icon">☆</div>
               <h3>还没有置顶书籍</h3>
-              <p>在作品卡片右下角点击 ☆，就能把正在更新的书放到置顶栏。</p>
+              <p>在作品封面右上角点击 ☆，就能把正在更新的书放到优先级栏。</p>
             </div>
           </div>
 

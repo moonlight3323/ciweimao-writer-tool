@@ -196,31 +196,29 @@ ${'='.repeat(50)}
 fs.writeFileSync(path.join(OUT, '使用说明.txt'), '\ufeff' + readme, 'utf8');
 console.log('  使用说明.txt 已写入');
 
-// ---- 4. 附上 Word 版功能说明（如已生成） ----
-const docxSrc = path.join(ROOT, 'docs', '功能说明与使用说明.docx');
-if (fs.existsSync(docxSrc)) {
-  fs.copyFileSync(docxSrc, path.join(OUT, '功能说明与使用说明.docx'));
-  console.log('  功能说明与使用说明.docx 已附上');
-} else {
-  console.warn('  [提示] 未找到 Word 版功能说明，跳过（仅保留 txt）');
-}
-
-// ---- 5. 附上 AI 接入新手教程（如已生成） ----
-const tutorSrc = path.join(ROOT, 'docs', 'AI创作辅助教程.docx');
-if (fs.existsSync(tutorSrc)) {
-  fs.copyFileSync(tutorSrc, path.join(OUT, 'AI接入新手教程.docx'));
-  console.log('  AI接入新手教程.docx 已附上');
-} else {
-  console.warn('  [提示] 未找到 AI 接入教程，跳过');
-}
-
-// ---- 6. 插件开发说明 + 可运行示例 ----
-const pluginDoc = path.join(ROOT, 'docs', '插件开发说明.md');
-if (fs.existsSync(pluginDoc)) {
-  fs.copyFileSync(pluginDoc, path.join(OUT, '插件开发说明.md'));
-  console.log('  插件开发说明.md 已附上');
-} else {
-  console.warn('  [提示] 未找到插件开发说明.md，跳过');
+// ---- 4. 随包的正式文档（白名单） ----
+// 这里原本是「把 docs/ 里所有文件倒进包根目录」。后果是用户一解压就看见
+// 十几个 更新说明-v0.13.0 / v1.0.0…v1.0.7、修改说明、测试与修复说明、
+// 稿费统计后台同步操作说明、CI 与自动发布……全都不该出现在用户的下载里，
+// 同一份 AI 教程还会以两个名字各出现一次。
+//
+// 改白名单：只放用户真正会翻开的东西 ——
+//   使用说明.txt（上面生成，第一入口）、功能说明与使用说明.docx、安全说明和使用说明.docx、
+//   插件开发说明.md（插件中心里会让用户照它写插件，verify-portable 也要求它在）。
+// 更新说明只在仓库的 docs/ 里存档、作为 Release 正文，不进安装包。
+const SHIPPED_DOCS = [
+  '功能说明与使用说明.docx',
+  '安全说明和使用说明.docx',
+  '插件开发说明.md',
+];
+for (const name of SHIPPED_DOCS) {
+  const from = path.join(ROOT, 'docs', name);
+  if (!fs.existsSync(from)) {
+    console.warn(`  [提示] 缺少 docs/${name}，跳过`);
+    continue;
+  }
+  fs.copyFileSync(from, path.join(OUT, name));
+  console.log(`  ${name} 已附上`);
 }
 
 const sampleSrc = path.join(ROOT, 'plugins-sample', 'chapter-tools');
@@ -238,11 +236,4 @@ if (fs.existsSync(sampleSrc)) {
 }
 
 console.log('');
-// 收集仓库内正式文档，不包含用户数据。插件由 bundled-plugins 随应用代码打包。
-for (const file of fs.readdirSync(path.join(ROOT, 'docs'))) {
-  const source = path.join(ROOT, 'docs', file);
-  if (fs.statSync(source).isFile() && !fs.existsSync(path.join(OUT, file))) {
-    fs.copyFileSync(source, path.join(OUT, file));
-  }
-}
 console.log('便携包就绪：' + OUT);

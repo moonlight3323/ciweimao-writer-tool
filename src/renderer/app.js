@@ -4727,14 +4727,34 @@ function remoteCoverFor(book) {
   return (hit && hit.cover) || '';
 }
 
-/** 封面图加载失败时退回到原来的渐变底，避免出现破图占位 */
+/**
+ * 封面图的两种结局都要接住：
+ *   load  → 打上 has-cover，容器按图片自身比例撑开
+ *   error → 退回渐变占位（去掉 has-cover 并移除 img），卡片仍有 3:4 高度
+ *
+ * 为什么不能渲染时就写死 has-cover：has-cover 会把「无封面时的 3:4 占位」关掉。
+ * 图片一旦加载失败，容器高度就是 0 —— 卡片塌成一条，星标（原先在封面里）被
+ * overflow:hidden 裁掉，看得见点不着，加了星就再也取消不了。
+ *
+ * 选择器必须覆盖整个 #writerLibrary：原来只查 #writerBookGrid，
+ * 优先级栏（#writerPinnedGrid）里的封面拿不到兜底，
+ * 偏偏是「加了星之后才发现那张图是坏的」。
+ */
 function bindWriterCoverFallback() {
-  $$('#writerBookGrid .writer-book-cover-img').forEach((img) => {
-    img.addEventListener('error', () => {
-      const cover = img.closest('.writer-book-cover');
+  $$('#writerLibrary .writer-book-cover-img').forEach((img) => {
+    const cover = img.closest('.writer-book-cover');
+    const ok = () => { if (cover) cover.classList.add('has-cover'); };
+    const fail = () => {
       if (cover) cover.classList.remove('has-cover');
       img.remove();
-    }, { once: true });
+    };
+    img.addEventListener('load', ok, { once: true });
+    img.addEventListener('error', fail, { once: true });
+    // 缓存命中时 load / error 可能在我们挂监听之前就结束了，补一次同步判断
+    if (img.complete) {
+      if (img.naturalWidth > 0) ok();
+      else fail();
+    }
   });
 }
 
@@ -4744,7 +4764,11 @@ function renderWriterBookCard(book, i) {
     ? `<img class="writer-book-cover-img" src="${escapeHtml(cover)}" alt="" loading="lazy" />`
     : '';
   const id = escapeHtml(String(book.bookId));
-  // 优先级星标放封面左上角：它是「这本书排第一」的开关，位置要固定、好找。
+  // 星标是「这本书排第一」的开关，位置固定在封面右上角。
+  // 但它**挂在卡片上、不放在封面里**：封面是 overflow:hidden 的容器，
+  // 高度又完全取决于封面图（没图 / 图挂了就是 0），星标放进去会被裁掉 ——
+  // 用户看到的就是「加了星之后星标消失，再也取消不了」。
+  // 挂在卡片上，封面怎么塌星标都在（top/right 见样式表，位置视觉上仍是封面右上角）。
   // 远程作品不能点亮（没有本地归档，数据看板也定位不到）。
   const pinButton = book.source === 'remote' ? '' : `
       <button class="writer-book-pin${book.pinned ? ' is-pinned' : ''}" data-writer-pin="${id}"
@@ -4753,12 +4777,12 @@ function renderWriterBookCard(book, i) {
               aria-pressed="${book.pinned ? 'true' : 'false'}">${book.pinned ? '★' : '☆'}</button>`;
   return `
     <article class="writer-book-card${book.pinned ? ' is-pinned' : ''}" data-writer-book="${id}">
-      <div class="writer-book-cover tone-${i % 5}${cover ? ' has-cover' : ''}">
+      <div class="writer-book-cover tone-${i % 5}">
         ${coverTag}
-        ${pinButton}
         <span class="writer-book-source">${writerSourceLabel(book.source)}</span>
         <span class="writer-book-feather">✎</span>
       </div>
+      ${pinButton}
       <div class="writer-book-info">
         <h3>${escapeHtml(book.name || '未命名作品')}</h3>
         <div class="writer-book-meta">

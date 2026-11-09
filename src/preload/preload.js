@@ -21,8 +21,8 @@ contextBridge.exposeInMainWorld('api', {
     navState: () => ipcRenderer.invoke('browser:nav-state'),
     setBounds: (rect) => ipcRenderer.invoke('browser:bounds', rect),
     state: () => ipcRenderer.invoke('browser:state'),
-    /** 在平台页面上下文执行 JS，用于抓取 */
-    evalInPage: (code) => ipcRenderer.invoke('browser:eval', code),
+    /** 在平台页面上下文执行 JS，用于抓取。timeoutMs 不传走主进程默认值 */
+    evalInPage: (code, timeoutMs) => ipcRenderer.invoke('browser:eval', code, timeoutMs),
     goto: (p) => ipcRenderer.invoke('browser:goto', p),
     waitIdle: (ms) => ipcRenderer.invoke('browser:wait-idle', ms),
     onEvent: (cb) => {

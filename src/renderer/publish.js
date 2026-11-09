@@ -29,8 +29,6 @@
     rawHint: '',
     analysis: null,
     schedule: '',
-    round: 0,
-    lastResult: null,
     fromPage: false,
     /** 「已填入」状态的信息，处理完敏感词要拿它还原侧栏 */
     readyInfo: null,
@@ -41,6 +39,10 @@
     sideOpen: false,
     /** 因为切页面被收起来的（回来时自动放出来） */
     sideParked: false,
+    /** 第一次看到页面处于 pending 的时刻，用于宿主侧的超时兜底 */
+    pendingSince: 0,
+    /** 页面上一个发布按钮都没接管到（站点改版）—— 侧栏要据此换提示 */
+    hookMissing: false,
   };
 
   function A() { return window.CiweimaoAdapter; }
@@ -74,9 +76,55 @@
     if (box) box.hidden = true;
   }
 
-  async function evalPage(fnName, args) {
+  /* ---------------------------------------------------------- 顶栏状态条
+   *
+   * 为什么需要第二条反馈通道：后台页面是原生 WebContentsView，盖在 #content 之上，
+   * 而上面那个 #publishToast 就住在 #content 里。页面一开，提示**确实弹了**，
+   * 只是被整个盖住 —— 作者看到的就是「点了发布章节没反应」，可章节其实已经发出去了。
+   * 顶栏在视图矩形之外，是唯一稳定可见的地方。
+   *
+   * 两条通道各管一段：页面开着时靠这里；退出后台之后 toast 照旧。
+   */
+  let statusTimer = null;
+
+  /** 把带标签的提示文字压成一行纯文本，给顶栏用（那里只能显示单行） */
+  function plain(s) {
+    return String(s == null ? '' : s)
+      .replace(/<br\s*\/?>/gi, ' ')
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  /**
+   * @param {string} text 空串表示收起
+   * @param {'busy'|'ok'|'error'|'info'} [kind]
+   */
+  function setStatus(text, kind) {
+    const box = $('#pubStatus');
+    const label = $('#pubStatusText');
+    if (!box || !label) return;
+    clearTimeout(statusTimer);
+    statusTimer = null;
+    if (!text) { box.hidden = true; return; }
+    box.hidden = false;
+    box.className = 'pub-status is-' + (kind || 'info');
+    label.textContent = plain(text).slice(0, 60);
+    // 完整内容放 title：顶栏只有一行，长原因要能悬停看全
+    box.title = plain(text);
+    // 出错和「进行中」都不自动收：分别是必须看到的结果、还没结束的过程
+    if (kind === 'error' || kind === 'busy') return;
+    statusTimer = setTimeout(() => { box.hidden = true; }, 15000);
+  }
+
+  async function evalPage(fnName, args, timeoutMs) {
     const code = A().pageSource(fnName, args);
-    return window.api.browser.evalInPage(code);
+    // 一定要给超时：页面跳转时这道 IPC 可能永远不回来（见 main.js 的注释），
+    // 而轮询有 pollBusy 闸门，一次挂住就再也不查了。
+    return window.api.browser.evalInPage(code, timeoutMs || 8000);
   }
 
   /**
@@ -116,7 +164,7 @@
    * 把站点报出来的词记一份到本地库。
    *
    * 刻意**不**挂在任何按钮的回调里：收集与「怎么处理这些词」是两件事。
-   * 用户点「一键处理」、点「直接提交」、或者索性关掉侧栏，都不该改变是否记录 ——
+   * 用户点「一键处理」，或者索性关掉侧栏，都不该改变是否记录 ——
    * 所以调用点只有 checkNow() 一处，拿到响应就写。
    *
    * 任何失败都静默：写盘问题绝不能打断作者正在做的发布。
@@ -196,7 +244,7 @@
     // 注意：不清 lastPayload —— 顶栏「敏感词侧栏」按钮要靠它把窗口重新打开
   }
 
-  /** 这一章已经结束（发出去或直接提交），侧栏内容作废 */
+  /** 这一章已经结束（发出去或已放弃），侧栏内容作废 */
   function resetSide() {
     state.lastPayload = null;
     state.sideOpen = false;
@@ -228,6 +276,8 @@
 
   /** 在小窗里给一条提示（错误基本都发生在侧栏可见的时候，弹 toast 会被原生视图盖住） */
   async function notice(kind, text) {
+    // 顶栏先给一句：侧栏和右下角提示都可能不在视线里（见 setStatus 注释）
+    setStatus(text || '', kind === 'error' ? 'error' : 'info');
     const base = state.lastPayload;
     if (state.sideOpen && base) {
       await pushSide(Object.assign({}, base, {
@@ -277,7 +327,6 @@
     state.chapterId = chapter.id;
     state.bookId = book.id;
     state.baseText = text;
-    state.round = 0;
     try {
       await W.saveNow();
 
@@ -294,8 +343,11 @@
 
       // 顺手把站点的发布按钮接管掉：之后就算你在页面上直接点「发布章节」，
       // 也会走我们这一套（能拿到 hint_words），而不是站点那个「执意提交就隐藏敏感词」的确认框
-      await ensureHook();
+      const hooked = await ensureHook();
       startPoll();
+      // 一个按钮都没接管上：说明站点改版了，页面上那个按钮点下去走的是站点原生流程，
+      // 我们收不到任何结果。这种情况必须当场说出来，否则又变成「点了没反应」。
+      state.hookMissing = !!(hooked && hooked.buttons === 0);
 
       // 页面上如果还留着上次没发完的内容，直接覆盖 —— 点「投到后台」本身就是
       // 「把这章送过去」的意思，再弹一个输入框确认只会添乱。
@@ -317,6 +369,11 @@
         volName: div.matched ? div.name : (div.name || chapter.vol),
         words: filled.wordCount || 0,
         schedule: state.schedule || '',
+        // 没接管到按钮就换一句提示，别让人以为点页面上的按钮我们会接住
+        note: state.hookMissing
+          ? '<b>注意：</b>没认出页面上的发布按钮（站点可能改版了），'
+            + '直接点它我们收不到结果，也就没法提示敏感词。请刷新一次后台页面再试。'
+          : '',
       });
     } catch (err) {
       toast('投递中断', escapeHtml(String((err && err.message) || err)));
@@ -411,6 +468,13 @@
     try {
       window.api.browser.onEvent(async (ev) => {
         if (!ev || ev.type !== 'browser-state') return;
+        // 后台整个关掉了：停掉轮询，别一直对着空视图问下去。
+        // 注意不能「一离开新建章节页就停」—— 发布成功时站点会自己跳走，
+        // 结果正好靠 sessionStorage 跨页面留给宿主读，抢在前面停就丢掉了。
+        if (!/^https:\/\/author\.ciweimao\.com\//i.test(ev.url || '')) {
+          stopPoll();
+          return;
+        }
         if (!/\/book_manage\/draft/i.test(ev.url || '')) return;
         const r = await ensureHook();
         if (r && r.ok) startPoll();
@@ -428,11 +492,41 @@
     pollTimer = setInterval(pollOnce, 1200);
   }
 
+  function stopPoll() {
+    if (!pollTimer) return;
+    clearInterval(pollTimer);
+    pollTimer = null;
+    state.pendingSince = 0;
+  }
+
   async function pollOnce() {
     if (pollBusy) return;
     pollBusy = true;
     try {
-      const r = await evalPage('pageReadCheck');
+      // 轮询本身只做一次极短的读取，给它最紧的超时：卡住也要在一个周期内回来，
+      // 否则 1.2 秒一次的轮询会被一次挂起的调用拖死。
+      const r = await evalPage('pageReadCheck', undefined, 3000);
+
+      // 页面侧虽然给 doCheck 加了 25 秒超时，但那是页面里的 timer：
+      // 用户在等待期间自己点走（换页、点顶部导航、回列表），页面一卸载 timer 就没了，
+      // 宿主这边永远等不到 done/error。所以宿主自己也记一笔开始时间。
+      if (r && r.phase === 'pending') {
+        if (!state.pendingSince) {
+          state.pendingSince = Date.now();
+          // 给一个看得见的回应：不然后台页面本身没有任何变化，
+          // 用户完全无法判断「是不是点到了」
+          noticeBusy();
+        } else if (Date.now() - state.pendingSince > 30000) {
+          state.pendingSince = 0;
+          await evalPage('pageClearCheck').catch(() => {});
+          await notice('error', '提交校验一直没有响应（30 秒），可能后台掉线了<br>'
+            + '重新登录后再发一次；这期间如果页面已经跳走，说明其实已经发出去了，'
+            + '先去「章节管理」看一眼，别重复提交。');
+        }
+        return;
+      }
+      state.pendingSince = 0;
+
       if (!r || (r.phase !== 'done' && r.phase !== 'error')) return;
       if (r.at && r.at <= lastHandledAt) return;
       lastHandledAt = r.at || Date.now();
@@ -443,6 +537,32 @@
     } finally {
       pollBusy = false;
     }
+  }
+
+  /**
+   * 「正在提交校验」的临时提示：只在首次看到 pending 时推一次。
+   *
+   * 复用 ready 版式而不是新加一种 mode：侧栏只需要把标题换成「正在提交」，
+   * 结构完全一样，多一个模式就多一处要跟着改的渲染分支。
+   * transient 表示不进 lastPayload —— 这是过渡态，关掉再开不该还看到它。
+   */
+  function noticeBusy() {
+    setStatus('正在提交校验…', 'busy');
+    const info = state.readyInfo || {};
+    pushSide({
+      mode: 'ready',
+      ready: {
+        title: '正在提交校验',
+        sub: '站点正在检查这一章，通常两秒内出结果',
+        bookName: info.bookName || '—',
+        chapterTitle: info.chapterTitle || '—',
+        volName: info.volName || '—',
+        words: info.words || 0,
+        schedule: info.schedule || '',
+        note: '',
+      },
+    }, { transient: true }).catch(() => { /* 侧栏没开就靠 toast */ });
+    toast('正在提交校验', '站点正在检查这一章，稍等一下。');
   }
 
   /** 两种来源（页面 hook / 我们主动校验）的结果统一成一种形状 */
@@ -462,6 +582,11 @@
 
   async function handleCheckResult(res, opts) {
     const o = opts || {};
+    // 不管这次结果怎么处理，先把站点报出来的词记一份。
+    // 以前这步挂在 checkNow()（侧栏「发布这一章」）里，现在那条路去掉了，
+    // 页面按钮成了唯一入口，所以挪进来 —— 否则生词本从此收不到新词。
+    await collectHintWords(res);
+    dumpCheckDebug(res);
     if (res.phase === 'error') {
       await notice('error', escapeHtml(res.error || '未知错误')
         + (res.needLogin ? '<br>请先点右上角「打开作者后台」重新登录。' : ''));
@@ -477,24 +602,18 @@
       return;
     }
     // 有疑似敏感词：开侧栏窗口，处理的就是页面本身
+    setStatus('有敏感词，章节没发出去 · 看右侧侧栏', 'info');
     await openBadwordPanel(res, { fromPage: !!o.fromPage });
   }
 
   // ---------------------------------------------------------------- 校验
 
-  async function checkNow() {
-    state.round += 1;
-    toast(`正在提交校验${state.round > 1 ? `（第 ${state.round} 次）` : ''}…`,
-      '等站点返回结果。这一步只是校验，没通过的话章节不会发出去。');
-
-    const res = await evalPage('pageCheckChapter', { buttonValue: 'dosubmit' });
-    state.lastResult = res;
-
-    // 拿到响应就地收集：与后面怎么处理这些词无关（见 collectHintWords 注释）
-    await collectHintWords(res);
-
-    // 站点返回的 hint_words 格式没有公开约定，留一份原文在 data/publish-debug.json，
-    // 万一某天解析不出来，照这份改规则就行，不用再猜。
+  /**
+   * 站点返回的 hint_words 格式没有公开约定，留一份原文在 data/publish-debug.json，
+   * 万一某天解析不出来，照这份改规则就行，不用再猜。
+   * 任何失败都静默：写盘问题绝不能打断作者正在做的发布。
+   */
+  function dumpCheckDebug(res) {
     try {
       window.api.data.write('publish-debug.json', {
         at: new Date().toISOString(),
@@ -507,19 +626,38 @@
         raw: (res && res.raw) || null,
       });
     } catch (_) { /* 调试记录失败不影响发布 */ }
-
-    await handleCheckResult(normalize(res), {});
   }
 
   async function onPublished(res) {
     await hideSide();
     resetSide();
+    // 顶栏这条是作者唯一一定能看到的结果提示，失败过就换成明确结论
+    setStatus('已发布成功 ✓', 'ok');
     toast('已提交成功', `<span class="is-ok">${escapeHtml(res.msg || '站点已接收这一章')}</span>`
       + '<br>如果开了审核，会先进入审核队列。');
     try {
       const cid = (String(res.url || '').match(/chapter_id=(\d+)/) || [])[1] || '';
       await root.Writer.markPublished({ chapterId: cid });
     } catch (_) { /* 标记失败不影响已发布的事实 */ }
+
+    // 页面还停在新建章节页，说明站点没自己跳走（返回的 url 为空，或我们没接住）。
+    // 这时候界面看起来和点之前一模一样 —— 作者会以为没发出去，再点一次就成了重复提交。
+    // 主动把视图带到章节管理页，让「已经发布」这件事在页面本身也看得见。
+    try {
+      // 等一拍：页面侧在拿到 pass 后会自己跳（60ms 后），别和它抢
+      await sleep(900);
+      const st = await window.api.browser.state();
+      const url = String((st && st.url) || '');
+      const moving = !!(st && st.isLoading);
+      if (!moving && /\/book_manage\/draft/i.test(url)) {
+        const target = res.navTo
+          || (state.bookId ? `/book_manage/view_chapter_info?book_id=${state.bookId}` : '');
+        if (target) await window.api.browser.goto(target);
+      }
+    } catch (_) { /* 跳不过去也不影响顶栏那条结果 */ }
+
+    // 这一章已经结束，轮询到此为止；下次回到新建章节页会重新接上
+    stopPoll();
   }
 
   // ---------------------------------------------------------------- 侧栏内容
@@ -532,7 +670,7 @@
       mode: 'ready',
       ready: {
         title: '已填入后台',
-        sub: '在左边页面上确认后再发布',
+        sub: '确认无误后，点左边网页上的「发布章节」',
         bookName: i.bookName || '—',
         chapterTitle: i.chapterTitle || '—',
         volName: i.volName || '—',
@@ -573,7 +711,7 @@
         bad: {
           title: '站点没给出具体词',
           sub: '多半是标题或作者有话说触发的',
-          lead: '站点提示有敏感内容，但没说是哪个词。这种只能自己判断：要么点「直接提交」，要么先在后台页面里手动看一遍。'
+          lead: '站点提示有敏感内容，但没说是哪个词。这种只能自己判断：在后台页面里手动看一遍正文，改完再点「发布章节」。'
             + (raw ? `<br><br><span style="color:var(--danger-ink)">站点原文：${escapeHtml(String(raw).slice(0, 200))}</span>` : ''),
           items: [],
         },
@@ -595,7 +733,7 @@
         ? `正文里找到 <b>${hit}</b> 个，另有 <b>${miss}</b> 个在正文里找不到（多半是站点按分词联想的误报，不用改）。`
         : `正文里找到 <b>${hit}</b> 个。选好处理方式后点「一键处理」，改的是页面正文本身。`)
       : `站点报的 ${miss} 个词，在正文里一个都没找到 —— 通常是误报（站点按标题、作者有话说或词组联想出来的）。
-         这种情况不用改正文，直接提交即可。`) + fromPageTip;
+         这种情况不用改正文，直接去点「发布章节」即可。`) + fromPageTip;
 
     await pushSide({
       mode: 'bad',
@@ -634,7 +772,7 @@
    * 本地稿跟着同步。
    *
    * 这里刻意不再自动重投、也不做预览：
-   * 作者自己点「发布这一章」，站点会重新校验一次，有没有词一目了然。
+   * 作者自己点页面上的「发布章节」，站点会重新校验一次，有没有词一目了然。
    * 预览那一层是多余的——页面本身就是所见即所得的预览。
    */
   async function applyToEditor(planArg) {
@@ -642,7 +780,7 @@
     if (!plan.length) return;
     const res = window.BadWords.applyPlan(state.baseText, plan);
     if (!res.changes.length) {
-      await notice('info', '这一版方案不改动正文。可以点「直接提交」，或者在页面里手动改。');
+      await notice('info', '这一版方案不改动正文。在页面里手动改，或者直接去点「发布章节」。');
       return;
     }
 
@@ -697,41 +835,20 @@
     await showReadySide(Object.assign({}, info, { words }),
       `已经改好 <b>${pageChanged} 处</b>：${list}。`
       + (localOk ? '页面正文和本地稿都改了。' : '页面正文改了，本地稿没写成（不影响发布）。')
-      + '<br>再点下面「发布这一章」，站点会重新校验一次。');
+      + '<br>再点网页上的「发布章节」，站点会重新校验一次。');
     toastHide();
-  }
-
-  async function forceSubmit() {
-    toast('正在直接提交…', '不做任何修改，让站点按原样接收。');
-    await hideSide();
-    resetSide();
-    const res = await evalPage('pageForceSubmit');
-    if (!res || !res.ok) {
-      toast('直接提交失败', escapeHtml((res && res.error) || '页面没有响应'));
-      return;
-    }
-    // 提交是整页 POST，页面会跳走；这里只把状态记下来
-    toast('已提交', '站点正在处理这一章。可以在「回到后台页面」里看到结果。');
-    try { await root.Writer.markPublished({ chapterId: '' }); } catch (_) { /* ignore */ }
   }
 
   // ---------------------------------------------------------------- 绑定
 
   function handleCommand(cmd) {
     const c = cmd || {};
-    if (c.type === 'publish') {
-      if (state.busy) return;
-      state.busy = true;
-      checkNow().finally(() => { state.busy = false; });
-      return;
-    }
     if (c.type === 'apply') {
       if (state.busy) return;
       state.busy = true;
       applyToEditor(c.plan).finally(() => { state.busy = false; });
       return;
     }
-    if (c.type === 'force') { forceSubmit(); return; }
 
     if (c.type === 'wordcollect-toggle') {
       if (window.Prefs) window.Prefs.set('wordCollectOn', !!c.on);
@@ -766,6 +883,9 @@
 
     const close = $('#btnPublishToastClose');
     if (close) close.addEventListener('click', toastHide);
+
+    const statusClose = $('#btnPubStatusClose');
+    if (statusClose) statusClose.addEventListener('click', () => setStatus(''));
 
     const reopen = $('#btnPublishReopen');
     if (reopen) {

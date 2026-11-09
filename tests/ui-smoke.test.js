@@ -274,7 +274,10 @@ maybe('创作中心：优先级作品数量与列表都跟着数据走', async (
   assert.equal((otherGrid.match(/writer-book-card/g) || []).length, 3, '其他作品应有 3 本');
 });
 
-maybe('创作中心：星标渲染在封面里，且样式贴右上角', async (t) => {
+maybe('创作中心：星标挂在卡片上，封面怎么塌都点得到', async (t) => {
+  // 用户反馈：给「没读到封面」的书加星之后，卡片塌成一条，星标也不见了，取消不了。
+  // 根因是星标当时放在 .writer-book-cover 里，而封面 overflow:hidden、
+  // 高度完全由封面图决定 —— 图挂了就是 0 高，星标被裁掉。
   const page = bootPage();
   t.after(() => page.dom.window.close());
   const { window } = page;
@@ -287,18 +290,92 @@ maybe('创作中心：星标渲染在封面里，且样式贴右上角', async (
   const card = doc.querySelector('#writerBookGrid .writer-book-card');
   const cover = card.querySelector('.writer-book-cover');
   assert.ok(cover, '卡片里应有封面容器');
-  const pin = cover.querySelector('.writer-book-pin');
-  assert.ok(pin, '星标必须放在封面里（才有绝对定位的参照物）');
+  const pin = card.querySelector('.writer-book-pin');
+  assert.ok(pin, '卡片上应有星标');
+  assert.equal(pin.parentElement, card, '星标必须直接挂在卡片上');
+  assert.equal(pin.closest('.writer-book-cover'), null,
+    '星标不能放在封面里 —— 封面 overflow:hidden，高度塌了星标就点不到');
+
+  // 来源标签仍在封面里（它不需要点击，被裁掉也只是不好看）
   const source = cover.querySelector('.writer-book-source');
   assert.ok(source, '来源标签还在');
-  assert.equal(pin.parentElement, cover);
-  assert.equal(source.parentElement, cover);
 
-  // jsdom 不跑布局，位置只能验样式表：星标靠 right，标签靠 left，两者不同侧
+  // jsdom 不跑布局，位置只能验样式表：星标靠 right，标签靠 left，两者不同侧。
+  // 卡片 padding 8px（配 -8px 外边距），所以 14px 正好是离封面边 6px。
   const css = fs.readFileSync(path.join(RENDERER, 'style.css'), 'utf8');
   const pinRule = (css.match(/\.writer-book-pin \{[^}]*\}/) || [''])[0];
-  assert.ok(/right:\s*6px/.test(pinRule), '星标应贴右上角（right: 6px）');
+  assert.ok(/right:\s*14px/.test(pinRule), '星标应贴封面右上角（卡片内 right: 14px）');
+  assert.ok(/top:\s*14px/.test(pinRule), '星标应贴封面右上角（卡片内 top: 14px）');
   assert.ok(!/\bleft:\s*\d+px/.test(pinRule), '星标不能再贴左边，否则和来源标签重叠');
+
+  // 封面本身要有高度下限，任何情况下都不该塌成 0
+  const coverRule = (css.match(/\n\.writer-book-cover \{[^}]*\}/) || [''])[0];
+  assert.ok(/min-height:\s*\d+px/.test(coverRule), '封面容器要有 min-height 兜底');
+});
+
+maybe('加星后能取消：优先级栏里的星标照样点得动', async (t) => {
+  // 用户反馈的第二半：「而且还会没法取消星标」。
+  // 星标被裁在 0 高的封面里，点不到；这里是防回归 —— 进了优先级栏也必须能取消。
+  const unpinned = BOOKS.map((b) => ({ ...b, pinned: false, pinnedAt: 0 }));
+  const page = bootPage({ books: unpinned });
+  t.after(() => page.dom.window.close());
+  const { window } = page;
+  assert.ok(await waitBoot(window));
+  await window.loadWriterBooks();
+
+  const doc = window.document;
+  const pin = doc.querySelector('#writerBookGrid .writer-book-pin');
+  pin.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.ok(await waitFor(() => doc.getElementById('writerPinnedCount').textContent === '1'));
+
+  const pinnedPin = doc.querySelector('#writerPinnedGrid .writer-book-pin');
+  assert.ok(pinnedPin, '优先级栏里必须有星标按钮（不然取消不了）');
+  pinnedPin.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.ok(await waitFor(() => doc.getElementById('writerPinnedCount').textContent === '0'),
+    '点优先级栏里的星标应能取消');
+  const back = doc.querySelector('#writerBookGrid .writer-book-pin');
+  assert.ok(back, '取消后应回到其他作品');
+  assert.equal(back.closest('.writer-book-cover'), null,
+    '星标不在封面里，封面塌了也点得到');
+});
+
+maybe('封面加载失败退回渐变占位，优先级栏里的也不例外', async (t) => {
+  // 原来兜底只绑了 #writerBookGrid。书一加星就挪进优先级栏，
+  // 那张坏掉的封面从此没人管 —— 容器停在 0 高，卡片塌成一条白条。
+  const books = [
+    { ...BOOKS[0], pinned: false, pinnedAt: 0, cover: 'https://example.invalid/a.jpg' },
+    { ...BOOKS[2], pinned: true, pinnedAt: 1794106810105, cover: 'https://example.invalid/b.jpg' },
+  ];
+  const page = bootPage({ books });
+  t.after(() => page.dom.window.close());
+  const { window } = page;
+  assert.ok(await waitBoot(window));
+  await window.loadWriterBooks();
+
+  const doc = window.document;
+  assert.ok(await waitFor(() => doc.querySelector('#writerPinnedGrid .writer-book-cover-img')),
+    '优先级栏应渲染出封面图');
+
+  const pinnedImg = doc.querySelector('#writerPinnedGrid .writer-book-cover-img');
+  const pinnedCover = pinnedImg.closest('.writer-book-cover');
+  const otherImg = doc.querySelector('#writerBookGrid .writer-book-cover-img');
+  const otherCover = otherImg.closest('.writer-book-cover');
+
+  // 渲染时绝不能先打 has-cover：那会把「无封面时的 3:4 占位」关掉，
+  // 图一旦挂掉高度就是 0 —— 这正是卡片塌陷的成因。
+  assert.equal(pinnedCover.classList.contains('has-cover'), false,
+    '图还没加载完，不能先打 has-cover');
+  assert.equal(otherCover.classList.contains('has-cover'), false);
+
+  // 加载成功 → 按图片自身比例撑开
+  otherImg.dispatchEvent(new window.Event('load'));
+  assert.equal(otherCover.classList.contains('has-cover'), true, '加载成功后按真实比例');
+
+  // 加载失败 → 退回渐变占位，破图摘掉
+  pinnedImg.dispatchEvent(new window.Event('error'));
+  assert.equal(pinnedCover.classList.contains('has-cover'), false, '失败后不能留 has-cover');
+  assert.equal(doc.querySelector('#writerPinnedGrid .writer-book-cover-img'), null,
+    '坏图要摘掉，别留破图占位');
 });
 
 maybe('数据看板：概览默认停在全部作品，优先级那本排第一并带星标', async (t) => {

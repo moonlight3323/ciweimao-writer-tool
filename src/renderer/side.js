@@ -37,7 +37,6 @@
     state.ready = r;
     $('#psReady').hidden = false;
     $('#psBadword').hidden = true;
-    $('#psActionsReady').hidden = false;
     $('#psActionsBad').hidden = true;
     $('#bwTitle').textContent = r.title || '已填入后台';
     $('#psSub').textContent = r.sub || '在左边页面上确认后再发布';
@@ -65,7 +64,6 @@
 
     $('#psReady').hidden = true;
     $('#psBadword').hidden = false;
-    $('#psActionsReady').hidden = true;
     $('#psActionsBad').hidden = false;
     $('#bwTitle').textContent = b.title || '站点报出来的词';
     $('#psSub').textContent = b.sub || '站点报出来的词';
@@ -149,7 +147,7 @@
     });
     const btn = $('#btnBwApply');
     btn.disabled = spots === 0;
-    btn.textContent = spots ? `一键处理（改 ${spots} 处）` : '无需修改，可直接提交';
+    btn.textContent = spots ? `一键处理（改 ${spots} 处）` : '没有可改的地方，直接去点「发布章节」';
     return spots;
   }
 
@@ -247,18 +245,10 @@
     return state.items.map((it, i) => ({ word: it.word, mode: state.plan[i] }));
   }
 
-  $('#btnPsPublish').addEventListener('click', () => {
-    api.command({ type: 'publish' });
-  });
-
   $('#btnBwApply').addEventListener('click', () => {
     if (state.busy || $('#btnBwApply').disabled) return;
     setBusy(true);
     api.command({ type: 'apply', plan: sendPlan(), lastMode: state.lastMode });
-  });
-
-  $('#btnBwForce').addEventListener('click', () => {
-    api.command({ type: 'force' });
   });
 
   $('#bwMode').querySelectorAll('button').forEach((b) => {
