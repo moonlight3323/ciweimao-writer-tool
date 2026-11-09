@@ -1,15 +1,29 @@
 {
-  "version": "1.0.8",
+  "version": "1.0.9",
   "type": "app",
-  "size": 1587162,
-  "sha256": "ee436f31fcef5bb03b15d40a1bc5f50e7dfbaf793fb2161d2520ff32f72324ab",
+  "size": 1595021,
+  "sha256": "d16432f70e9bca1c4cfac1fa16dfcc22264105b0a51d50fec460eac19a1ac2aa",
   "url": [
-    "https://cdn.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.0.8-app.zip",
-    "https://fastly.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.0.8-app.zip",
-    "https://gcore.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.0.8-app.zip",
-    "https://raw.githubusercontent.com/moonlight3323/ciweimao-writer-tool/main/update/assets/ciweimao-writer-tool-v1.0.8-app.zip"
+    "https://cdn.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.0.9-app.zip",
+    "https://fastly.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.0.9-app.zip",
+    "https://gcore.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.0.9-app.zip",
+    "https://raw.githubusercontent.com/moonlight3323/ciweimao-writer-tool/main/update/assets/ciweimao-writer-tool-v1.0.9-app.zip"
   ],
   "changes": [
+    {
+      "version": "1.0.9",
+      "date": "2026-11-09",
+      "items": [
+        "修好「点发布章节后界面没反应」：站点返回的结果现在会同时显示在网页里和窗口顶栏，不用再靠猜它到底发没发出去。",
+        "发布成功后如果站点没给跳转地址，程序会把页面带到章节管理页，能当场看到这一章确实发出来了。",
+        "页面响应加了超时：正常两秒内出结果；后台掉线或页面卡住时会明确说超时，不会一直停在「正在提交校验」。",
+        "发布只保留网页上「发布章节」这一个入口：敏感词侧栏不再代发，也去掉了「直接提交」，避免绕开站点的确认框、造成同一章重复提交。",
+        "修好没读到封面的书加星后卡片塌成一条、星标消失点不到、也没法取消优先级的问题。星标现在挂在卡片上，封面怎么坏都点得到。",
+        "封面图加载失败会自动退回渐变占位，不再留一条破图空条。",
+        "引导文案统一成「封面右上角」（原来一处写左上角、一处写右下角，照着找找不到）。",
+        "便携包不再附带历次更新说明与开发笔记，只保留使用说明、功能说明、安全说明与插件开发说明。"
+      ]
+    },
     {
       "version": "1.0.8",
       "date": "2026-11-08",
