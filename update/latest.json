@@ -1,15 +1,33 @@
 {
-  "version": "1.0.9",
+  "version": "1.1.0",
   "type": "app",
-  "size": 1595021,
-  "sha256": "d16432f70e9bca1c4cfac1fa16dfcc22264105b0a51d50fec460eac19a1ac2aa",
+  "size": 1627503,
+  "sha256": "823f5c34beb82ca23d8856d20a093360cadb46f83c1757f9b7ef62c383a07468",
   "url": [
-    "https://cdn.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.0.9-app.zip",
-    "https://fastly.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.0.9-app.zip",
-    "https://gcore.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.0.9-app.zip",
-    "https://raw.githubusercontent.com/moonlight3323/ciweimao-writer-tool/main/update/assets/ciweimao-writer-tool-v1.0.9-app.zip"
+    "https://cdn.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.0-app.zip",
+    "https://fastly.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.0-app.zip",
+    "https://gcore.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.0-app.zip",
+    "https://raw.githubusercontent.com/moonlight3323/ciweimao-writer-tool/main/update/assets/ciweimao-writer-tool-v1.1.0-app.zip"
   ],
   "changes": [
+    {
+      "version": "1.1.0",
+      "date": "2026-11-09",
+      "items": [
+        "功能中心新增「摸鱼码字」开关，开启后码字台工具栏出现「摸鱼码字」按钮；点它主窗口收起，屏幕上只剩一个透明输入框。",
+        "浮层里的正文会实时同步进当前章节，自动保存、字数统计、错别字提示都按原样继续走，不用来回切换窗口。",
+        "第一次点按钮会先弹一张说明卡，把隐藏、呼出、拖动三件事讲清楚，看过一次就不再出现。",
+        "浮层可以整体透明：文字颜色跟正文一致，也能设描边，压在白色网页或深色编辑器上都不糊。",
+        "顶部那一条只有左侧握把带一点粉色，按住它就能拖动浮层，鼠标是十字箭头；位置和大小会记住，下次打开还在原处。",
+        "隐藏与呼出的快捷键可以自己按出来，存进设置后即时生效；万一这个组合被别的软件占用了，面板会明确告诉你实际用的是哪一个备用键。",
+        "除了快捷键，在浮层上同时按鼠标左键和右键也能立刻收起来。",
+        "浮层右侧面板可调字号、行高、字色、底色深浅和宽度；正文字体跟随码字台当前的字体设置。",
+        "显示设置的字体从 4 种扩到 11 种，按黑体、宋体、楷体分组：新增黑体、思源黑体、等线、仿宋、华文楷体、霞鹜文楷、幼圆。",
+        "思源、霞鹜这类字体需要系统里装了才生效，没装会自动退回最接近的一种，不会变成方块。",
+        "配置里存着已经不存在的老字体名时，会自动回到微软雅黑，不会让字体下拉框空着。",
+        "修好优先级作品排序偶发失效的问题：一处脚本因变量重名整份没被执行，星标排序会悄悄退回默认顺序。"
+      ]
+    },
     {
       "version": "1.0.9",
       "date": "2026-11-09",
