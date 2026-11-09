@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:" />
+  <title>摸鱼码字</title>
+  <link rel="stylesheet" href="overlay.css" />
+</head>
+<body class="has-outline">
+  <div class="pad" id="pad">
+    <!-- 只有这条把手上能拖动窗口：编辑区要留给选字 -->
+    <div class="handle" id="handle" title="按住这条把手的任意位置拖动浮层">
+      <span class="grip" id="handleGrip" title="按住拖动浮层">
+        <svg width="16" height="22" viewBox="0 0 16 22" fill="currentColor" aria-hidden="true">
+          <circle cx="5" cy="4" r="1.9" />
+          <circle cx="11" cy="4" r="1.9" />
+          <circle cx="5" cy="11" r="1.9" />
+          <circle cx="11" cy="11" r="1.9" />
+          <circle cx="5" cy="18" r="1.9" />
+          <circle cx="11" cy="18" r="1.9" />
+        </svg>
+      </span>
+      <span class="chapter" id="chapterName">摸鱼码字</span>
+      <span class="count" id="countText">0 字</span>
+      <span class="spacer"></span>
+      <button class="hbtn" id="btnSettings" type="button" title="字号、字色、底色、快捷键">⚙</button>
+      <button class="hbtn" id="btnHide" type="button" title="隐藏浮层（再用快捷键叫回来）">◑</button>
+      <button class="hbtn primary" id="btnRestore" type="button" title="关掉浮层，回到软件窗口">↩ 回到软件</button>
+    </div>
+    <textarea id="editor" class="editor" spellcheck="false" autocomplete="off"
+              placeholder="在这里写，正文会实时同步到码字台当前章节"></textarea>
+  </div>
+
+  <div class="panel" id="panel" hidden>
+    <div class="panel-head">
+      <strong>浮层设置</strong>
+      <button class="xbtn" id="btnPanelClose" type="button" title="收起">×</button>
+    </div>
+
+    <div class="row">
+      <span>字号</span>
+      <button class="step" id="fsDown" type="button">−</button>
+      <b id="fsValue">20</b>
+      <button class="step" id="fsUp" type="button">＋</button>
+    </div>
+
+    <div class="row">
+      <span>行高</span>
+      <button class="step" id="lhDown" type="button">−</button>
+      <b id="lhValue">1.9</b>
+      <button class="step" id="lhUp" type="button">＋</button>
+    </div>
+
+    <div class="row">
+      <span>字色</span>
+      <div class="swatches" id="swatches">
+        <button class="sw" data-color="#FFFFFF" type="button" title="白色（深色背景）"></button>
+        <button class="sw" data-color="#FFD166" type="button" title="暖黄（深色背景）"></button>
+        <button class="sw" data-color="#1F1D24" type="button" title="近黑（浅色背景）"></button>
+        <button class="sw" data-color="#E8488A" type="button" title="粉色"></button>
+      </div>
+      <label class="check"><input type="checkbox" id="outlineToggle" /> 描边</label>
+    </div>
+
+    <div class="row">
+      <span>底色</span>
+      <input type="range" id="bgAlpha" min="0" max="60" step="2" />
+      <b id="bgAlphaValue">0%</b>
+    </div>
+
+    <div class="row">
+      <span>快捷键</span>
+      <button class="hk" id="btnHotkey" type="button" title="点一下，然后按下想用的组合">Ctrl+Alt+M</button>
+      <button class="step" id="btnHotkeyReset" type="button" title="恢复默认">↺</button>
+    </div>
+
+    <div class="row">
+      <span>尺寸</span>
+      <div class="sizes" id="sizes">
+        <button class="sz" data-size="small" type="button">窄</button>
+        <button class="sz" data-size="medium" type="button">中</button>
+        <button class="sz" data-size="large" type="button">宽</button>
+      </div>
+    </div>
+
+    <p class="tip" id="hotkeyTip">隐藏后按快捷键可以再叫回来</p>
+  </div>
+
+  <script src="overlay.js"></script>
+</body>
+</html>

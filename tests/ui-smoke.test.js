@@ -1888,3 +1888,64 @@ maybe('提示文字变化会重算平台视图，新增的那一行不会被网�
     || /observe\(vaultBarEl\)/.test(src),
     '必须用 ResizeObserver 盯住 #vaultBar 的高度变化');
 });
+
+/* ---------- 摸鱼码字：第一次点按钮先讲清楚怎么用 ---------- */
+
+maybe('摸鱼码字：第一次点按钮弹说明卡，之后不再弹', async (t) => {
+  const page = bootPage();
+  t.after(() => page.dom.window.close());
+  const { window } = page;
+  assert.ok(await waitBoot(window));
+  const doc = window.document;
+
+  // 模拟「没看过说明」的冷启动
+  window.Prefs.set('moyuGuideShown', false);
+  doc.getElementById('guideDialog').hidden = true;
+
+  assert.equal(window.maybeShowMoyuGuide(), true);
+  assert.equal(doc.getElementById('guideDialog').hidden, false, '第一次点必须弹');
+  assert.match(doc.getElementById('guideTitle').textContent, /摸鱼码字/);
+  assert.ok(doc.querySelectorAll('#guideSteps li').length >= 3, '至少三条能照着做的步骤');
+  assert.equal(doc.getElementById('guideSteps').innerHTML.includes('&lt;'), false,
+    '步骤会被 escapeHtml 转义，夹 HTML 标签只会原样显示成尖括号');
+
+  const primary = doc.querySelector('#guideActions .btn.primary');
+  assert.equal(primary.textContent, '开始写');
+  primary.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.equal(doc.getElementById('guideDialog').hidden, true, '点「开始写」之后卡片要关掉');
+
+  assert.equal(window.Prefs.get('moyuGuideShown', false), true, '看过要落盘，否则每次点都弹');
+  assert.equal(window.maybeShowMoyuGuide(), false, '第二次不该再弹');
+  assert.equal(doc.getElementById('guideDialog').hidden, true);
+});
+
+/* ---------- 码字台显示设置：字体从 4 种扩到 11 种 ---------- */
+
+maybe('字体下拉：选项够多，选中后正文变量真的跟着换', async (t) => {
+  const page = bootPage();
+  t.after(() => page.dom.window.close());
+  const { window } = page;
+  assert.ok(await waitBoot(window));
+  const doc = window.document;
+
+  const sel = doc.getElementById('wdpFont');
+  assert.ok(sel.options.length >= 10, `字体只有 ${sel.options.length} 项，用户已经嫌 4 项太少`);
+
+  // 每一项都得真能落到 --writer-font 上，不能选了没反应
+  const seen = new Set();
+  for (const opt of Array.from(sel.options)) {
+    sel.value = opt.value;
+    sel.dispatchEvent(new window.Event('change'));
+    const applied = doc.getElementById('writerWorkspace').style.getPropertyValue('--writer-font');
+    assert.ok(applied && applied.trim(), `选「${opt.textContent}」之后 --writer-font 是空的`);
+    assert.equal(seen.has(applied), false, `「${opt.textContent}」和别的字体用了同一串字体族`);
+    seen.add(applied);
+  }
+
+  // 挑一项非默认的，确认写进了偏好（下次打开还是它）
+  const target = 'fangsong';
+  sel.value = target;
+  sel.dispatchEvent(new window.Event('change'));
+  assert.equal(window.Prefs.get('writerDisplay', {}).font, target, '换字体要落盘');
+  assert.match(doc.getElementById('writerWorkspace').style.getPropertyValue('--writer-font'), /FangSong/);
+});

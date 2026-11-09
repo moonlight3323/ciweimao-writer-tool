@@ -1,0 +1,393 @@
+/* 摸鱼浮层：整页透明，只留下字。
+ *
+ * 三条硬约束，改样式前先看：
+ *   1. html / body 必须真透明（background: transparent），否则窗口是一块实色；
+ *   2. 悬停才显示把手与虚线框 —— 常态下越不显眼越好；
+ *   3. 编辑区不能有自己的背景色，否则透明就没意义了。
+ */
+
+:root {
+  --fs: 20px;
+  --lh: 1.9;
+  --ink: #ffffff;
+  /* 正文字体族：由码字台的「字体」设置随 open 一起传进来（overlay.js 写这个变量）。
+     这里只是没传值时的兜底，跟码字台默认字体（WRITER_FONTS.yahei）保持同一串。 */
+  --font: "Microsoft YaHei", "Noto Serif SC", sans-serif;
+  --pad-tint: rgba(20, 18, 26, 0);
+  --card: rgba(24, 21, 30, 0.96);
+  --line: rgba(255, 255, 255, 0.14);
+  --accent: #e8488a;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+body {
+  -webkit-app-region: no-drag;
+  font: 12px/1.5 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+  color: #fff;
+  user-select: none;
+}
+
+.pad {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--pad-tint);
+  border: 1px dashed transparent;
+  border-radius: 10px;
+  box-sizing: border-box;
+}
+
+.pad:hover {
+  border-color: rgba(120, 160, 255, 0.38);
+}
+
+/* ---------------------------------------------------------------- 把手 */
+
+/* 拖动不交给 -webkit-app-region: drag。
+ * 那个属性由系统直接接管鼠标：页面收不到 mousedown，光标也改不成十字箭头，
+ * 透明无边框窗口上还经常整个失灵（用户反馈过「拖不动」）。
+ * 现在由 overlay.js 自己算位移 —— 整条把手（含握把、章节名）都是拖动区。 */
+/* 整条把手**不铺底色**：它只是浮在正文上方的一条工具文字，
+ * 铺深色渐变看着像贴了张纸条，跟透明浮层的整体观感打架。
+ * 字色直接吃 --ink（跟正文同一个设置项），带不带描边也一起跟随。
+ * 唯一留下颜色的是左端握把 —— 不给一点色，用户找不到能拖的地方。 */
+.handle {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  margin: 4px 6px 0;
+  padding: 0 6px 0 0;
+  border-radius: 18px;
+  background: transparent;
+  color: var(--ink);
+  cursor: move;
+  flex: 0 0 auto;
+}
+
+/* 常态的透明度只压在按钮上：章节名和字数就是正文的一部分，淡化会让它
+ * 「看起来不像正文字色」。按钮稍暗一点，免得抢正文的注意力。 */
+.handle .hbtn {
+  opacity: 0.6;
+}
+
+.pad:hover .handle .hbtn,
+.handle:focus-within .hbtn,
+.handle .hbtn:hover,
+.handle.is-dragging .hbtn {
+  opacity: 1;
+}
+
+/* 描边模式：把手上的字跟正文一样加暗影，否则浅色网页上白字直接糊成一片 */
+body.has-outline .handle .chapter,
+body.has-outline .handle .count,
+body.has-outline .handle .hbtn {
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.62), 0 1px 2px rgba(0, 0, 0, 0.48);
+}
+
+.handle .grip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  width: 42px;
+  border-radius: 18px 0 0 18px;
+  /* 整条把手唯一带颜色的地方：淡粉，浅色深色网页上都能认出来「这里能拖」 */
+  background: rgba(232, 72, 138, 0.26);
+  color: var(--ink);
+  opacity: 0.7;
+  cursor: move;
+  transition: background 0.16s ease, opacity 0.16s ease;
+}
+
+.handle:hover .grip,
+.handle.is-dragging .grip {
+  opacity: 1;
+  background: rgba(232, 72, 138, 0.4);
+}
+
+.handle .chapter {
+  max-width: 42%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+.handle .count {
+  font-variant-numeric: tabular-nums;
+}
+
+.handle .spacer {
+  flex: 1 1 auto;
+}
+
+.hbtn {
+  -webkit-app-region: no-drag;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid currentColor;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  line-height: 20px;
+  cursor: pointer;
+  transition: opacity 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+}
+
+.hbtn:hover {
+  background: rgba(232, 72, 138, 0.16);
+}
+
+.hbtn.primary {
+  border-color: rgba(232, 72, 138, 0.72);
+  background: transparent;
+  color: var(--ink);
+}
+
+.hbtn.primary:hover {
+  background: rgba(232, 72, 138, 0.26);
+}
+
+/* ---------------------------------------------------------------- 编辑区 */
+
+.editor {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  padding: 6px 16px 18px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  /* 跟码字台的「字体」设置走：宋体、楷体也会跟着变，不是写死雅黑 */
+  font-family: var(--font);
+  font-size: var(--fs);
+  line-height: var(--lh);
+  letter-spacing: 0.02em;
+  resize: none;
+  overflow-y: auto;
+  caret-color: #ff6fa5;
+  user-select: text;
+}
+
+.editor::placeholder {
+  color: rgba(255, 255, 255, 0.28);
+}
+
+/* 描边：白字压在浅色网页上才看得见。两层很淡的暗影够用，别做成实心黑边 */
+body.has-outline .editor {
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.62), 0 1px 2px rgba(0, 0, 0, 0.48);
+}
+
+.editor::-webkit-scrollbar {
+  width: 6px;
+}
+
+.editor::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 3px;
+}
+
+.editor::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------------------------------------------------------------- 设置面板 */
+
+.panel {
+  position: fixed;
+  top: 44px;
+  right: 8px;
+  width: 232px;
+  padding: 10px 12px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  -webkit-app-region: no-drag;
+  z-index: 10;
+  /* 默认窗口只有 320 高：面板比窗口还高时让它自己滚，别把底部按钮裁掉 */
+  max-height: calc(100vh - 52px);
+  overflow-y: auto;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.xbtn {
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.xbtn:hover {
+  color: #fff;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.row > span:first-child {
+  width: 38px;
+  flex: 0 0 38px;
+  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.row b {
+  min-width: 30px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.step {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.step:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* 快捷键按钮：平时显示当前生效的组合，点一下进入「按下组合」的捕获态 */
+.hk {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.88);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.hk:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.hk.is-capture {
+  border-color: rgba(232, 72, 138, 0.85);
+  background: rgba(232, 72, 138, 0.24);
+  color: #ffd7e6;
+}
+
+/* 用户设的组合被别的软件占了：标黄，别让人以为生效了 */
+.hk.is-warn {
+  border-color: rgba(255, 176, 74, 0.7);
+  color: #ffd8a3;
+}
+
+.swatches {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+}
+
+.sw {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  cursor: pointer;
+  padding: 0;
+}
+
+.sw[data-color="#FFFFFF"] { background: #fff; }
+.sw[data-color="#FFD166"] { background: #ffd166; }
+.sw[data-color="#1F1D24"] { background: #1f1d24; }
+.sw[data-color="#E8488A"] { background: #e8488a; }
+
+.sw.is-on {
+  outline: 2px solid rgba(232, 72, 138, 0.9);
+  outline-offset: 1px;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+}
+
+.check input {
+  accent-color: var(--accent);
+}
+
+input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.sizes {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+}
+
+.sz {
+  flex: 1;
+  height: 20px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.85);
+  font: inherit;
+  cursor: pointer;
+}
+
+.sz:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.sz.is-on {
+  border-color: rgba(232, 72, 138, 0.8);
+  background: rgba(232, 72, 138, 0.22);
+  color: #ffd7e6;
+}
+
+.tip {
+  margin: 6px 0 0;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 11px;
+  line-height: 1.55;
+}

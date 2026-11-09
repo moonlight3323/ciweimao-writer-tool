@@ -70,6 +70,14 @@ function readManifest(folder) {
       editorStat: !!(manifest.contributes && manifest.contributes.editorStat),
       // 页面原生悬浮球：由插件 iframe 自己绘制，宿主只负责让 iframe 常驻。
       floatingWidget: !!(manifest.contributes && manifest.contributes.floatingWidget),
+      // 码字台工具栏入口。宿主目前只给内置「摸鱼码字」接了具体动作，
+      // 其它插件声明了也不会长按钮 —— 免得点下去没有任何反应。
+      editorButton: manifest.contributes && manifest.contributes.editorButton
+        ? {
+          label: String(manifest.contributes.editorButton.label || manifest.name || id).slice(0, 12),
+          title: String(manifest.contributes.editorButton.title || '').slice(0, 120),
+        }
+        : null,
     },
   };
 }

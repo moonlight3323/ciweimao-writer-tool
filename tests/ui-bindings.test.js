@@ -105,3 +105,24 @@ test('侧边栏与页面视图双向对齐', () => {
     assert.ok(navViews.includes(v), `页面里有视图 ${v}，但侧边栏没有入口`);
   }
 });
+
+test('渲染层脚本不能在顶层声明 api（会撞上 preload 的 window.api）', () => {
+  // window.api 是 contextBridge 挂的不可配置属性。classic script 里写 `const api = …`
+  // 会直接 SyntaxError "Identifier 'api' has already been declared"，**整个文件不执行**。
+  // book-priority.js 就是这么静默失效的：window.BookPriority 一直是 undefined，
+  // app.js 悄悄走了自己的兜底分支，两边规则随时可能分叉。
+  const dir = path.join(ROOT, 'src', 'renderer');
+  const offenders = [];
+  for (const file of fs.readdirSync(dir)) {
+    if (!file.endsWith('.js')) continue;
+    const src = fs.readFileSync(path.join(dir, file), 'utf8');
+    const hit = /^(?:const|let|var)\s+api\s*=/m.exec(src);
+    if (!hit) continue;
+    // 整个文件被 IIFE 包起来时（nav-order.js 那样），这个 const 是函数作用域，撞不到全局
+    const iife = src.search(/^\(function/m);
+    if (iife >= 0 && iife < hit.index) continue;
+    offenders.push(file);
+  }
+  assert.deepEqual(offenders, [],
+    `${offenders.join('、')} 在顶层声明了 api，换一个变量名（如 bookPriorityApi）`);
+});

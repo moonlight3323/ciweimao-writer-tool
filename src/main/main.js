@@ -16,6 +16,8 @@ const fs = require('fs');
 const { app, BrowserWindow, WebContentsView, ipcMain, session, shell, net, dialog, nativeTheme, Tray, Menu } = require('electron');
 const vault = require('./vault');
 const miaoyu = require('./miaoyu');
+// 摸鱼码字（透明浮层）。与 miaoyu（喵语数据站）不是一回事，两个名字只差一个字母
+const moyuWriter = require('./moyu-writer');
 const pubside = require('./pubside');
 const aiApiModule = require('./api');
 const library = require('./library');
@@ -114,6 +116,19 @@ function showMainWindow() {
   win.focus();
 }
 
+/**
+ * 托盘「显示主界面」/ 点托盘图标走的路径。
+ *
+ * 摸鱼浮层还开着就先收掉：两个界面同时在场，用户不知道哪边是准的。
+ * 收的时候不带 restore，避免 showMainWindow 再被反向调一次。
+ */
+async function bringBackMain() {
+  try {
+    await moyuWriter.closeSession({ restore: false });
+  } catch (_) { /* 浮层收不掉也必须把主窗口叫回来 */ }
+  showMainWindow();
+}
+
 function createTray() {
   if (tray) return;
   try {
@@ -123,12 +138,12 @@ function createTray() {
   }
   tray.setToolTip('刺猬猫作家助手');
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '显示主界面', click: () => showMainWindow() },
+    { label: '显示主界面', click: () => { bringBackMain(); } },
     { type: 'separator' },
     { label: '退出', click: () => { quitting = true; app.quit(); } },
   ]));
-  tray.on('click', () => showMainWindow());
-  tray.on('double-click', () => showMainWindow());
+  tray.on('click', () => { bringBackMain(); });
+  tray.on('double-click', () => { bringBackMain(); });
 }
 
 
@@ -225,6 +240,9 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      // 摸鱼码字打开时主窗口是 hide() 的，默认的后台节流会把 900ms 的自动保存
+      // 拖到 1s 以上；正文还在浮层里实时推，保存节奏不该跟着变慢。
+      backgroundThrottling: false,
     },
   });
 
@@ -548,6 +566,22 @@ ipcMain.handle('miaoyu:back', () => miaoyuApi.back());
 ipcMain.handle('miaoyu:forward', () => miaoyuApi.forward());
 ipcMain.handle('miaoyu:external', () => miaoyuApi.external());
 ipcMain.handle('miaoyu:state', () => miaoyuApi.state());
+
+// ---------------------------------------------------------------- 摸鱼码字（透明浮层）
+//
+// 窗口与全局快捷键都在 moyu-writer 里，这里只做转发：
+// 主界面点按钮 → 打开；浮层里打字 / 藏起来 / 回到软件 → 回推或收尾。
+ipcMain.handle('moyu:open', (_e, payload) => moyuWriter.open(payload));
+ipcMain.handle('moyu:close', () => moyuWriter.closeSession({ restore: false }));
+ipcMain.handle('moyu:state', () => moyuWriter.state());
+// 浮层窗口用 send 而不是 invoke：每 120ms 一次，没必要等回执
+ipcMain.on('moyu:input', (_e, text) => moyuWriter.forwardText(text));
+ipcMain.on('moyu:hide', () => moyuWriter.hideOverlay());
+ipcMain.on('moyu:restore', () => { moyuWriter.closeSession({ restore: true }); });
+ipcMain.on('moyu:settings', (_e, patch) => moyuWriter.applySettings(patch));
+// 拖把手：浮层只报「按下 / 松开」，位移由 moyu-writer 跟着系统光标算
+ipcMain.on('moyu:drag-start', () => moyuWriter.startDrag());
+ipcMain.on('moyu:drag-end', () => moyuWriter.endDrag());
 
 // ---------------------------------------------------------------- AI 接入
 //
@@ -1972,6 +2006,14 @@ if (!gotLock) {
     await ensureInitialStorageChoice();
     plugins.installBundled(dataDir(), path.join(app.getAppPath(), 'bundled-plugins'));
     createWindow();
+    // 摸鱼码字：窗口句柄、偏好读写、「回到软件」的回调都从主进程注入。
+    // 放在 createWindow 之后：getWindow 虽然是惰性的，但第一次 open 一定晚于这里。
+    moyuWriter.updateDeps({
+      getWindow: () => win,
+      readPrefs: readPrefsFile,
+      writePrefs: writePrefsFile,
+      onRestore: () => showMainWindow(),
+    });
     // 托盘常驻：关闭窗口只是收起来，靠右下角图标再打开或退出
     createTray();
 
@@ -2018,6 +2060,8 @@ if (!gotLock) {
   });
 
   app.on('will-quit', () => {
+    // 全局快捷键必须还回去，否则进程退了系统里还占着那个组合键
+    try { moyuWriter.dispose(); } catch (_) { /* 退出路径不抛错 */ }
     if (quitFallback) {
       clearTimeout(quitFallback);
       quitFallback = null;

@@ -59,6 +59,28 @@ contextBridge.exposeInMainWorld('api', {
     state: () => ipcRenderer.invoke('miaoyu:state'),
   },
   /**
+   * 摸鱼码字：透明浮层窗口由主进程创建。
+   * 界面这边只负责「带着当前章节打开 / 接回浮层推来的正文 / 关掉」，
+   * 窗口与全局快捷键都在主进程，这里不碰。
+   */
+  moyu: {
+    open: (payload) => ipcRenderer.invoke('moyu:open', payload),
+    close: () => ipcRenderer.invoke('moyu:close'),
+    state: () => ipcRenderer.invoke('moyu:state'),
+    /** 浮层里打字 → 实时回推正文 */
+    onText: (cb) => {
+      const handler = (_e, payload) => cb(payload);
+      ipcRenderer.on('moyu:text', handler);
+      return () => ipcRenderer.removeListener('moyu:text', handler);
+    },
+    /** 浮层关掉、「回到软件」时通知界面：可以收尾/聚焦正文 */
+    onClosed: (cb) => {
+      const handler = (_e, payload) => cb(payload);
+      ipcRenderer.on('moyu:closed', handler);
+      return () => ipcRenderer.removeListener('moyu:closed', handler);
+    },
+  },
+  /**
    * AI 接入：本机只读接口 + 素材包。
    * 只暴露「开关 / 状态 / 生成素材 / 打开目录」，没有任何写数据的能力。
    */

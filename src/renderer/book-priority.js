@@ -123,7 +123,15 @@ function partition(books) {
   return { priority, other };
 }
 
-const api = {
+/**
+ * 导出对象的变量名不能叫 `api`。
+ *
+ * 页面里 `window.api` 是 preload 用 contextBridge 挂的**不可配置**属性，
+ * 顶层 `const api` 撞上它会直接 SyntaxError（"Identifier 'api' has already been declared"），
+ * 整个文件不执行 —— 表现就是 window.BookPriority 一直是 undefined，
+ * app.js 悄悄走了自己的兜底分支。改名即可，规则本身没变。
+ */
+const bookPriorityApi = {
   canPin,
   sortByPriority,
   pickPriority,
@@ -133,5 +141,5 @@ const api = {
   partition,
 };
 
-if (typeof module === 'object' && module.exports) module.exports = api;
-else globalThis.BookPriority = api;
+if (typeof module === 'object' && module.exports) module.exports = bookPriorityApi;
+else globalThis.BookPriority = bookPriorityApi;

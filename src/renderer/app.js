@@ -5454,17 +5454,34 @@ writerContent.addEventListener('scroll', () => {
 
 // ------------------------------------------------------ 码字区：显示设置
 
+/**
+ * 码字台可选的字体族。
+ *
+ * 每一项都以通用族收尾：思源、霞鹜这类需要用户自己装，没装时浏览器会往下
+ * 找第一个存在的字体，所以每串都排在「一定能拿到」的中文字体前面之后。
+ * 键名存进 Prefs，改名字会让老用户的选择失效——只能加，不能改名。
+ */
 const WRITER_FONTS = {
-  yahei: '"Microsoft YaHei", "Noto Serif SC", sans-serif',
-  serif: '"Noto Serif SC", "Source Han Serif SC", SimSun, serif',
+  yahei: '"Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif',
+  hei: 'SimHei, "Heiti SC", "Noto Sans SC", sans-serif',
+  sans: '"Source Han Sans SC", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif',
+  dengxian: 'DengXian, "Microsoft YaHei", "PingFang SC", sans-serif',
+  serif: '"Noto Serif SC", "Source Han Serif SC", SimSun, "Songti SC", serif',
+  fangsong: 'FangSong, "FangSong_GB2312", STFangsong, SimSun, serif',
   kai: 'KaiTi, "Kaiti SC", STKaiti, serif',
+  stkai: 'STKaiti, "Kaiti SC", KaiTi, serif',
+  wenkai: '"LXGW WenKai", "LXGW WenKai GB", KaiTi, "Kaiti SC", serif',
+  yuanti: 'YouYuan, "Yuanti SC", "Microsoft YaHei", sans-serif',
   system: 'system-ui, "Segoe UI", "Microsoft YaHei", sans-serif',
 };
 const WRITER_DISPLAY_DEFAULT = { font: 'yahei', size: 16, line: 2.05, width: 760 };
 
 function writerDisplayPrefs() {
   const saved = (window.Prefs && window.Prefs.get('writerDisplay', null)) || {};
-  return Object.assign({}, WRITER_DISPLAY_DEFAULT, saved);
+  const v = Object.assign({}, WRITER_DISPLAY_DEFAULT, saved);
+  // 配置文件被手改过、或以后删掉某个字体时，别让下拉框变成空白
+  if (!WRITER_FONTS[v.font]) v.font = WRITER_DISPLAY_DEFAULT.font;
+  return v;
 }
 
 function applyWriterDisplay(patch) {
@@ -6513,6 +6530,114 @@ $('#writingRange').addEventListener('click', async (e) => {
   renderWritingStats();
 });
 
+// ------------------------------------------------------------ 摸鱼码字（透明浮层）
+
+/**
+ * 功能中心里「摸鱼码字」开着时，码字台工具栏才出现入口。
+ *
+ * 浮层是主进程里的独立窗口（src/main/moyu-writer.js），这里只做两件事：
+ *   1. 点按钮时把当前章节的标题与正文递过去，并先落一次盘；
+ *   2. 浮层按输入节奏推回正文时，用和「一键排版」同一条落地路径覆盖正文 ——
+ *      保存、字数、错别字都在这里重算，不另走一套。
+ */
+const MOYU_PLUGIN_ID = 'moyu-writer';
+
+function moyuEntryEnabled() {
+  return pluginItems.some((p) => p.id === MOYU_PLUGIN_ID && p.enabled && !p.invalid);
+}
+
+function syncMoyuEntry() {
+  const btn = $('#btnWriterMoyu');
+  if (btn) btn.hidden = !moyuEntryEnabled();
+}
+
+/** 浮层推回的正文（浮层是这期间的唯一输入源，整段覆盖即可） */
+function applyMoyuText(text) {
+  if (typeof text !== 'string') return;
+  if (!writerCurrentChapter()) return;
+  if (writerContent.value === text) return;
+  writerContent.value = text;
+  writerBeforeText = text;
+  writerTypedMask = text.split('').map(() => 0);
+  writerBeforeMask = writerTypedMask.slice();
+  syncWriterChapterFromForm();
+  updateWriterWordCount();
+  markWriterDirty();
+  renderWriterStats();
+  scheduleBadwordScan();
+  $('#writerBottomState').textContent = '正在从摸鱼浮层同步…';
+}
+
+/** 第一次点「摸鱼码字」的说明卡只出现一次，按功能记在 ui-prefs.json 里 */
+const MOYU_GUIDE_KEY = 'moyuGuideShown';
+
+/**
+ * 第一次点按钮先讲清楚它到底在做什么。
+ *
+ * 这个功能的入口文案（「摸鱼码字」）猜不出交互：窗口会整个消失、
+ * 输入区浮在网页之上、要靠快捷键叫回来。不先说明的话，用户第一反应
+ * 基本都是「点了按钮软件怎么没了」。
+ *
+ * @returns {boolean} true 表示正在显示说明卡，这次不要打开浮层
+ */
+function maybeShowMoyuGuide() {
+  if (window.Prefs && window.Prefs.get(MOYU_GUIDE_KEY, false)) return false;
+  if (window.Prefs) window.Prefs.set(MOYU_GUIDE_KEY, true);
+  showGuideDialog({
+    badge: '第一次使用',
+    title: '摸鱼码字怎么用',
+    lead: '点「开始写」，软件窗口会收起来，屏幕上只剩一条几乎看不见的输入区。'
+      + '在那里写的字会实时同步到当前章节，保存、字数、错别字扫描照常进行，不会多出一份稿子。',
+    steps: [
+      '鼠标放到浮层上，顶部那条透明工具行会亮起来：按住它「任意位置」（光标是十字箭头）都能拖动，左端那块淡粉的握把就是抓的地方；点 ⚙ 调字号、字色、底色和快捷键',
+      '要临时藏起来：按快捷键（默认 Ctrl + Alt + M），或者在浮层里「左键和右键同时按」；再按一次快捷键就回来',
+      '写完点把手上的「↩ 回到软件」，浮层关闭、窗口还原，光标停在这章正文末尾',
+      '说明卡只出现这一次，之后点按钮就直接进浮层',
+    ],
+    secondary: { label: '先不写' },
+    primary: { label: '开始写', onClick: () => { void openMoyuOverlay(); } },
+  });
+  return true;
+}
+
+async function openMoyuOverlay() {
+  const chapter = writerCurrentChapter();
+  if (!chapter || !writerEditorBook) return;
+  // 先把当前正文落盘：浮层拿到的是磁盘上这一版，两边不至于写出两个副本
+  if (writerDirty) {
+    try { await writerSaveNow(true); } catch (_) { /* 存失败也放行，内容以内存为准 */ }
+  }
+  const current = writerCurrentChapter() || chapter;
+  try {
+    await window.api.moyu.open({
+      bookId: writerEditorBook.bookId,
+      bookName: writerEditorBook.name,
+      chapterId: String(current.id),
+      title: current.title,
+      content: writerContent.value,
+      // 只跟随字体：码字台里选了宋体/楷体，浮层里也是那个字体。
+      // 字号和行距仍用浮层自己的（浮层悬在别的窗口上，字小看不清）。
+      font: WRITER_FONTS[writerDisplayPrefs().font] || WRITER_FONTS.yahei,
+    });
+  } catch (err) {
+    $('#writerBottomState').textContent = `浮层没打开：${ipcError(err)}`;
+  }
+}
+
+$('#btnWriterMoyu').addEventListener('click', () => {
+  if (!writerCurrentChapter() || !writerEditorBook) return;
+  // 第一次先看说明，点「开始写」才真正进浮层
+  if (maybeShowMoyuGuide()) return;
+  void openMoyuOverlay();
+});
+
+window.api.moyu.onText((payload) => { applyMoyuText(payload && payload.text); });
+
+window.api.moyu.onClosed(() => {
+  if (!$('#writerEditor').hidden) $('#writerContent').focus();
+  $('#writerBottomState').textContent = '已从摸鱼浮层同步';
+});
+
 // ------------------------------------------------------------ 功能中心
 
 let pluginItems = [];
@@ -6635,6 +6760,8 @@ async function loadPlugins(opts) {
     }
     renderPlugins();
     syncPluginNavigation();
+    // 码字台的「摸鱼码字」入口跟着功能中心的开关走：关掉就整条入口消失
+    syncMoyuEntry();
     await syncPluginBackgrounds();
     await syncPluginFloatingFrames();
     await refreshBuiltInIncomeEditorStat();

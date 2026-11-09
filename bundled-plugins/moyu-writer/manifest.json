@@ -1,0 +1,14 @@
+{
+  "id": "moyu-writer",
+  "name": "摸鱼码字",
+  "version": "1.0.0",
+  "author": "刺猬猫作家助手",
+  "description": "在任意界面之上开一个几乎隐形的文字浮层，随手码字，正文实时同步到码字台当前章节。开启后码字台工具栏会出现「摸鱼码字」入口。",
+  "permissions": ["editor.read", "editor.write"],
+  "contributes": {
+    "editorButton": {
+      "label": "摸鱼码字",
+      "title": "在任意界面之上开一个几乎隐形的浮层，随手写，正文实时同步到本章"
+    }
+  }
+}

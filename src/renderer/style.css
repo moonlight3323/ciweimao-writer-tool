@@ -4070,6 +4070,13 @@ select,
 
 .wdp-row label { flex: 0 0 58px; }
 .wdp-row select { flex: 1; min-width: 0; }
+/* 字体说明：跟字体那一行贴紧，别把整个面板撑高 */
+.wdp-hint {
+  margin: -3px 0 9px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
 .wdp-row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent-line); }
 .wdp-val { flex: 0 0 52px; text-align: right; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 

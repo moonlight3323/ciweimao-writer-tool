@@ -52,7 +52,7 @@
           <span class="conn-dot"></span>
           <span class="conn-text">后台未打开</span>
         </div>
-        <div class="version">v1.0.9</div>
+        <div class="version">v1.1.0</div>
       </div>
     </aside>
 
@@ -317,6 +317,9 @@
               <button class="writer-tool writer-tool-tone" id="btnWriterDarkTone" type="button" title="切换深色配色">暗金</button>
               <button class="writer-tool" id="btnWriterFocus" type="button"
                       title="隐藏左侧导航与右侧统计，只留目录和正文；窗口同时最大化，再点一次退出">专注模式</button>
+              <!-- 摸鱼码字：由功能中心的「摸鱼码字」开关控制显隐，关掉就整条入口消失 -->
+              <button class="writer-tool" id="btnWriterMoyu" type="button" hidden
+                      title="在任意界面之上开一个几乎隐形的浮层，随手写，正文实时同步到本章">摸鱼码字</button>
               <button class="writer-tool" id="btnWriterFormat" type="button" title="整理多余空行；回车时已自动缩进两格，这里主要用来收拾从别处粘进来的正文">一键排版</button>
               <button class="writer-tool" id="btnWriterFind" type="button">查找替换</button>
               <button class="writer-tool is-active" id="btnWriterTypos" type="button" title="打开或收起本地错别字提示">错别字 <span id="writerTypoToolbarCount">0</span></button>
@@ -332,12 +335,28 @@
               <div class="wdp-row">
                 <label for="wdpFont">字体</label>
                 <select class="select select-sm" id="wdpFont">
-                  <option value="yahei">微软雅黑</option>
-                  <option value="serif">思源宋体 / 宋体</option>
-                  <option value="kai">楷体</option>
-                  <option value="system">系统默认</option>
+                  <optgroup label="黑体">
+                    <option value="yahei">微软雅黑</option>
+                    <option value="hei">黑体</option>
+                    <option value="sans">思源黑体</option>
+                    <option value="dengxian">等线</option>
+                  </optgroup>
+                  <optgroup label="宋体">
+                    <option value="serif">宋体 / 思源宋体</option>
+                    <option value="fangsong">仿宋</option>
+                  </optgroup>
+                  <optgroup label="楷体">
+                    <option value="kai">楷体</option>
+                    <option value="stkai">华文楷体</option>
+                    <option value="wenkai">霞鹜文楷</option>
+                  </optgroup>
+                  <optgroup label="其他">
+                    <option value="yuanti">幼圆</option>
+                    <option value="system">系统默认</option>
+                  </optgroup>
                 </select>
               </div>
+              <p class="wdp-hint">思源、霞鹜这类字体要系统里装了才生效，没装会自动退回最接近的一种。</p>
               <!-- 用加减号而不是滑块：滑块一拖就过头，想从 16 调到 17 很难对准 -->
               <div class="wdp-row">
                 <label>字号</label>
