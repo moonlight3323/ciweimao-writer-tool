@@ -486,7 +486,26 @@ ipcMain.handle('browser:state', async () => {
 });
 
 /**
- * 在平台页面上下文执行脚本。
+ * 在平台页面执行脚本，带硬超时。
+ *
+ * 页面正在跳转时 executeJavaScript 可能永远不 resolve：旧文档已经销毁、
+ * 新文档还没就绪，请求就那么挂着。所有执行入口都必须走这里，
+ * 否则一次挂住就会让按钮永远转圈（发布轮询还会被 pollBusy 闸门卡死）。
+ */
+function runPageScript(wc, code, timeoutMs) {
+  const limit = Number(timeoutMs) > 0 ? Number(timeoutMs) : 10000;
+  let timer = null;
+  return Promise.race([
+    wc.executeJavaScript(code, true),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('页面响应超时（可能正在跳转）')), limit);
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+/**
  * 这是所有数据抓取的统一入口：脚本运行在 author.ciweimao.com 源下，
  * 因此自带登录 cookie，可直接 fetch 同源接口或读取 DOM。
  */
@@ -496,22 +515,7 @@ ipcMain.handle('browser:eval', async (_e, code, timeoutMs) => {
   if (!wc.getURL()) {
     throw new Error('平台页面尚未加载，请先打开作者后台');
   }
-  // 必须带超时。页面正在跳转时 executeJavaScript 可能永远不 resolve：
-  // 旧文档已经销毁、新文档还没就绪，请求就那么挂着。而发布轮询有 pollBusy 闸门
-  // （同一时刻只查一次），一次挂住就再也不轮询 —— 表现是点完发布之后界面
-  // 从头到尾没有任何反应，实际上章节早就发出去了。
-  const limit = Number(timeoutMs) > 0 ? Number(timeoutMs) : 10000;
-  let timer = null;
-  try {
-    return await Promise.race([
-      wc.executeJavaScript(code, true),
-      new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error('页面响应超时（可能正在跳转）')), limit);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+  return runPageScript(wc, code, timeoutMs);
 });
 
 /** 跳转到指定后台路径（相对 author.ciweimao.com） */
@@ -577,7 +581,14 @@ ipcMain.handle('moyu:state', () => moyuWriter.state());
 // 浮层窗口用 send 而不是 invoke：每 120ms 一次，没必要等回执
 ipcMain.on('moyu:input', (_e, text) => moyuWriter.forwardText(text));
 ipcMain.on('moyu:hide', () => moyuWriter.hideOverlay());
-ipcMain.on('moyu:restore', () => { moyuWriter.closeSession({ restore: true }); });
+ipcMain.on('moyu:restore', () => {
+  // 这是 on 通道，没人接 rejection；浮层销毁失败时至少留下原因，
+  // 并且和 bringBackMain 一样不让异常冒到主进程。
+  Promise.resolve(moyuWriter.closeSession({ restore: true })).catch((err) => {
+    console.error('摸鱼浮层恢复失败：', err && err.message);
+    showMainWindow();
+  });
+});
 ipcMain.on('moyu:settings', (_e, patch) => moyuWriter.applySettings(patch));
 // 拖把手：浮层只报「按下 / 松开」，位移由 moyu-writer 跟着系统光标算
 ipcMain.on('moyu:drag-start', () => moyuWriter.startDrag());
@@ -733,6 +744,25 @@ ipcMain.handle('writer:create', (_e, name) => library.createBook(dataDir(), name
 // 后台新建的书补进本地作品库并绑定作品号，省掉投递时手动选一次
 ipcMain.handle('writer:adopt', (_e, books) => library.adoptPlatformBooks(dataDir(), books));
 ipcMain.handle('writer:save', (_e, book) => library.saveBook(dataDir(), book));
+
+/**
+ * 退出前的同步保存。
+ *
+ * 码字台自动保存是 900ms 防抖，退出时主进程会直接销毁窗口，
+ * 渲染层的定时器和未完成的异步 IPC 都来不及跑 —— 最后敲的字就丢了。
+ * 渲染层在 beforeunload 里用 sendSync 调这里，主进程同步写盘后再放行关闭。
+ * 这本书的上限在 library.saveBook 里统一校验。
+ */
+ipcMain.on('app:flush-sync', (event, book) => {
+  try {
+    if (!book || typeof book !== 'object') throw new Error('没有可保存的数据');
+    library.saveBook(dataDir(), book);
+    event.returnValue = true;
+  } catch (err) {
+    console.error('退出前保存失败：', err && err.message);
+    event.returnValue = false;
+  }
+});
 ipcMain.handle('writer:covers', (_e, list) => library.updateCovers(dataDir(), list));
 /**
  * 设置 / 取消优先级。
@@ -769,6 +799,33 @@ ipcMain.handle('writer:priority', () => {
   };
 });
 ipcMain.handle('writer:delete', (_e, bookId) => ({ deleted: library.deleteBook(dataDir(), bookId) }));
+
+/**
+ * 读取文本文件并自动识别编码。
+ *
+ * 以前固定按 UTF-8 读：GBK/ANSI 的 txt 会被解码成一串 U+FFFD，而且不可逆，
+ * 保存入库后整本正文就废了。中文网文作者手里的 txt 有大量是 GBK 编码，
+ * 所以这里先用严格 UTF-8 试解，失败再回退 GBK（Electron 自带完整 ICU）。
+ */
+function readTextFileAuto(file) {
+  const buf = fs.readFileSync(file);
+  if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
+    return buf.slice(3).toString('utf8');
+  }
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) {
+    return new TextDecoder('utf-16le').decode(buf.slice(2));
+  }
+  if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) {
+    return new TextDecoder('utf-16be').decode(buf.slice(2));
+  }
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buf);
+  } catch (_) {
+    try { return new TextDecoder('gbk').decode(buf); }
+    catch (_e) { return buf.toString('utf8'); }
+  }
+}
+
 ipcMain.handle('writer:import', async () => {
   const picked = await dialog.showOpenDialog(win, {
     title: '导入书籍',
@@ -781,7 +838,7 @@ ipcMain.handle('writer:import', async () => {
   if (picked.canceled || !picked.filePaths[0]) return { canceled: true };
   try {
     const file = picked.filePaths[0];
-    const parsed = importedTextToBook(file, fs.readFileSync(file, 'utf8'));
+    const parsed = importedTextToBook(file, readTextFileAuto(file));
     const saved = library.saveBook(dataDir(), { ...parsed, source: 'import' });
     return { ok: true, book: saved.book };
   } catch (err) {
@@ -849,6 +906,22 @@ ipcMain.handle('window:focus-mode', (_e, on) => {
 });
 
 /**
+ * 主题切换时同步窗口原生底色。
+ *
+ * BrowserWindow 的 backgroundColor 是创建时定死的（bootBackground()）。
+ * 运行时换主题如果只改渲染层，重绘空档或窗口边缘可能露出上一套底色，
+ * 看起来像闪了一下。这里只接受 #rgb/#rrggbb/#rrggbbaa。
+ */
+ipcMain.handle('window:set-background', (_e, color) => {
+  const value = String(color || '').trim();
+  if (!/^#[0-9a-f]{3,8}$/i.test(value)) return false;
+  if (win && !win.isDestroyed()) {
+    try { win.setBackgroundColor(value); } catch (_) { return false; }
+  }
+  return true;
+});
+
+/**
  * 诊断包写盘。
  * 解析适配层依赖真实页面结构，站点改版时用同一机制重新测绘。
  */
@@ -875,8 +948,20 @@ function readStorageConfig() {
 }
 
 function writeStorageConfig(config) {
-  fs.mkdirSync(path.dirname(storageConfigPath()), { recursive: true });
-  fs.writeFileSync(storageConfigPath(), JSON.stringify(config, null, 2), 'utf8');
+  const target = storageConfigPath();
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  /*
+   * 自愈：v1.1.0 的「恢复数据」会把这个配置文件误建成一个同名目录。
+   * 不先清掉的话，writeFileSync 会抛 EISDIR —— 而这里发生在启动流程里，
+   * 会直接让窗口永远建不出来（用户看到的是进程活着、没有界面）。
+   * 该目录里只可能有那次错误恢复留下的副本，删掉是正确的。
+   */
+  try {
+    if (fs.existsSync(target) && fs.statSync(target).isDirectory()) {
+      fs.rmSync(target, { recursive: true, force: true });
+    }
+  } catch (_) { /* 删不掉就让下面的写入自己报错 */ }
+  fs.writeFileSync(target, JSON.stringify(config, null, 2), 'utf8');
 }
 
 function configuredDataDir() {
@@ -1163,7 +1248,12 @@ ipcMain.handle('data:reset', async (_e, opts) => {
 ipcMain.handle('data:restore', (_e, name) => {
   const target = String(name || '').trim();
   if (!target) throw new Error('没有指定要恢复的备份');
-  const res = datamanager.restoreBackup(backupRoot(), target, backupTargets());
+  if (target !== path.basename(target) || target === '.' || target === '..') {
+    throw new Error('备份名称不合法');
+  }
+  // 传完整清单：restoreBackup 需要知道哪些目录是 Chromium 正在占用的会话目录，
+  // 清空数据目录时要跳过它们。备份本身仍然只包含用户数据。
+  const res = datamanager.restoreBackup(backupRoot(), target, currentTargets());
   return { ok: true, ...res };
 });
 
@@ -1176,8 +1266,21 @@ ipcMain.handle('app:relaunch', () => {
   return { ok: true };
 });
 
+/**
+ * 数据目录内的文件名。
+ *
+ * 只替换非法字符不够：`..` 不含非法字符，path.join 之后会跳出数据目录。
+ * 这里先取 basename 再清洗，并显式拒绝 . / ..，与其它入口的校验标准保持一致。
+ */
+function safeDataName(name) {
+  const raw = String(name == null ? '' : name).trim();
+  const base = path.basename(raw).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
+  if (!base || base === '.' || base === '..') throw new Error('文件名不合法');
+  return base;
+}
+
 ipcMain.handle('data:read', async (_e, name) => {
-  const f = path.join(dataDir(), String(name).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_'));
+  const f = path.join(dataDir(), safeDataName(name));
   try {
     return JSON.parse(fs.readFileSync(f, 'utf8'));
   } catch (_) {
@@ -1186,7 +1289,7 @@ ipcMain.handle('data:read', async (_e, name) => {
 });
 
 ipcMain.handle('data:write', async (_e, name, content) => {
-  const f = path.join(dataDir(), String(name).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_'));
+  const f = path.join(dataDir(), safeDataName(name));
   const tmp = f + '.tmp';
   fs.writeFileSync(tmp, typeof content === 'string' ? content : JSON.stringify(content), 'utf8');
   fs.renameSync(tmp, f);
@@ -1239,12 +1342,19 @@ function readActionsLog() {
 }
 
 function appendActionLog(entry) {
-  const entries = readActionsLog();
-  entries.push(entry);
-  // 只留最近 500 条，避免文件无限膨胀
-  const trimmed = entries.slice(-500);
-  fs.writeFileSync(actionsLogPath(), JSON.stringify({ entries: trimmed }, null, 2), 'utf8');
-  return trimmed.length;
+  try {
+    const entries = readActionsLog();
+    entries.push(entry);
+    // 只留最近 500 条，避免文件无限膨胀
+    const trimmed = entries.slice(-500);
+    fs.writeFileSync(actionsLogPath(), JSON.stringify({ entries: trimmed }, null, 2), 'utf8');
+    return trimmed.length;
+  } catch (err) {
+    // 动作已经在平台上执行成功了，日志写不进去不能把回执变成失败：
+    // 渲染层会以为操作失败而重试，导致重复删除/禁言。
+    console.error('动作日志写入失败：', err && err.message);
+    return 0;
+  }
 }
 
 /** 校验目标参数；不合法直接抛错，绝不放行 */
@@ -1308,7 +1418,8 @@ ipcMain.handle('exec:run', async (_e, req) => {
   }
 
   const wc = platformPage();
-  const res = await wc.executeJavaScript(adapter.pageSource(fnName, target), true);
+  // 与 browser:eval 同一套超时保护：页面跳转期间 executeJavaScript 可能永不返回
+  const res = await runPageScript(wc, adapter.pageSource(fnName, target), 20000);
 
   appendActionLog({
     at: new Date().toISOString(),
@@ -1331,7 +1442,8 @@ ipcMain.handle('exec:verify', async (_e, req) => {
   if (!fnName) throw new Error('不支持的动作：' + action);
   const target = normalizeTarget(action, r.target);
   const wc = platformPage();
-  const res = await wc.executeJavaScript(adapter.pageSource(fnName, target), true);
+  // 与 browser:eval 同一套超时保护：页面跳转期间 executeJavaScript 可能永不返回
+  const res = await runPageScript(wc, adapter.pageSource(fnName, target), 20000);
   return res || { ok: false };
 });
 
@@ -1360,7 +1472,7 @@ ipcMain.handle('vault:capture', async () => {
   if (!isAuthorLoginUrl(wc.getURL())) {
     throw new Error('当前不在作者后台登录页，已取消保存');
   }
-  const got = await wc.executeJavaScript(adapter.pageSource('readLoginForm'), true);
+  const got = await runPageScript(wc, adapter.pageSource('readLoginForm'), 15000);
   if (!got || !got.username || !got.password) {
     throw new Error('登录框里还没有内容——先在页面里把账号和密码填好，再点保存');
   }
@@ -1382,11 +1494,11 @@ ipcMain.handle('vault:fill', async (_e, id) => {
   const cred = vault.reveal(id);
   if (!cred) throw new Error('这条记录不存在，可能已被删除');
 
-  const res = await wc.executeJavaScript(adapter.pageSource('fillLoginForm', {
+  const res = await runPageScript(wc, adapter.pageSource('fillLoginForm', {
     mode: cred.mode,
     username: cred.username,
     password: cred.password,
-  }), true);
+  }), 15000);
   if (res && res.ok) vault.markUsed(id);
   return res || { ok: false };
 });
@@ -1404,8 +1516,8 @@ ipcMain.handle('vault:by-author', (_e, authorName) => ({ item: vault.findByAutho
  */
 ipcMain.handle('vault:bind-author', async (_e, id) => {
   const wc = vaultPage();
-  const authorName = await wc.executeJavaScript(
-    adapter.pageSource('readAuthorName'), true,
+  const authorName = await runPageScript(
+    wc, adapter.pageSource('readAuthorName'), 10000,
   ).catch(() => '');
   const target = String(id || '') || vault.lastFilledId();
   if (!authorName) return { ok: false, reason: 'no-author-name', items: vault.list() };
@@ -1736,6 +1848,7 @@ async function downloadUpdate() {
       from: current,
       at: new Date().toISOString(),
       stage: 'downloading',
+      type: manifest.type,
       bakPath: '',
       attempts: 0,
     });
@@ -1759,6 +1872,7 @@ async function downloadUpdate() {
       from: current,
       at: new Date().toISOString(),
       stage: 'ready',
+      type: manifest.type,
       bakPath: '',
       attempts: 0,
     });
@@ -1806,6 +1920,26 @@ function shorten(text) {
 }
 
 /**
+ * 解压出来的目录是不是「完整包」（含运行程序）。
+ *
+ * app 包只包含 resources/app 里的代码；完整包里会有 exe 和运行时 DLL。
+ * 旧版本的状态文件没有 type 字段，光靠 state 区分不出来，这里按内容再兜一层。
+ */
+function looksLikeFullPackage(dir) {
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      if (/\.exe$/i.test(name)) return true;
+      const p = path.join(dir, name);
+      try {
+        if (fs.statSync(p).isDirectory()
+            && fs.readdirSync(p).some((n) => /\.exe$/i.test(n))) return true;
+      } catch (_) { /* 读不到的目录跳过 */ }
+    }
+  } catch (_) { /* 目录不存在就按 app 包处理 */ }
+  return false;
+}
+
+/**
  * 执行替换：解压 → 写脚本 → 交棒给 cmd → 退出自己。
  *
  * 备份改名刻意放在脚本里做，而不是现在做：Windows 上正在运行的程序
@@ -1819,7 +1953,11 @@ async function installUpdate() {
     return { ok: false, message: `更新包还没准备好，当前版本 v${current} 可继续使用` };
   }
 
-  const manifest = cachedManifest;
+  // 包类型必须从 state 读：cachedManifest 是模块级变量，应用重启后就没了，
+  // 而 stage=ready 的下载包会被 recoverUpdateState 特意保留。
+  // 只认 cachedManifest 的话，「下载完整包 → 重启 → 点安装」会把完整包
+  // 当成 app 包替换进 resources\app，安装目录直接被搅乱。
+  const updateType = String(st.type || (cachedManifest && cachedManifest.type) || 'app');
   const pkgFile = path.join(updater.tempRoot(), st.to, 'package.zip');
   if (!fs.existsSync(pkgFile)) {
     updater.clearState(dir);
@@ -1828,7 +1966,7 @@ async function installUpdate() {
 
   // 完整包（含运行时）不自动替换：里面的目录结构和安装目录不同，
   // 硬套替换规则只会把程序目录搅乱，交给用户解压反而安全。
-  if (manifest && manifest.type === 'full') {
+  if (updateType === 'full') {
     return {
       ok: true,
       manual: true,
@@ -1858,11 +1996,38 @@ async function installUpdate() {
     return { ok: false, message: `解压更新包失败，当前版本 v${current} 可继续使用（${e.message}）` };
   }
 
+  // 旧状态没有 type 字段时的内容兜底：带 exe 的一定是完整包，绝不能
+  // robocopy 进 resources\app（那会把安装目录搅乱）。
+  if (updateType !== 'full' && looksLikeFullPackage(newDir)) {
+    return {
+      ok: true,
+      manual: true,
+      version: st.to,
+      packagePath: pkgFile,
+      sizeText: updater.humanSize(fs.statSync(pkgFile).size),
+      message: `更新包里带着运行程序，判断为完整包，已改为手动安装：`
+        + `解压后覆盖安装目录即可；当前版本 v${current} 可继续使用`,
+    };
+  }
+
+  // 防重复：连点「立即重启」或上一次脚本没跑完时，不再堆出第二个窗口。
+  // 必须放在 writeState 之前 —— 先写成 installing 再发现锁被占，
+  // 函数返回失败但状态已经落盘，下次启动会误报「更新失败，已回滚」。
+  const lockPath = path.join(updater.tempRoot(), 'run-update.lock');
+  try {
+    const age = Date.now() - fs.statSync(lockPath).mtimeMs;
+    if (age < 60000) {
+      return { ok: false, message: '更新脚本已在运行，稍等一下；当前版本可以继续使用' };
+    }
+  } catch (_) { /* 没有锁文件是正常情况 */ }
+  try { fs.writeFileSync(lockPath, String(process.pid), 'utf8'); } catch (_) { /* ignore */ }
+
   updater.writeState(dir, {
     to: st.to,
     from: current,
     at: new Date().toISOString(),
     stage: 'installing',
+    type: updateType,
     bakPath: bakDir,
     attempts: 0,
   });
@@ -1882,16 +2047,6 @@ async function installUpdate() {
   const cmdPath = path.join(updater.tempRoot(), 'run-update.cmd');
   fs.mkdirSync(path.dirname(cmdPath), { recursive: true });
   fs.writeFileSync(cmdPath, cmdText, 'utf8');
-
-  // 防重复：连点「立即重启」或上一次脚本没跑完时，不再堆出第二个窗口
-  const lockPath = path.join(updater.tempRoot(), 'run-update.lock');
-  try {
-    const age = Date.now() - fs.statSync(lockPath).mtimeMs;
-    if (age < 60000) {
-      return { ok: false, message: '更新脚本已在运行，稍等一下；当前版本可以继续使用' };
-    }
-  } catch (_) { /* 没有锁文件是正常情况 */ }
-  try { fs.writeFileSync(lockPath, String(process.pid), 'utf8'); } catch (_) { /* ignore */ }
 
   /*
    * 用 wscript 转一层，而不是直接 spawn cmd.exe。
@@ -1924,7 +2079,7 @@ async function installUpdate() {
     app.exit(0);
   }, 600);
 
-  return { ok: true, restarting: true, version: st.to, type: manifest ? manifest.type : 'app' };
+  return { ok: true, restarting: true, version: st.to, type: updateType };
 }
 
 ipcMain.handle('update:notice', async () => {
@@ -2003,7 +2158,14 @@ if (!gotLock) {
     try { recoverUpdateState(); } catch (_) { /* 自检失败不阻断启动 */ }
     // 版本变化判定要排在 recoverUpdateState 之后：它依赖「是否自动安装」这个结论
     try { evaluateVersionChange(); } catch (_) { /* 判定失败就当作没换版本 */ }
-    await ensureInitialStorageChoice();
+    // 这一步会弹对话框、写配置文件，任何异常都不能阻断后面建窗口：
+    // 之前没有兜住，配置路径一旦损坏（比如被旧版恢复成同名目录），
+    // 进程会活着但永远没有界面，用户只能去任务管理器结束它。
+    try {
+      await ensureInitialStorageChoice();
+    } catch (err) {
+      console.error('选择数据保存位置失败，按默认位置继续：', err && err.message);
+    }
     plugins.installBundled(dataDir(), path.join(app.getAppPath(), 'bundled-plugins'));
     createWindow();
     // 摸鱼码字：窗口句柄、偏好读写、「回到软件」的回调都从主进程注入。
@@ -2045,8 +2207,15 @@ if (!gotLock) {
 
     // 兜底收尾：把还挂着的窗口全部销毁。侧栏/喵语平时是 hide() 的，
     // 不主动销毁的话它们会拖着渲染进程一起留在后台。
+    // 主窗口用 close() 而不是 destroy()：close 会触发渲染层的 beforeunload，
+    // 码字台在那里用 sendSync 把最后不到 900ms 的输入同步写盘；destroy 会跳过。
+    // 上面有 2 秒兜底，渲染层卡死也不会让进程退不掉。
     BrowserWindow.getAllWindows().forEach((w) => {
-      try { if (!w.isDestroyed()) w.destroy(); } catch (_) { /* ignore */ }
+      try {
+        if (w.isDestroyed()) return;
+        if (w === win) w.close();
+        else w.destroy();
+      } catch (_) { /* ignore */ }
     });
 
     // 再兜一层：某些异步句柄（HTTP 连接、文件句柄）会让退出卡住，

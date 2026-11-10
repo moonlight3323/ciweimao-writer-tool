@@ -32,11 +32,35 @@ function available() {
   try { return safeStorage.isEncryptionAvailable(); } catch (_) { return false; }
 }
 
+/**
+ * 读取密码本。
+ *
+ * 只有「文件不存在」才能当成空库。其他读取错误（EBUSY / EACCES / EPERM，
+ * 常见于杀软或同步盘短暂占用）必须往上抛：save() 是基于 read() 的结果
+ * 写回整份文件的，把读失败当成空库会让用户新存一条密码时，
+ * **静默覆盖掉之前所有记录**。
+ *
+ * JSON 损坏时先把坏文件改名留档，再返回空库 —— 这样至少还能继续用，
+ * 坏文件也没有被覆盖，用户仍有手工恢复的机会。
+ */
 function read() {
+  let text;
   try {
-    const raw = JSON.parse(fs.readFileSync(vaultFile(), 'utf8'));
+    text = fs.readFileSync(vaultFile(), 'utf8');
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return { version: 1, items: [] };
+    throw new Error(`密码本读取失败（${(err && err.code) || '未知错误'}），为避免覆盖原有记录已中止`);
+  }
+  try {
+    const raw = JSON.parse(text);
     if (raw && Array.isArray(raw.items)) return raw;
-  } catch (_) { /* 不存在或损坏都当成空 */ }
+  } catch (_) { /* 落到下面按损坏处理 */ }
+
+  const backup = `${vaultFile()}.corrupt-${Date.now()}`;
+  try { fs.renameSync(vaultFile(), backup); }
+  catch (err) {
+    throw new Error(`密码本文件已损坏且无法备份（${(err && err.code) || '未知错误'}），已中止以免覆盖`);
+  }
   return { version: 1, items: [] };
 }
 

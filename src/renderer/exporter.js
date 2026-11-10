@@ -143,14 +143,45 @@
       await sleep(PAGE_DELAY);
     }
 
-    chapters.forEach((c, i) => { c.index = i + 1; });
+    /*
+     * 分页目录必须整体再排一次序。
+     *
+     * parseChapterList 只把「单页内的倒序」翻正：第 1 页 71..120、第 2 页 21..70，
+     * 直接按页拼接就得到 71..120, 21..70, 1..20。码字台同步那条路有
+     * ChapterOrder.displayChapters 兜底，导出页没有 —— 导出的 TXT 章节顺序会错乱。
+     */
+    const ordered = orderChapters(chapters);
+    ordered.forEach((c, i) => { c.index = i + 1; });
     return {
-      chapters,
+      chapters: ordered,
       hint: parsed.hint || '',
       pageBookId: parsed.pageBookId || '',
       raw: { url: first.url },
       html: '',
     };
+  }
+
+  /**
+   * 按章节号整体排序；卷内无编号的章节（公告、楔子、番外）保持原相对顺序。
+   * 复用码字台的 ChapterOrder，保证「目录显示顺序」和「导出顺序」一致。
+   */
+  function orderChapters(list) {
+    const co = root.ChapterOrder;
+    if (co && typeof co.displayChapters === 'function') {
+      return co.displayChapters({ chapters: list });
+    }
+    const noOf = (c) => {
+      try { return window.CiweimaoAdapter.chapterNo(c.title); } catch (_) { return null; }
+    };
+    return list
+      .map((c, i) => ({ c, i, seq: noOf(c) }))
+      .sort((a, b) => {
+        if (a.seq == null && b.seq == null) return a.i - b.i;
+        if (a.seq == null) return -1;
+        if (b.seq == null) return 1;
+        return a.seq - b.seq || a.i - b.i;
+      })
+      .map((x) => x.c);
   }
 
   function chapterUrl(book, ch) {
@@ -440,6 +471,7 @@
     plausible,
     listBooks,
     listChapters,
+    orderChapters,
     readContents,
     buildTxt,
     safeName,

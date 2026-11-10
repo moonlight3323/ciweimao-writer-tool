@@ -4398,3 +4398,12 @@ body.is-focus .writer-tool.is-active#btnWriterFocus {
 
 /* 浅色下淡一点表示「现在还用不上」，但仍可点（点下去会切到深色） */
 .writer-tool-tone.is-dim { opacity: .55; }
+
+/* 主题切换瞬间禁用过渡：否则侧栏、按钮、卡片会各自做 120ms 淡变，
+   看起来像整块界面在闪。这个类只由 theme.js 加，并在新样式绘制后移除。 */
+:root.is-theme-switching *,
+:root.is-theme-switching *::before,
+:root.is-theme-switching *::after {
+  transition: none !important;
+  animation-duration: 0s !important;
+}

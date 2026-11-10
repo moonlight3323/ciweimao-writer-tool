@@ -87,10 +87,13 @@ function previousDay(day) {
 /** 取某一天的快照。同一统计日抓了多次时取最后一次 */
 function findDay(list, day, bookId) {
   const want = String(bookId || '');
+  // 没有指定作品时不能退化成「任意一本」：道具数据是按书存的，
+  // 随便挑一本会把别的书的数字显示到当前区块上。宁可没有数据。
+  if (!want) return null;
   let found = null;
   for (const s of (Array.isArray(list) ? list : [])) {
     if (!s || s.day !== day) continue;
-    if (want && String(s.bookId || '') !== want) continue;
+    if (String(s.bookId || '') !== want) continue;
     if (!found || String(s.capturedAt || '') >= String(found.capturedAt || '')) found = s;
   }
   return found;
@@ -132,10 +135,12 @@ function mergeSnapshot(list, snapshot) {
  */
 function seriesFor(list, bookId, opts) {
   const want = String(bookId || '');
+  // 没有指定作品时不能把几本书的快照混成一条趋势线
+  if (!want) return [];
   const days = Number((opts && opts.days) || 0);
   const today = String((opts && opts.today) || '');
   const rows = (Array.isArray(list) ? list : [])
-    .filter((s) => s && (!want || String(s.bookId || '') === want))
+    .filter((s) => s && String(s.bookId || '') === want)
     .slice()
     .sort((a, b) => String(a.day).localeCompare(String(b.day)));
 

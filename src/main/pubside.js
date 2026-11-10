@@ -31,6 +31,8 @@ function createPubSide(deps) {
   /** 作者自己拖动过侧栏（比如拖到副屏），就别再被主窗口的移动拽回来 */
   let manual = false;
   let placing = false;
+  /** 上一次由 place() 写入的位置：用来识别「自己造成的 move」 */
+  let lastPlaced = null;
   let lastState = null;
 
   function send(channel, payload) {
@@ -57,12 +59,14 @@ function createPubSide(deps) {
     if (x < area.x) x = area.x;
 
     placing = true;
-    sideWin.setBounds({
+    const next = {
       x: Math.round(x),
       y: Math.round(y),
       width: WIDTH,
       height: Math.round(height),
-    });
+    };
+    lastPlaced = next;
+    sideWin.setBounds(next);
     // setBounds 也会触发 move 事件，得把这一段自己造成的位移排除掉
     setTimeout(() => { placing = false; }, 160);
   }
@@ -98,9 +102,22 @@ function createPubSide(deps) {
     sideWin.webContents.on('did-finish-load', () => {
       if (lastState) send('pubside:state', lastState);
     });
-    sideWin.on('closed', () => { sideWin = null; wanted = false; manual = false; });
-    // 作者自己拖过就记为「手动定位」，之后不再被主窗口移动拽回来
-    sideWin.on('move', () => { if (!placing) manual = true; });
+    sideWin.on('closed', () => { sideWin = null; wanted = false; manual = false; lastPlaced = null; });
+    /*
+     * 作者自己拖过就记为「手动定位」，之后不再被主窗口移动拽回来。
+     * 不能只靠 placing 的 160ms 窗口：系统卡顿时 setBounds 的 move 可能晚到，
+     * 会被误判成用户拖动，此后再也不跟随主窗口。位置和上次写入的一致就忽略。
+     */
+    sideWin.on('move', () => {
+      if (placing) return;
+      try {
+        const b = sideWin.getBounds();
+        if (lastPlaced
+            && b.x === lastPlaced.x && b.y === lastPlaced.y
+            && b.width === lastPlaced.width && b.height === lastPlaced.height) return;
+      } catch (_) { /* 拿不到就按手动处理 */ }
+      manual = true;
+    });
     return sideWin;
   }
 

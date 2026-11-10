@@ -294,16 +294,26 @@ test('侧栏不再提供发布入口，只走网页上的「发布章节」', ()
 test('页面求值必须带超时，否则轮询会被一次挂起的调用拖死', () => {
   // 页面跳转时 executeJavaScript 可能永远不 resolve（旧文档已销毁、新文档没就绪）。
   // 而发布轮询有 pollBusy 闸门：一次挂住就再也不查，界面从此没有任何反馈。
+  // 1.1.1 起超时收进 runPageScript，发布 / 编辑 / 校验三条路共用同一份实现。
   const fs = require('node:fs');
   const root = path.join(__dirname, '..');
   const main = fs.readFileSync(path.join(root, 'src/main/main.js'), 'utf8');
 
+  const helper = main.slice(main.indexOf('function runPageScript'),
+    main.indexOf('function runPageScript') + 700);
+  assert.ok(/executeJavaScript/.test(helper), '仍要真的执行脚本');
+  assert.ok(/Promise\.race/.test(helper), '必须用 Promise.race 兜一个超时');
+  assert.ok(/页面响应超时/.test(helper), '超时要给看得懂的错误');
+  assert.ok(/clearTimeout/.test(helper), '计时器要清掉，否则进程拖着不退出');
+
   const start = main.indexOf("ipcMain.handle('browser:eval'");
   assert.ok(start > 0, '应能找到 browser:eval');
-  const body = main.slice(start, start + 1200);
-  assert.ok(/executeJavaScript/.test(body), '仍要真的执行脚本');
-  assert.ok(/Promise\.race/.test(body), '必须用 Promise.race 兜一个超时');
-  assert.ok(/页面响应超时/.test(body), '超时要给看得懂的错误');
+  const body = main.slice(start, start + 700);
+  assert.ok(/runPageScript\(/.test(body), 'browser:eval 必须走带超时的实现');
+  assert.ok(/timeoutMs/.test(body), '超时时间要能由调用方指定');
+
+  const calls = (main.match(/runPageScript\(/g) || []).length;
+  assert.ok(calls >= 3, `发布、编辑、校验三条路都该走 runPageScript，实际 ${calls} 处`);
 
   const pub = fs.readFileSync(path.join(root, 'src/renderer/publish.js'), 'utf8');
   assert.ok(/evalInPage\(code,\s*timeoutMs\s*\|\|\s*8000\)/.test(pub),

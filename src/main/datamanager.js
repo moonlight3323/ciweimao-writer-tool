@@ -142,55 +142,80 @@ function dirSize(dir) {
   return total;
 }
 
-/** 递归复制；目标已存在则合并覆盖 */
-function copyTree(from, to) {
+/**
+ * 递归复制；目标已存在则合并覆盖。
+ *
+ * failures 传入数组时，任何复制失败都会记进去（路径 + 原因），而不是静默跳过。
+ * 备份流程靠它判断「这份备份到底完不完整」——文件被杀软/同步盘短暂锁住时，
+ * 静默跳过会让调用方以为备份成功，随后删掉原数据，造成不可逆的丢稿。
+ */
+function copyTree(from, to, failures) {
   let copied = 0;
-  fs.mkdirSync(to, { recursive: true });
+  try { fs.mkdirSync(to, { recursive: true }); }
+  catch (err) {
+    if (failures) failures.push({ path: to, message: err.message });
+    return 0;
+  }
   let entries;
   try { entries = fs.readdirSync(from, { withFileTypes: true }); }
-  catch (_) { return 0; }
+  catch (err) {
+    if (failures) failures.push({ path: from, message: err.message });
+    return 0;
+  }
   for (const entry of entries) {
     const src = path.join(from, entry.name);
     const dst = path.join(to, entry.name);
     if (entry.isDirectory()) {
-      copied += copyTree(src, dst);
-    } else if (entry.isSymbolicLink()) {
-      // Chromium 的缓存里可能有符号链接，按文件复制即可
-      try { fs.copyFileSync(src, dst); copied += 1; } catch (_) { /* 忽略锁住的缓存文件 */ }
+      copied += copyTree(src, dst, failures);
     } else {
-      try { fs.copyFileSync(src, dst); copied += 1; } catch (_) { /* 被占用的文件跳过 */ }
+      // 符号链接也按文件复制（Chromium 缓存里可能有）
+      try { fs.copyFileSync(src, dst); copied += 1; }
+      catch (err) { if (failures) failures.push({ path: src, message: err.message }); }
     }
   }
   return copied;
 }
 
-/** 把目标清单里的内容复制进备份目录，返回 { files, bytes, manifest } */
+/** 把目标清单里的内容复制进备份目录，返回 manifest */
 function createBackup(root, targets, meta) {
   const name = uniqueName(root, stamp());
   const dir = path.join(root, name);
   fs.mkdirSync(dir, { recursive: true });
 
   const parts = [];
+  const failures = [];
   let files = 0;
   for (const t of targets) {
     if (!fs.existsSync(t.path)) continue;
     // 备份里按 scope 分文件夹，恢复时不必再猜原始位置
     const dst = path.join(dir, t.scope);
     if (t.kind === 'contents') {
-      files += copyTree(t.path, dst);
-      parts.push({ scope: t.scope, kind: t.kind, from: t.path });
+      files += copyTree(t.path, dst, failures);
+      parts.push({ scope: t.scope, kind: t.kind, from: t.path, single: false });
     } else {
-      // 单个路径：目录就整棵复制，文件就复制文件
+      // 单个路径：目录就整棵复制，文件就复制文件。
+      // single 必须落进 manifest —— 恢复时只看「备份里是目录还是文件」会分不清
+      // 「一个目录」和「一个被复制进目录里的单文件」，v1.1.0 的恢复 bug 就出在这。
       const st = fs.statSync(t.path);
       if (st.isDirectory()) {
-        files += copyTree(t.path, dst);
+        files += copyTree(t.path, dst, failures);
+        parts.push({ scope: t.scope, kind: t.kind, from: t.path, single: false });
       } else {
         fs.mkdirSync(dst, { recursive: true });
         try { fs.copyFileSync(t.path, path.join(dst, path.basename(t.path))); files += 1; }
-        catch (_) { /* 忽略 */ }
+        catch (err) { failures.push({ path: t.path, message: err.message }); }
+        parts.push({ scope: t.scope, kind: t.kind, from: t.path, single: true });
       }
-      parts.push({ scope: t.scope, kind: t.kind, from: t.path });
     }
+  }
+
+  // 规则 2：备份不完整就不算成功。半份备份比没有更危险 ——
+  // 调用方会以为「已经备份好了」，接着把原数据删掉。
+  if (failures.length) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) { /* ignore */ }
+    const sample = failures.slice(0, 3).map((f) => f.path).join('、');
+    throw new Error(`备份未完成：${failures.length} 个文件无法复制（${sample}）。`
+      + '通常是杀毒软件或同步盘正在占用这些文件，请稍后重试；数据没有被删除。');
   }
 
   const manifest = {
@@ -229,41 +254,98 @@ function listBackups(root) {
  *
  * 恢复前会先把当前状态再备份一份（reason 标记 restore-pre），
  * 所以「恢复错了」也能退回到操作前。
+ *
+ * 「恢复」是覆盖语义：先清掉目标目录里备份中不存在的旧文件，再复制。
+ * 只合并不清理的话，备份之后新增/改名的书会留在盘上但不在索引里，
+ * 既占空间又会让用户看到「恢复完成但数据对不上」。
+ *
+ * targets 需要传完整清单（含 via=electron 的会话目录），这样清空数据目录时
+ * 才能跳过 Chromium 正在占用的 Local Storage / Network。备份本身仍只包含
+ * 用户数据（会话目录有几十 MB 缓存且恢复后也要重新登录）。
  */
 function restoreBackup(root, name, targets, meta) {
-  const dir = path.join(root, name);
+  const safeName = String(name || '').trim();
+  if (!safeName || safeName !== path.basename(safeName) || safeName === '.' || safeName === '..') {
+    throw new Error('备份名称不合法');
+  }
+  const dir = path.join(root, safeName);
   if (!fs.existsSync(dir)) throw new Error('备份不存在，可能已被手动删除');
   const manifestPath = path.join(dir, 'backup.json');
   let manifest;
   try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); }
   catch (_) { throw new Error('备份清单损坏，无法确认内容'); }
 
-  // 恢复前先给当前状态留一份
-  const safety = createBackup(root, targets, { reason: 'restore-pre' });
+  const allTargets = Array.isArray(targets) ? targets : [];
+  const userTargets = allTargets.filter((t) => t && t.via !== 'electron' && t.scope !== 'session');
+  const sessionPaths = allTargets
+    .filter((t) => t && t.via === 'electron')
+    .map((t) => path.resolve(t.path));
 
+  // 恢复前先给当前状态留一份
+  const safety = createBackup(root, userTargets, { reason: 'restore-pre' });
+
+  const failures = [];
   let files = 0;
   for (const part of manifest.parts || []) {
     const key = part.scope;
     const src = path.join(dir, key);
     if (!fs.existsSync(src)) continue;
-    // 空目录也算存在，但没内容就不用管
     const dst = part.from;
+    const st = fs.statSync(src);
+
     if (part.kind === 'contents') {
-      fs.mkdirSync(dst, { recursive: true });
-      files += copyTree(src, dst);
-    } else {
-      // 路径型：备份里是「同名目录或文件」，还原回去
-      const st = fs.statSync(src);
-      if (st.isDirectory()) {
-        fs.mkdirSync(dst, { recursive: true });
-        files += copyTree(src, dst);
-      } else {
-        fs.mkdirSync(path.dirname(dst), { recursive: true });
-        try { fs.copyFileSync(src, dst); files += 1; } catch (_) { /* 忽略 */ }
+      try { fs.mkdirSync(dst, { recursive: true }); }
+      catch (err) { failures.push({ path: dst, message: err.message }); continue; }
+
+      // 覆盖语义：先清空目标目录（跳过 Chromium 占用的会话目录）
+      let names = [];
+      try { names = fs.readdirSync(dst); }
+      catch (err) { failures.push({ path: dst, message: err.message }); }
+      for (const entry of names) {
+        const full = path.join(dst, entry);
+        if (coversSessionDir(full, sessionPaths)) continue;
+        try { fs.rmSync(full, { recursive: true, force: true }); }
+        catch (err) { failures.push({ path: full, message: err.message }); }
       }
+      files += copyTree(src, dst, failures);
+      continue;
+    }
+
+    /*
+     * 单文件目标。
+     * v1.1.1 起 manifest 里有 single 标记；v1.1.0 生成的旧备份没有这个字段，
+     * 而当时唯一的文件型目标就是 storage-location.json，所以按 scope 兜底。
+     */
+    const single = part.single === true || part.scope === 'storage' || !st.isDirectory();
+    if (single) {
+      const fileName = path.basename(dst);
+      const fileSrc = st.isDirectory() ? path.join(src, fileName) : src;
+      if (!fs.existsSync(fileSrc)) continue;
+      try {
+        fs.mkdirSync(path.dirname(dst), { recursive: true });
+        // v1.1.0 的错误恢复会把这里建成一个同名目录，先清掉再写文件
+        if (fs.existsSync(dst) && fs.statSync(dst).isDirectory()) {
+          fs.rmSync(dst, { recursive: true, force: true });
+        }
+        fs.copyFileSync(fileSrc, dst);
+        files += 1;
+      } catch (err) {
+        failures.push({ path: dst, message: err.message });
+      }
+    } else {
+      try { fs.mkdirSync(dst, { recursive: true }); }
+      catch (err) { failures.push({ path: dst, message: err.message }); continue; }
+      files += copyTree(src, dst, failures);
     }
   }
-  return { files, safetyBackup: safety.name, restoredFrom: name };
+
+  if (failures.length) {
+    const sample = failures.slice(0, 3).map((f) => f.path).join('、');
+    throw new Error(`恢复未完成：${failures.length} 个文件无法写入（${sample}）。`
+      + `恢复前的状态已备份为 ${safety.name}，可以重试。`);
+  }
+
+  return { files, safetyBackup: safety.name, restoredFrom: safeName };
 }
 
 /**

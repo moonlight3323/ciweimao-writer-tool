@@ -158,8 +158,19 @@ function normaliseSettings(raw) {
   const width = Math.round(clampNumber(src.width, LIMITS.width[0], LIMITS.width[1], DEFAULTS.width));
   const height = Math.round(clampNumber(src.height, LIMITS.height[0], LIMITS.height[1],
     DEFAULTS.height));
-  const x = Number.isFinite(Number(src.x)) && src.x !== null ? Math.round(Number(src.x)) : null;
-  const y = Number.isFinite(Number(src.y)) && src.y !== null ? Math.round(Number(src.y)) : null;
+  /*
+   * 坐标必须区分「没设置」和「0」。
+   * Number('') === 0，手改配置留空串时旧写法会返回 0，浮层被钉到屏幕左上角；
+   * 空串/布尔/非数字一律当 null（交给主进程居中放置）。
+   */
+  const coord = (value) => {
+    if (value === null || value === undefined || value === '') return null;
+    if (typeof value === 'boolean') return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.round(n) : null;
+  };
+  const x = coord(src.x);
+  const y = coord(src.y);
 
   return {
     fontSize,

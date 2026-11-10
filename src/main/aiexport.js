@@ -203,7 +203,9 @@ function createAiexport(opts) {
       L.push(`## 《${b.name}》（书号 ${b.bookId}）`);
       L.push('');
       L.push(`- 章节数：${b.chapters}　总字数：${b.words}`);
-      L.push(`- 导出时间：${new Date(b.exportedAt).toLocaleString('zh-CN')}`);
+      // 本地新建、从未导出的书 exportedAt 为 0；不能显示成 1970 年
+      const exportedAt = Number(b.exportedAt) || 0;
+      L.push(`- 导出时间：${exportedAt ? new Date(exportedAt).toLocaleString('zh-CN') : '未导出'}`);
       L.push('');
       if (!toc) return;
       L.push('| 章 | 标题 | 字数 |');

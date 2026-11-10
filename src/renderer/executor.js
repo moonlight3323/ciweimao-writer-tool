@@ -121,7 +121,7 @@
     let st = null;
     try { st = await window.api.browser.state(); } catch (_) { st = null; }
     const url = (st && st.url) || '';
-    const onAuthor = /^https://////author//.ciweimao//.com////i.test(url);
+    const onAuthor = /^https:\/\/author\.ciweimao\.com\//i.test(url);
 
     if (!st || !st.ready || !onAuthor) {
       await window.api.browser.goto(pageUrl(slip));

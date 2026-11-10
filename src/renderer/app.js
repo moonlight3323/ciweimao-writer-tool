@@ -1515,11 +1515,12 @@ const PAGE_SIZE = 60;
 
 function fmtTime(iso) {
   if (!iso) return '—';
-  try {
-    const d = new Date(iso);
-    const p = (n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-  } catch (_) { return iso; }
+  const d = new Date(iso);
+  // new Date('坏数据') 不会抛异常，getFullYear() 会返回 NaN；
+  // 只靠 try/catch 接不住，界面会显示 NaN-NaN-NaN。
+  if (Number.isNaN(d.getTime())) return String(iso);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 function splitSettingList(value) {
@@ -5567,6 +5568,43 @@ function writerSaveNow(auto) {
   return run;
 }
 
+/**
+ * 做下一件事之前，先把当前改动落盘。
+ *
+ * writerSaveNow 失败会 reject（错误提示已在保存流程里显示）。直接 await 的
+ * 后果是 async 事件处理器被中断，用户看到的是「点了没反应」；统一在这里
+ * 吞掉异常并返回 false，让调用方显式 return，至少行为是可解释的。
+ */
+async function writerFlushBeforeAction() {
+  if (!writerDirty) return true;
+  try {
+    await writerSaveNow(true);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * 退出兜底：主进程关闭主窗口时会触发 beforeunload。
+ *
+ * 自动保存是 900ms 防抖，而主进程 before-quit 会直接关窗口 ——
+ * 不在这里同步写一次，最后敲的那几个字就没了。异步 invoke 在窗口销毁后
+ * 不一定能跑完，所以用 sendSync：主进程写完盘才放行关闭。
+ */
+window.addEventListener('beforeunload', () => {
+  if (!writerDirty || !writerEditorBook) return;
+  try {
+    syncWriterChapterFromForm();
+    const snapshot = {
+      ...writerEditorBook,
+      chapters: writerEditorBook.chapters.map((c) => ({ ...c })),
+    };
+    window.api.app.flushSync(snapshot);
+    writerDirty = false;
+  } catch (_) { /* 退出路径尽力而为，失败也不阻止关闭 */ }
+});
+
 async function writerPerformSave(auto) {
   if (!writerEditorBook) return;
   syncWriterChapterFromForm();
@@ -5579,7 +5617,15 @@ async function writerPerformSave(auto) {
     ? writerSavedWordBaseline : writerWordCount(chapterAtSave.content);
   const pendingTokens = writerTypedMask.filter((token) => token && !writerSavingTokens.has(token));
   pendingTokens.forEach((token) => writerSavingTokens.add(token));
-  const bookSnapshot = JSON.parse(JSON.stringify(writerEditorBook));
+  /*
+   * 只做浅拷贝，不再 JSON.parse(JSON.stringify(整本))。
+   * 章节正文是字符串（不可变），逐章浅拷贝就足够隔离；
+   * 原来每 900ms 对几十 MB 的书做一次完整序列化 + 解析，大长篇会明显卡顿。
+   */
+  const bookSnapshot = {
+    ...writerEditorBook,
+    chapters: writerEditorBook.chapters.map((c) => ({ ...c })),
+  };
   $('#writerSaveState').textContent = '保存中…';
   try {
     const res = await window.api.writer.save(bookSnapshot);
@@ -5760,7 +5806,7 @@ $('#btnWriterImport').addEventListener('click', async () => {
 });
 
 $('#btnWriterBack').addEventListener('click', async () => {
-  if (writerDirty) await writerSaveNow(true);
+  if (!(await writerFlushBeforeAction())) return;
   writerEditorBook = null;
   writerChapterId = '';
   $('#writerEditor').hidden = true;
@@ -5805,7 +5851,7 @@ $('#writerChapterList').addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-writer-chapter]');
   if (!btn || btn.dataset.writerChapter === writerChapterId) return;
   syncWriterChapterFromForm();
-  if (writerDirty) await writerSaveNow(true);
+  if (!(await writerFlushBeforeAction())) return;
   writerChapterId = btn.dataset.writerChapter;
   loadWriterChapter();
   $('#writerContent').focus();
@@ -5997,7 +6043,7 @@ writerContent.addEventListener('input', () => {
 });
 
 $('#btnWriterFormat').addEventListener('click', async () => {
-  if (writerDirty) await writerSaveNow(true);
+  if (!(await writerFlushBeforeAction())) return;
   const old = writerContent.value.replace(/\r\n?/g, '\n');
   const lines = old.split('\n').map((line) => line.replace(/[ \t　]+$/g, ''));
   const out = [];
@@ -6089,7 +6135,7 @@ $('#btnWriterReplaceOne').addEventListener('click', async () => {
   if (!find) return;
   const selected = writerContent.value.slice(writerContent.selectionStart, writerContent.selectionEnd);
   if (selected !== find) { writerFindNext(); return; }
-  if (writerDirty) await writerSaveNow(true);
+  if (!(await writerFlushBeforeAction())) return;
   writerContent.setRangeText($('#writerReplaceText').value, writerContent.selectionStart, writerContent.selectionEnd, 'end');
   writerTypedMask = writerContent.value.split('').map(() => 0);
   syncWriterChapterFromForm();
@@ -6102,7 +6148,7 @@ $('#btnWriterReplaceAll').addEventListener('click', async () => {
   if (!find) return;
   const count = writerContent.value.split(find).length - 1;
   if (!count) { $('#writerFindResult').textContent = '未找到'; return; }
-  if (writerDirty) await writerSaveNow(true);
+  if (!(await writerFlushBeforeAction())) return;
   writerContent.value = writerContent.value.split(find).join($('#writerReplaceText').value);
   writerTypedMask = writerContent.value.split('').map(() => 0);
   syncWriterChapterFromForm();
@@ -6206,7 +6252,7 @@ window.Writer = {
   autoBindPlatform: bindWriterPlatformBook,
   async replaceText(nextText) {
     if (!writerEditorBook || !writerCurrentChapter()) throw new Error('请先在创作中心打开一章');
-    if (writerDirty) await writerSaveNow(true);
+    if (!(await writerFlushBeforeAction())) throw new Error('当前修改保存失败，已取消替换');
     const text = String(nextText == null ? '' : nextText);
     $('#writerContent').value = text;
     writerTypedMask = text.split('').map(() => 0);
@@ -6658,6 +6704,10 @@ function sendPluginHostState(runtime, payload) {
 function disposeFloatingPlugin(id) {
   const runtime = pluginFloatingRuntimes.get(id);
   if (!runtime) return;
+  if (runtime.themeSwitchTimer) {
+    clearTimeout(runtime.themeSwitchTimer);
+    runtime.themeSwitchTimer = null;
+  }
   sendPluginHostState(runtime, { event: 'dispose', mode: 'floating' });
   runtime.controller.dispose();
   pluginFloatingRuntimes.delete(id);
@@ -7078,10 +7128,22 @@ function pluginBridgeSource(token) {
       if (data.type === 'ciweimao-plugin-host') {
         if (data.event === 'dispose') { dispose(); return; }
         if (data.event === 'theme') {
-          document.documentElement.dataset.theme = data.theme;
+          /*
+           * 插件文档内部也有 .12s/.15s 的颜色过渡。换主题时先压住，
+           * 让新配色一步到位；两帧后恢复，插件的 hover 等交互过渡照常。
+           */
+          const root = document.documentElement;
+          root.classList.add('is-theme-switching');
+          root.dataset.theme = data.theme;
           const style = document.getElementById('plugin-host-theme');
           if (style) style.textContent = data.css || '';
+          // 视觉样式已经落地，先回执让宿主恢复显示；插件的 JS 回调放在后面，
+          // 免得一个耗时监听把浮层藏得更久。
+          hostEvent('theme-applied', { theme: data.theme });
           emit('theme-changed', { theme: data.theme });
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            root.classList.remove('is-theme-switching');
+          }));
           return;
         }
         if (data.event) { emit(data.event, data); return; }
@@ -7159,9 +7221,25 @@ function pluginThemeCss() {
   const accent = pick('--accent', '#f9bf03');
   const accentInk = pick('--accent-ink', '#7a5600');
   const accentLine = pick('--accent-line', '#e0ac00');
+  /*
+   * color-scheme 必须跟随应用主题。
+   *
+   * 插件 iframe 是 sandbox 的 data: 文档，在 Electron 里走 OOPIF 合成；
+   * 根元素写死 color-scheme: light 时，浏览器会给这个跨进程 iframe 铺一层
+   * 白色基础背景 —— 浮层文档本身是透明的，于是深色模式下番茄钟周围出现
+   * 一块刺眼的白底。改成 dark 后基础背景变成透明/深色，白块消失。
+   */
+  const colorScheme = (document.documentElement.dataset.theme || 'light') === 'dark'
+    ? 'dark' : 'light';
 
   return `
-    html { color-scheme: light; }
+    html { color-scheme: ${colorScheme}; }
+    html.is-theme-switching *,
+    html.is-theme-switching *::before,
+    html.is-theme-switching *::after {
+      transition: none !important;
+      animation-duration: 0s !important;
+    }
     body { background: ${bg} !important; color: ${text} !important; }
     header span, .summary span, .summary small, .panel-title p, .rule,
     .limit-note, .bar span, .book-row span, .empty { color: ${text3} !important; }
@@ -7319,7 +7397,7 @@ async function handlePluginRequest(runtime, method, payload) {
   if (method === 'editor.setContent' || method === 'editor.insertText') {
     requirePluginPermission(plugin, 'editor.write');
     if (!writerEditorBook || !writerCurrentChapter()) throw new Error('请先在创作中心打开一本书');
-    if (writerDirty) await writerSaveNow(true);
+    if (!(await writerFlushBeforeAction())) throw new Error('当前修改保存失败，已取消写入');
     const editor = $('#writerContent');
     if (method === 'editor.setContent') {
       const content = String((payload && payload.content) || '');
@@ -7422,6 +7500,14 @@ window.addEventListener('message', async (event) => {
   runtime.messageCount += 1;
   if (runtime.messageCount > 240) return;
   if (data.type === 'ciweimao-plugin-host-event') {
+    if (data.event === 'theme-applied') {
+      if (runtime.themeSwitchTimer) {
+        clearTimeout(runtime.themeSwitchTimer);
+        runtime.themeSwitchTimer = null;
+      }
+      if (runtime.frame) runtime.frame.style.visibility = '';
+      return;
+    }
     if (data.event === 'ready') {
       if (runtime.controller) runtime.controller.render();
       else sendPluginHostState(runtime, { mode: 'page' });
@@ -7792,7 +7878,7 @@ function initCloseAskDialog() {
 initCloseAskDialog();
 
 $('#btnStorageChoose').addEventListener('click', async () => {
-  if (writerDirty) await writerSaveNow(true);
+  if (!(await writerFlushBeforeAction())) return;
   const result = await window.api.storage.choose();
   if (!result || result.canceled) return;
   writingStatsData = null;
@@ -7804,7 +7890,7 @@ $('#btnStorageChoose').addEventListener('click', async () => {
 });
 $('#btnStorageReset').addEventListener('click', async () => {
   if (!confirm('恢复系统默认保存位置？旧目录里的文件会保留，不会被删除。')) return;
-  if (writerDirty) await writerSaveNow(true);
+  if (!(await writerFlushBeforeAction())) return;
   await window.api.storage.reset();
   writingStatsData = null;
   savedOutputStatsData = null;
@@ -7849,12 +7935,37 @@ document.addEventListener('theme-changed', () => {
   if (b) renderBookChart(b);
 });
 
+/** 上一次推给插件的明暗档；只有明暗真正变化时才需要临时藏浮层 */
+let pluginColorScheme = (document.documentElement.dataset.theme || 'light') === 'dark'
+  ? 'dark' : 'light';
+
 // 主题通过事件同步，不重载 iframe，保留计时器、拖动位置和插件界面状态。
 document.addEventListener('theme-changed', () => {
   const css = pluginThemeCss();
   const theme = document.documentElement.dataset.theme || 'light';
+  const nextScheme = theme === 'dark' ? 'dark' : 'light';
+  const schemeChanged = nextScheme !== pluginColorScheme;
+  pluginColorScheme = nextScheme;
   for (const runtime of [activePluginRuntime, ...pluginBackgroundRuntimes.values(), ...pluginFloatingRuntimes.values()]) {
-    if (runtime) sendPluginHostState(runtime, { event: 'theme', css, theme });
+    if (!runtime) continue;
+    /*
+     * 浮层 iframe 是 sandbox 的 data: 文档，主题消息跨进程，注定比主界面
+     * 晚一拍。这一拍里 iframe 还按旧主题铺底：深色→浅色会留一块深色方块。
+     * 先把它藏起来，等插件回执 theme-applied 再显示；期间露出的是已经
+     * 换好主题的主界面，不会出现颜色对不上的方块。
+     *
+     * 只有明暗档真正变化（light/pink ↔ dark）才需要藏：浅色与粉白之间、
+     * 深黄黑与深蓝黑之间的底色一致，藏一下反而多一次眨眼。
+     */
+    if (schemeChanged && runtime.kind === 'floating' && runtime.frame) {
+      runtime.frame.style.visibility = 'hidden';
+      if (runtime.themeSwitchTimer) clearTimeout(runtime.themeSwitchTimer);
+      runtime.themeSwitchTimer = setTimeout(() => {
+        runtime.themeSwitchTimer = null;
+        if (runtime.frame) runtime.frame.style.visibility = '';
+      }, 250);
+    }
+    sendPluginHostState(runtime, { event: 'theme', css, theme });
   }
 });
 

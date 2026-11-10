@@ -356,10 +356,46 @@ test('run-update.cmd 内容：等待旧进程、覆盖、等 ok 标记、失败�
   assert.match(cmd, /if %WAITED% GEQ 30 goto busyfail/, '旧进程超时不得继续覆盖文件');
   assert.match(cmd, /\/FO CSV \/NH/, 'PID 判断的引号匹配必须使用 CSV 输出');
   assert.doesNotMatch(cmd, /timeout \/t/i, '后台无控制台输入时 timeout 会立即失败');
-  assert.match(cmd, /Start-Sleep -Seconds %~1/, '等待无需控制台标准输入');
+  assert.match(cmd, /ping -n %_SLEEP% 127\.0\.0\.1/, '等待无需控制台标准输入（ping 不读 stdin）');
   assert.match(cmd, /if errorlevel 8 goto copyfail/, '复制失败不能当作新版本启动失败');
   assert.match(cmd, /del "%LOCKFILE%"/, '结束时清锁，否则下次更新会被误判为「脚本运行中」');
   assert.ok(!/必须|强制/.test(cmd), '脚本里不该出现强制类措辞');
+});
+
+test('替换脚本必须是纯 ASCII：中文注释会被 cmd 当成命令执行', () => {
+  // .cmd 是 UTF-8，cmd.exe 在 goto / call 之后按字节偏移重新定位行，
+  // 多字节注释会和偏移错位。1.1.0 的表现就是更新窗口里刷一串
+  // "'自带、无额外进程开销的等待。' is not recognized as an internal or external command"。
+  const cmd = updater.buildUpdateCommand({
+    pid: 1, appDir: 'C:\\app\\resources\\app', newDir: 'C:\\tmp\\new',
+    bakDir: 'C:\\app\\resources\\app.bak', exePath: 'C:\\app\\a.exe',
+    args: '', dataDir: 'C:\\data', to: '1.1.1', waitSeconds: 15,
+  });
+  assert.doesNotMatch(cmd, /[^\x00-\x7F]/, '脚本里不许出现非 ASCII 字符（说明写在 JS 里）');
+});
+
+test('失败记录写成代码，读的时候才翻成中文', () => {
+  const dir = tmpDir('failed');
+  // 批处理只会写 code + backup，路径带反斜杠必须写成双反斜杠，否则 JSON 直接坏掉
+  fs.writeFileSync(path.join(dir, 'update-failed.json'), JSON.stringify({
+    at: '2026-11-10 10:00:00', to: '1.1.1',
+    code: 'startup-timeout+rollback-copy-failed',
+    backup: 'C:\\app\\resources\\app.bak-1.1.0',
+  }), 'utf8');
+  const failed = updater.readFailed(dir);
+  assert.equal(failed.reason, '启动确认超时（回滚复制失败，备份仍在 C:\\app\\resources\\app.bak-1.1.0）');
+  assert.equal(failed.to, '1.1.1');
+
+  fs.writeFileSync(path.join(dir, 'update-failed.json'),
+    JSON.stringify({ at: 'x', to: '1.1.1', code: 'backup-failed' }), 'utf8');
+  assert.equal(updater.readFailed(dir).reason, '备份失败', '界面靠这个字符串区分失败原因');
+
+  // 旧格式（直接写中文 reason）与主进程 writeFailed 写的都要能读
+  fs.writeFileSync(path.join(dir, 'update-failed.json'),
+    JSON.stringify({ at: 'x', to: '1.1.0', reason: '启动确认超时' }), 'utf8');
+  assert.equal(updater.readFailed(dir).reason, '启动确认超时');
+
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('dry-run：替换脚本只拼接不执行，且不触碰真实目录', () => {

@@ -29,18 +29,52 @@
     return 'light';
   }
 
+  /**
+   * 主题切换瞬间压住过渡动画。
+   *
+   * 页面上有几十处 `transition: background/color .12s`。换主题时这些属性
+   * 会各自淡变 120ms：侧栏、按钮、卡片会短暂停在旧颜色上，看起来就是
+   * 「底色闪一下」。加一个只存在一两帧的类，让换色一步到位；
+   * 之后恢复正常交互过渡（hover 等）不受影响。
+   *
+   * @returns {Function} 调用后在新样式绘制完成时移除该类
+   */
+  let switchToken = 0;
+  function holdTransitions() {
+    const el = document.documentElement;
+    const token = ++switchToken;
+    el.classList.add('is-theme-switching');
+    return () => {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (token === switchToken) el.classList.remove('is-theme-switching');
+      }));
+    };
+  }
+
+  /** 把窗口原生底色同步成当前主题，避免重绘空档露出上一套颜色 */
+  function syncNativeBackground() {
+    try {
+      if (!window.api || !window.api.app || typeof window.api.app.setBackgroundColor !== 'function') return;
+      const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+      if (bg) window.api.app.setBackgroundColor(bg);
+    } catch (_) { /* 同步失败不影响界面主题 */ }
+  }
+
   function paint(m) {
     const eff = effective(m);
     const el = document.documentElement;
+    const release = holdTransitions();
     el.dataset.theme = eff;
     el.dataset.themeMode = m;
     // 深色两套配色：切明暗时把已选的配色重新打一次。
     // 只在 dark 下有意义，但一直挂着没有副作用（浅色块不读这个属性）。
     Tone.apply(darkTone());
     try { localStorage.setItem(KEY, m); } catch (_) { /* ignore */ }
+    syncNativeBackground();
     document.dispatchEvent(new CustomEvent('theme-changed', {
       detail: { mode: m, effective: eff, darkTone: darkTone() },
     }));
+    release();
   }
 
   /** 当前深色配色（amber / blue） */
@@ -54,12 +88,15 @@
    * 突然变黑会让人以为点错了按钮。
    */
   function setDarkTone(v) {
+    const release = holdTransitions();
     const tone = Tone.apply(v);
     try { localStorage.setItem(Tone.KEY, tone); } catch (_) { /* ignore */ }
     if (window.Prefs) window.Prefs.set('darkTone', tone);
+    syncNativeBackground();
     document.dispatchEvent(new CustomEvent('theme-changed', {
       detail: { mode: mode(), effective: effective(mode()), darkTone: tone },
     }));
+    release();
     return tone;
   }
 

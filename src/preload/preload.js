@@ -146,8 +146,15 @@ contextBridge.exposeInMainWorld('api', {
   },
   app: {
     userDataPath: () => ipcRenderer.invoke('app:user-data'),
+    /**
+     * 退出前的同步保存：只能用于 beforeunload。
+     * 异步 invoke 在窗口销毁后不一定能完成，sendSync 会等主进程真的写完盘。
+     */
+    flushSync: (book) => ipcRenderer.sendSync('app:flush-sync', book),
     /** 专注模式：true 时窗口最大化，false 时还原进之前的最大化状态 */
     focusMode: (on) => ipcRenderer.invoke('window:focus-mode', !!on),
+    /** 主题切换时同步窗口原生底色，避免重绘空档露出上一套颜色 */
+    setBackgroundColor: (color) => ipcRenderer.invoke('window:set-background', color),
     openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
     openPath: (p) => ipcRenderer.invoke('app:open-path', p),
     /** 在文件管理器中定位到某个文件 */

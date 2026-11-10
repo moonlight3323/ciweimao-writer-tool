@@ -18,11 +18,18 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 /** 最多保留几本书的归档 */
 const MAX_BOOKS = 200;
-/** 单本正文上限（防止异常数据写爆磁盘） */
-const MAX_BOOK_BYTES = 20 * 1024 * 1024;
+/**
+ * 单本正文字数上限（防止异常数据写爆磁盘）。
+ * 长篇连载写到几十 MB 并不罕见，20MB 的旧上限会让自动保存永久失败；
+ * 放到 60MB，同时保证超过时给的是可执行的提示。
+ */
+const MAX_BOOK_BYTES = 60 * 1024 * 1024;
+/** 归档是给 AI 读的副本，单独限制，别把数据目录撑爆 */
+const MAX_ARCHIVE_BYTES = 20 * 1024 * 1024;
 
 function safeId(bookId) {
   return String(bookId || '').replace(/[^0-9A-Za-z_-]/g, '') || 'unknown';
@@ -70,6 +77,8 @@ function readIndex(dataDir) {
 function archive(dataDir, payload) {
   const p = payload || {};
   const bookId = safeId(p.bookId);
+  // 非 ASCII 的书号会被清洗成 unknown，两本书就会写进同一个目录互相覆盖
+  if (bookId === 'unknown') throw new Error('作品编号不合法，无法归档');
   const name = String(p.name || ('作品 ' + bookId));
   const list = Array.isArray(p.chapters) ? p.chapters : [];
   if (!list.length) throw new Error('没有可归档的章节');
@@ -77,7 +86,8 @@ function archive(dataDir, payload) {
   const chapters = list.map((c, i) => ({
     index: Number.isFinite(c.index) ? c.index : i + 1,
     title: String(c.title || ('第 ' + (i + 1) + ' 章')),
-    words: Number.isFinite(c.words) ? c.words : String(c.content || '').length,
+    // 与 saveBook 同一口径：去掉空白后再数字数
+    words: Number.isFinite(c.words) ? c.words : countWords(c.content),
     content: String(c.content || ''),
   }));
 
@@ -96,7 +106,7 @@ function archive(dataDir, payload) {
     chapters,
   };
   let bytes = Buffer.byteLength(JSON.stringify(book), 'utf8');
-  if (bytes > MAX_BOOK_BYTES) {
+  if (bytes > MAX_ARCHIVE_BYTES) {
     throw new Error('这本书正文超过 20MB，未归档（可以分批导出）');
   }
 
@@ -150,7 +160,13 @@ function makeLocalId() {
 /** 写入整本作品，并同步书目索引。创作页的所有保存最终都走这里。 */
 function saveBook(dataDir, payload) {
   const p = payload || {};
-  const bookId = safeId(p.bookId || makeLocalId());
+  const rawBookId = String(p.bookId || '').trim();
+  let bookId = safeId(rawBookId || makeLocalId());
+  // 中文/特殊字符的 bookId 会被清洗成 unknown，两本这样的书会写进同一个目录；
+  // 用原始 id 的哈希生成稳定本地编号，既避免互相覆盖，也不会每次保存都变成新书。
+  if (rawBookId && bookId === 'unknown') {
+    bookId = `local_${crypto.createHash('sha1').update(rawBookId).digest('hex').slice(0, 16)}`;
+  }
   const old = readJson(bookPath(dataDir, bookId), null) || {};
   const now = Date.now();
   const chapters = (Array.isArray(p.chapters) ? p.chapters : []).map((c, i) => {
@@ -160,9 +176,11 @@ function saveBook(dataDir, payload) {
       .toLowerCase() === 'platform' ? 'platform' : 'local';
     const status = String(c.status || (origin === 'platform' ? 'published' : 'unpublished'))
       .toLowerCase() === 'published' ? 'published' : 'unpublished';
+    // 章节 id 同样不能折叠成 unknown；用序号兜底保证同一本书内不重名
+    const rawChapterId = String(c.id || '').replace(/[^0-9A-Za-z_-]/g, '');
     return {
       index: i + 1,
-      id: safeId(c.id || `chapter_${i + 1}`),
+      id: rawChapterId || `chapter_local_${i + 1}`,
       title: String(c.title || `第${i + 1}章`),
       volume: String(c.volume || '正文'),
       words: countWords(content),
@@ -195,7 +213,9 @@ function saveBook(dataDir, payload) {
     chapters,
   };
   const bytes = Buffer.byteLength(JSON.stringify(book), 'utf8');
-  if (bytes > MAX_BOOK_BYTES) throw new Error('这本书正文超过 20MB，请拆分后再导入');
+  if (bytes > MAX_BOOK_BYTES) {
+    throw new Error('单个作品超过 60MB，无法保存；请在创作中心拆分成多本，或先导出留档后再删减');
+  }
   writeJson(bookPath(dataDir, bookId), book);
 
   const idx = readIndex(dataDir);
@@ -217,7 +237,22 @@ function saveBook(dataDir, payload) {
   const books = idx.books.filter((b) => String(b.bookId) !== bookId);
   books.push(entry);
   books.sort((a, b) => (b.updatedAt || b.exportedAt || 0) - (a.updatedAt || a.exportedAt || 0));
-  writeJson(indexPath(dataDir), { books: books.slice(0, MAX_BOOKS), updatedAt: now });
+  const kept = books.slice(0, MAX_BOOKS);
+  const dropped = books.slice(MAX_BOOKS);
+  /*
+   * 超出上限时要把落选的书目目录一起删掉。
+   * 只截断索引的话，那些书的 book.json 还在盘上：界面看不到、也删不掉
+   * （删除依赖索引），永久占空间；索引里同名 bookId 再保存一次还会「复活」。
+   * archive() 早就是这么处理的，这里对齐。
+   */
+  dropped.forEach((b) => {
+    const droppedId = String(b && b.bookId || '');
+    if (!droppedId || droppedId === bookId) return;
+    try {
+      fs.rmSync(path.join(libraryDir(dataDir), safeId(droppedId)), { recursive: true, force: true });
+    } catch (_) { /* 删不掉就算了，下次还会再试 */ }
+  });
+  writeJson(indexPath(dataDir), { books: kept, updatedAt: now });
   return { book, entry };
 }
 

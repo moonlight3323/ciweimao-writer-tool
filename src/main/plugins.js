@@ -96,6 +96,9 @@ function list(dataDir) {
   const result = [];
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
+    // 导入 zip 时用的 .import-XXXX 临时目录；进程中途退出会留下它，
+    // 不能把它当成一个「缺少有效 manifest」的坏插件永久显示在功能中心。
+    if (entry.name.startsWith('.')) continue;
     try {
       const folder = path.join(root, entry.name);
       const manifest = readManifest(folder);
@@ -429,6 +432,9 @@ function storageGet(dataDir, id, key) {
 
 function storageSet(dataDir, id, key, value) {
   const json = JSON.stringify(value);
+  // JSON.stringify(undefined / function / symbol) 返回 undefined，
+  // 直接交给 Buffer.byteLength 会抛一个和「存储」毫不相干的 TypeError。
+  if (json === undefined) throw new Error('插件存储值必须是可序列化的 JSON 数据');
   if (Buffer.byteLength(json, 'utf8') > 256 * 1024) throw new Error('单项插件数据不能超过 256KB');
   const file = storageFile(dataDir, id);
   const data = readJson(file, {});

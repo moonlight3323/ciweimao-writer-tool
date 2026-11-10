@@ -586,7 +586,7 @@
     // 以前这步挂在 checkNow()（侧栏「发布这一章」）里，现在那条路去掉了，
     // 页面按钮成了唯一入口，所以挪进来 —— 否则生词本从此收不到新词。
     await collectHintWords(res);
-    dumpCheckDebug(res);
+    await dumpCheckDebug(res);
     if (res.phase === 'error') {
       await notice('error', escapeHtml(res.error || '未知错误')
         + (res.needLogin ? '<br>请先点右上角「打开作者后台」重新登录。' : ''));
@@ -613,9 +613,9 @@
    * 万一某天解析不出来，照这份改规则就行，不用再猜。
    * 任何失败都静默：写盘问题绝不能打断作者正在做的发布。
    */
-  function dumpCheckDebug(res) {
+  async function dumpCheckDebug(res) {
     try {
-      window.api.data.write('publish-debug.json', {
+      await window.api.data.write('publish-debug.json', {
         at: new Date().toISOString(),
         chapter: state.chapterId,
         suggestion: res && res.suggestion,
@@ -755,13 +755,19 @@
 
   // ---------------------------------------------------------------- 处理与提交
 
-  /** 侧栏传来的方案：数组下标与最后一次分析的 items 一一对应 */
+  /**
+   * 侧栏传来的方案：优先按词匹配，词对不上才退回数组下标。
+   * 侧栏展示之后如果又来了新一轮校验，items 的顺序/数量可能已经变了，
+   * 只按下标取会把「换近义词」套到另一个词上。
+   */
   function planFromSide(plan) {
     if (!Array.isArray(plan) || !plan.length) return [];
+    const items = (state.analysis && state.analysis.items) || [];
     return plan.map((p, i) => {
-      const it = state.analysis && state.analysis.items[i];
+      const wanted = String((p && p.word) || '');
+      const it = (wanted && items.find((x) => x.word === wanted)) || items[i];
       return {
-        word: (p && p.word) || (it && it.word) || '',
+        word: wanted || (it && it.word) || '',
         mode: (p && p.mode) || 'skip',
       };
     });

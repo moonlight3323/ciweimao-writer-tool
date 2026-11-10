@@ -107,6 +107,10 @@ function createMiaoyu(opts) {
   let attached = false;
   /** 最近一次整页加载完成的时间（用于避免重复请求与界面提示） */
   let loadedAt = 0;
+  /** 路由守卫最近几次拨回的时刻；10 秒窗口内超过 3 次就判定为循环 */
+  let guardHits = [];
+  /** 判定循环后锁住自动拨回，等用户手动导航/刷新再解除 */
+  let guardStopped = false;
 
   function ensure() {
     if (view && !view.webContents.isDestroyed()) return view;
@@ -137,11 +141,31 @@ function createMiaoyu(opts) {
       });
     };
 
-    // 路由守卫：不属于 /ciweimao 的页面一律拨回试水推
+    // 路由守卫：不属于 /ciweimao 的页面一律拨回试水推。
+    //
+    // 必须限次：如果站点把 HOME 本身重定向到 /login，loadURL(HOME) 会再次
+    // 触发 did-navigate → guard → loadURL(HOME)，形成无限整页重载 ——
+    // 这正是本模块最想避免的「把第三方小站打爆」。10 秒内拨回超过 3 次
+    // 就锁住自动守卫，把状态交给界面，等用户手动点刷新/切页签再解除。
     const guard = () => {
       const url = wc.getURL();
       if (!url) return;
-      if (!isHost(url) || !isAllowed(url)) wc.loadURL(HOME);
+      if (isHost(url) && isAllowed(url)) return;
+      if (guardStopped) return;
+      const now = Date.now();
+      guardHits = guardHits.filter((t) => now - t < 10000);
+      guardHits.push(now);
+      if (guardHits.length > 3) {
+        guardStopped = true;
+        broadcast({
+          type: 'miaoyu-error',
+          code: 'redirect-loop',
+          desc: '站点反复跳到非数据页，已停止自动重定向',
+          url,
+        });
+        return;
+      }
+      wc.loadURL(HOME);
     };
 
     wc.on('dom-ready', () => {
@@ -260,6 +284,8 @@ function createMiaoyu(opts) {
   async function open(rect) {
     const v = attach(rect);
     const wc = v.webContents;
+    guardStopped = false;
+    guardHits = [];
     if (!wc.getURL()) await wc.loadURL(HOME);
     return { url: wc.getURL() };
   }
@@ -269,6 +295,9 @@ function createMiaoyu(opts) {
     const hash = ROUTES[which] || ROUTES.firstRecommend;
     const target = ORIGIN + '/' + hash;
     const now = wxNow();
+    // 用户主动切页签：允许守卫重新工作
+    guardStopped = false;
+    guardHits = [];
 
     // 已经在同一页、且加载不久：直接复用，别为一次点击再拉一遍整页。
     // 小站经不起反复刷；数据本身也是按周/按期更新的。
@@ -319,11 +348,21 @@ function createMiaoyu(opts) {
       if (loadedAt && Date.now() - loadedAt < MANUAL_REFRESH_COOLDOWN_MS) {
         return { skipped: true, loadedAt };
       }
+      guardStopped = false;
+      guardHits = [];
       v.webContents.reload();
       return { skipped: false, loadedAt: Date.now() };
     },
-    back: () => goBack(ensure().webContents),
-    forward: () => goForward(ensure().webContents),
+    back: () => {
+      guardStopped = false;
+      guardHits = [];
+      return goBack(ensure().webContents);
+    },
+    forward: () => {
+      guardStopped = false;
+      guardHits = [];
+      return goForward(ensure().webContents);
+    },
     external: () => {
       const url = view && !view.webContents.isDestroyed() ? view.webContents.getURL() : HOME;
       shell.openExternal(url || HOME);

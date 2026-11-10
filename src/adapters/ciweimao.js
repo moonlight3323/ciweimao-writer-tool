@@ -1629,7 +1629,9 @@
       } catch (e) {
         return { ok: false, error: '写入编辑器失败：' + String((e && e.message) || e) };
       }
-      var desc = document.getElementById('desc_content');
+      // 站点同步目标叫 #description（pageChapterState 里也是读它）；
+      // #desc_content 是旧版留下的猜测，两个都试一下，优先真实目标。
+      var desc = document.getElementById('description') || document.getElementById('desc_content');
       if (desc) desc.innerHTML = html;
       if (typeof check_description === 'function') {
         try { check_description(); } catch (e2) { /* 字数刷新失败不影响正文 */ }
@@ -2097,7 +2099,7 @@
     } catch (e2) {
       return { ok: false, error: '写回编辑器失败：' + String((e2 && e2.message) || e2) };
     }
-    var desc = document.getElementById('desc_content');
+    var desc = document.getElementById('description') || document.getElementById('desc_content');
     if (desc) desc.innerHTML = html;
     if (typeof check_description === 'function') { try { check_description(); } catch (e3) { /* ignore */ } }
     return { ok: true, changed: total, detail: detail };

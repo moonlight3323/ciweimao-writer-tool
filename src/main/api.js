@@ -474,24 +474,38 @@ function createApi(opts) {
     return info;
   }
 
+  // listen 还没回回调时，server 已经同步赋值、port 还是 0。
+  // 这时第二次 start() 若直接走 `if (server) return status()`，
+  // 会返回 { running:true, port:0, url:'' } 的假状态。缓存住 pending Promise，
+  // 并发调用拿到的是同一次启动结果。
+  let starting = null;
+
   function start() {
     if (server) return Promise.resolve(status());
+    if (starting) return starting;
     token = crypto.randomBytes(24).toString('hex');
     startedAt = Date.now();
 
-    return new Promise((resolve, reject) => {
-      server = http.createServer(handler);
-      server.on('error', (err) => {
-        server = null;
+    const pending = new Promise((resolve, reject) => {
+      const srv = http.createServer(handler);
+      server = srv;
+      srv.on('error', (err) => {
+        if (server === srv) server = null;
         reject(err);
       });
       // 只监听回环地址，局域网内其他机器连不上
-      server.listen(0, '127.0.0.1', () => {
-        port = server.address().port;
+      srv.listen(0, '127.0.0.1', () => {
+        port = srv.address().port;
         writeEndpoint();
         resolve(status());
       });
     });
+    starting = pending;
+    pending.then(
+      () => { if (starting === pending) starting = null; },
+      () => { if (starting === pending) starting = null; },
+    );
+    return pending;
   }
 
   function stop() {

@@ -348,11 +348,15 @@ async function open(payload) {
   return { ok: true, hotkey: activeHotkey, hotkeyWanted: wantedHotkey };
 }
 
-/** 把浮层里最后的状态读出来（输入是 120ms 防抖的，点「回到软件」时可能还压在页面里） */
-async function readOverlayText() {
-  if (!overlay || overlay.isDestroyed()) return '';
+/**
+ * 把浮层里最后的状态读出来（输入是 120ms 防抖的，点「回到软件」时可能还压在页面里）。
+ * 必须显式传窗口：closeSession 会先把模块级 overlay 置空再调用这里，
+ * 读全局变量的话永远拿到 null，最后一段输入就静默丢了。
+ */
+async function readOverlayText(win) {
+  if (!win || win.isDestroyed()) return '';
   try {
-    const text = await overlay.webContents.executeJavaScript(
+    const text = await win.webContents.executeJavaScript(
       '(document.getElementById("editor")||{}).value || ""', true);
     return typeof text === 'string' ? text : '';
   } catch (_) {
@@ -381,7 +385,7 @@ async function closeSession(opts) {
   unregisterHotkey();
 
   if (win && !win.isDestroyed()) {
-    const text = await readOverlayText();
+    const text = await readOverlayText(win);
     if (text) forwardText(text);
     try { win.hide(); } catch (_) { /* ignore */ }
     try { win.destroy(); } catch (_) { /* ignore */ }

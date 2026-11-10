@@ -497,6 +497,9 @@ function readState(dataDir) {
     from: String(s.from || ''),
     at: String(s.at || ''),
     stage: s.stage,
+    // 包类型必须跨重启保留：重启后 cachedManifest 就没了，只能靠这里区分
+    // app 包（自动替换）与 full 包（交给用户手动解压）
+    type: s.type === 'full' ? 'full' : (s.type === 'app' ? 'app' : ''),
     bakPath: typeof s.bakPath === 'string' ? s.bakPath : '',
     attempts: Number(s.attempts) || 0,
   };
@@ -511,7 +514,41 @@ function clearState(dataDir) {
   try { fs.unlinkSync(statePath(dataDir)); } catch (_) { /* 本来就没有 */ }
 }
 
-function readFailed(dataDir) { return readJson(failedPath(dataDir)); }
+/**
+ * 失败原因代码 → 中文。
+ *
+ * 批处理里不能直接写中文：脚本是 UTF-8，cmd.exe 在跳转后按字节偏移重新定位行，
+ * 多字节字符会让它错位（1.1.0 的更新窗口里那串 "is not recognized" 就是这么来的）。
+ * 所以 .cmd 只写代码，翻译放在这里；用户看到的仍然是中文。
+ */
+const FAIL_REASONS = {
+  'startup-timeout': '启动确认超时',
+  'copy-failed': '复制更新文件失败',
+  'backup-failed': '备份失败',
+  busy: '旧进程未退出，未替换文件',
+  'sleep-unavailable': '后台等待组件不可用，未替换文件',
+};
+
+/**
+ * 读失败记录。
+ *
+ * 三种形态都要能读：
+ * - 新格式（.cmd 写的）：{ at, to, code, backup }，code 翻译成中文；
+ * - 旧格式（.cmd 写的）：{ at, to, reason }，原样返回；
+ * - 主进程自己写的（writeFailed）：{ reason, ... }，原样返回。
+ */
+function readFailed(dataDir) {
+  const raw = readJson(failedPath(dataDir));
+  if (!raw || typeof raw !== 'object') return null;
+  if (!raw.code) return raw;
+  const [code, flag] = String(raw.code).split('+');
+  let reason = FAIL_REASONS[code] || '更新失败';
+  if (flag === 'rollback-copy-failed') {
+    const backup = String(raw.backup || '');
+    reason += backup ? `（回滚复制失败，备份仍在 ${backup}）` : '（回滚复制失败，备份仍保留）';
+  }
+  return { ...raw, reason };
+}
 
 function clearFailed(dataDir) {
   try { fs.unlinkSync(failedPath(dataDir)); } catch (_) { /* ignore */ }
@@ -554,6 +591,23 @@ function buildUpdateCommand(o) {
   const failedFile = failedPath(o.dataDir);
   const okFlag = okFlagPath(o.dataDir);
 
+  // 脚本注释一律写成 ASCII，别在这里放中文。
+  // .cmd 本身是 UTF-8，cmd.exe 在 goto / call 之后按字节偏移重新定位下一行，
+  // 多字节注释会和偏移错位，被当成命令去执行 —— 用户更新时窗口里会刷一串
+  // "is not recognized as an internal or external command"，1.1.0 就是这样。
+  // 中文说明集中写在这里：
+  //
+  //   1. :wait   旧进程还在跑就等，最多 30×2 秒；超时走 busyfail，绝不覆盖文件
+  //   2. :go     先 move 成 app.bak-：同盘 move 是重命名，秒完成；备份没成就走 backupfail
+  //   3. 覆盖     robocopy /E，errorlevel>=8 视为复制失败（走 copyfail，1~7 是成功码）
+  //   4. :probe  等新版本自己写 update-ok.flag，最多 wait 秒
+  //   5. :ok     删标记 / 状态 / 锁 / 备份；脚本本身留给下次正常启动清理
+  //   6. :restore 回滚：先 rd 再 move，package.json 不在就说明 move 失败，
+  //               退一步用 robocopy 把备份合并回去（此时绝不能直接启动 exe）
+  //   7. :sleep  用 ping 等：每次起 powershell 要 0.3~1.5 秒，probe 要调几十次
+  //
+  // 失败记录 update-failed.json 里 reason 的位置放的是 ASCII 代码（见 FAIL_REASONS），
+  // 由 readFailed 翻译成中文；路径字段要写成双反斜杠，否则 JSON 直接坏掉。
   return [
     '@echo off',
     'chcp 65001 >nul',
@@ -570,11 +624,11 @@ function buildUpdateCommand(o) {
     `set "FAILEDFILE=${q(failedFile)}"`,
     `set "LOCKFILE=${q(o.lockPath || path.join(tempRoot(), 'run-update.lock'))}"`,
     '',
-    'rem 旧进程还在跑就等着，它退出后才允许碰文件',
+    'rem wait for the old process to exit before touching any file',
     'set /a WAITED=0',
     ':wait',
     'if not defined OLDPID goto go',
-    'rem 最多等 60 秒：旧进程万一赖着不走，也不能让这个窗口无限循环下去',
+    'rem give up after 60s so this window can never loop forever',
     'if %WAITED% GEQ 30 goto busyfail',
     'tasklist /FI "PID eq %OLDPID%" /FO CSV /NH 2>nul | findstr /R /C:"\\"%OLDPID%\\"" >nul',
     'if errorlevel 1 goto go',
@@ -585,7 +639,7 @@ function buildUpdateCommand(o) {
     '',
     ':go',
     'if exist "%OKFLAG%" del "%OKFLAG%" >nul 2>nul',
-    'rem 先备份：同盘 move 是重命名，秒完成；备份没成功就绝不覆盖',
+    'rem back up first: same-volume move is a rename; without it never overwrite',
     'if exist "%BAKDIR%" rd /s /q "%BAKDIR%" >nul 2>nul',
     'move /y "%APPDIR%" "%BAKDIR%" >nul 2>nul',
     'if exist "%APPDIR%" goto backupfail',
@@ -593,7 +647,7 @@ function buildUpdateCommand(o) {
     'if errorlevel 8 goto copyfail',
     'start "" "%EXEPATH%" %EXEARGS%',
     '',
-    `rem 等新版本自己写 ok 标记：最多等 ${wait} 秒`,
+    `rem wait for the new build to write the ok flag: at most ${wait} seconds`,
     `set /a LEFT=${wait}`,
     ':probe',
     'if exist "%OKFLAG%" goto ok',
@@ -608,48 +662,62 @@ function buildUpdateCommand(o) {
     'del "%STATEFILE%" >nul 2>nul',
     'del "%LOCKFILE%" >nul 2>nul',
     'rd /s /q "%BAKDIR%" >nul 2>nul',
-    'rem 当前脚本由下次正常启动清理，执行中不自删',
+    'rem this script is removed by the next normal start, not by itself',
     'exit /b 0',
     '',
     ':rollback',
-    'set "FAILREASON=启动确认超时"',
+    'set "FAILCODE=startup-timeout"',
     'goto restore',
     ':copyfail',
-    'set "FAILREASON=复制更新文件失败"',
+    'set "FAILCODE=copy-failed"',
     ':restore',
     'rd /s /q "%APPDIR%" >nul 2>nul',
     'move /y "%BAKDIR%" "%APPDIR%" >nul 2>nul',
-    `>"%FAILEDFILE%" echo {"at":"%DATE% %TIME%","to":"${q(o.to)}","reason":"%FAILREASON%"}`,
+    'if exist "%APPDIR%\\package.json" goto restored',
+    'rem BAKDIR gone means the move worked even if the check above missed:',
+    'rem robocopy would fail on a missing source and add a false failure note',
+    'if not exist "%BAKDIR%" goto restored',
+    'rem the move usually fails because the new process still locks files;',
+    'rem APPDIR is already half deleted, so never launch the exe from it here',
+    'robocopy "%BAKDIR%" "%APPDIR%" /E /NFL /NDL /NJH /NJS /R:1 /W:1 >nul',
+    'if errorlevel 8 set "FAILCODE=%FAILCODE%+rollback-copy-failed"',
+    ':restored',
+    'rem JSON needs doubled backslashes, otherwise the path breaks the document',
+    'set "BAKESC=%BAKDIR:\\=\\\\%"',
+    `>"%FAILEDFILE%" echo {"at":"%DATE% %TIME%","to":"${q(o.to)}","code":"%FAILCODE%","backup":"%BAKESC%"}`,
     'del "%STATEFILE%" >nul 2>nul',
     'del "%LOCKFILE%" >nul 2>nul',
     'start "" "%EXEPATH%" %EXEARGS%',
     'exit /b 1',
     '',
     ':backupfail',
-    'rem 备份没做成说明目录被占用，此时宁可放弃这次升级，也不能覆盖掉唯一的副本',
-    `>"%FAILEDFILE%" echo {"at":"%DATE% %TIME%","to":"${q(o.to)}","reason":"备份失败"}`,
+    'rem backup failed means the directory is locked: skip the upgrade entirely',
+    `>"%FAILEDFILE%" echo {"at":"%DATE% %TIME%","to":"${q(o.to)}","code":"backup-failed"}`,
     'del "%STATEFILE%" >nul 2>nul',
     'del "%LOCKFILE%" >nul 2>nul',
     'start "" "%EXEPATH%" %EXEARGS%',
     'exit /b 2',
     '',
     ':busyfail',
-    `>"%FAILEDFILE%" echo {"at":"%DATE% %TIME%","to":"${q(o.to)}","reason":"旧进程未退出，未替换文件"}`,
+    `>"%FAILEDFILE%" echo {"at":"%DATE% %TIME%","to":"${q(o.to)}","code":"busy"}`,
     'del "%STATEFILE%" >nul 2>nul',
     'del "%LOCKFILE%" >nul 2>nul',
     'exit /b 3',
     '',
     ':sleepfail',
-    `>"%FAILEDFILE%" echo {"at":"%DATE% %TIME%","to":"${q(o.to)}","reason":"后台等待组件不可用，未替换文件"}`,
+    `>"%FAILEDFILE%" echo {"at":"%DATE% %TIME%","to":"${q(o.to)}","code":"sleep-unavailable"}`,
     'del "%STATEFILE%" >nul 2>nul',
     'del "%LOCKFILE%" >nul 2>nul',
     'start "" "%EXEPATH%" %EXEARGS%',
     'exit /b 4',
     '',
     ':sleep',
-    'rem timeout.exe 在无控制台输入时直接失败，使用无需标准输入的等待方式',
-    'powershell.exe -NoProfile -NonInteractive -Command "Start-Sleep -Seconds %~1" >nul 2>nul',
-    'exit /b %errorlevel%',
+    'rem do not spawn a scripting host here: it costs 0.3~1.5s per call and the',
+    'rem probe loop calls it dozens of times, turning 60s of waiting into minutes.',
+    'rem ping ships with Windows and has no extra process overhead.',
+    'set /a _SLEEP=%~1+1',
+    'ping -n %_SLEEP% 127.0.0.1 >nul',
+    'exit /b 0',
     '',
   ].join('\r\n');
 }
