@@ -1,15 +1,35 @@
 {
-  "version": "1.1.0",
+  "version": "1.1.1",
   "type": "app",
-  "size": 1627503,
-  "sha256": "823f5c34beb82ca23d8856d20a093360cadb46f83c1757f9b7ef62c383a07468",
+  "size": 1640001,
+  "sha256": "ee06134dd6051f691235891e2d284c697626a130074bde7aab58564127e208bc",
   "url": [
-    "https://cdn.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.0-app.zip",
-    "https://fastly.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.0-app.zip",
-    "https://gcore.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.0-app.zip",
-    "https://raw.githubusercontent.com/moonlight3323/ciweimao-writer-tool/main/update/assets/ciweimao-writer-tool-v1.1.0-app.zip"
+    "https://cdn.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.1-app.zip",
+    "https://fastly.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.1-app.zip",
+    "https://gcore.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.1-app.zip",
+    "https://raw.githubusercontent.com/moonlight3323/ciweimao-writer-tool/main/update/assets/ciweimao-writer-tool-v1.1.1-app.zip"
   ],
   "changes": [
+    {
+      "version": "1.1.1",
+      "date": "2026-11-10",
+      "items": [
+        "修好「恢复数据」：以前从单文件备份恢复必然失败，清除后再恢复还会把配置建成同名目录、重启后连窗口都没有；现在按文件写回，v1.1.0 的旧备份也能直接用。",
+        "恢复现在是真覆盖：备份里没有的旧文件会先清空，不再新旧内容混在一起；只要有一个文件没复制成功就中止清除，原数据不会被删。",
+        "多页章节导出的 TXT 顺序不再错乱：以前会拼成 71..120、21..70、1..20，现在收集完所有页后按章节号整体排序。",
+        "导入 TXT 自动识别编码，UTF-8（含 BOM）、UTF-16LE/BE、GBK 都能认，GBK 文件不再整本乱码。",
+        "归档字数与作品库字数统一为「去掉空白后计数」，两处数字不再对不上。",
+        "删间贴、禁言前的「必须在作者后台」校验真正生效了：之前那行正则被写坏，校验等于没执行。",
+        "删除间贴、禁言、密码本读取与填入都补了超时，页面跳转时不再永久转圈；写日志失败也不会把已成功的操作回报成失败。",
+        "修好完整包跨重启后丢失类型的问题，不会再错把完整包当成 app 包覆盖进 resources\\app。",
+        "更新回滚会校验目录是否真的恢复成功，move 失败时用 robocopy 兜底，不会从砍了一半的目录启动。",
+        "关闭窗口前会把最后不到 900ms 的输入写盘，不再丢字；自动保存改为逐章浅拷贝，大文件也不会卡。",
+        "单本上限从 20MB 放宽到 60MB；作品库超过 200 本时，被挤出索引的书目目录会一起清掉，不留孤儿数据。",
+        "章节切换、返回作品库、一键排版、查找替换遇到保存失败会明确提示并中止，不再出现「点了没反应」。",
+        "修好深色模式下番茄钟等常驻浮层周围出现白色底的问题；切换深浅色时侧栏与浮层不再闪一下旧颜色。",
+        "摸鱼浮层关闭时最后一段输入不再丢失，坐标为空时不会再钉到屏幕左上角；插件导入残留的临时目录不再显示成坏插件。"
+      ]
+    },
     {
       "version": "1.1.0",
       "date": "2026-11-09",
