@@ -52,7 +52,25 @@ test('主题切换立即保存时，偏好写入按顺序完成且使用独立�
   assert.equal(writes[1].pluginTheme.themeId, 'fixture-dark');
 });
 
-function environment(prefs = {}, cache = {}) {
+/** 供 getElementById 返回的假元素，用来覆盖 syncUi 的禁用逻辑 */
+function fakeElement(extra = {}) {
+  const classes = new Set();
+  return {
+    disabled: false, title: '', textContent: '', value: '',
+    dataset: {},
+    children: [],
+    classList: {
+      toggle: (name, on) => { if (on) classes.add(name); else classes.delete(name); },
+      contains: name => classes.has(name),
+    },
+    querySelector: () => null,
+    replaceChildren() {},
+    appendChild() {},
+    ...extra,
+  };
+}
+
+function environment(prefs = {}, cache = {}, elements = {}) {
   const values = new Map(Object.entries(cache));
   const styles = new Map();
   const listeners = new Map();
@@ -65,7 +83,8 @@ function environment(prefs = {}, cache = {}) {
         style: { setProperty: (key, value) => styles.set(key, value), removeProperty: key => styles.delete(key) },
         classList: { add() {}, remove() {} },
       },
-      getElementById: () => null,
+      getElementById: id => elements[id] || null,
+      createElement: () => fakeElement(),
       addEventListener: (name, callback) => {
         if (!listeners.has(name)) listeners.set(name, []);
         listeners.get(name).push(callback);
@@ -123,7 +142,7 @@ test('样式配方校验拒绝 CSS 注入、未知变量、重复 ID 和过多�
   assert.equal(values.get('--bg'), '#123456', '先整体验证，失败不能留下半套样式');
 });
 
-test('主题选择保留原内置偏好，停用、移除或损坏时恢复并清理变量', async () => {
+test('停用扩展只暂存主题选择，重新启用自动恢复；删除后才清理变量', async () => {
   const env = environment({ theme: 'pink', darkTone: 'blue' });
   await env.theme.boot();
   env.theme.registerPlugins([sample]);
@@ -133,17 +152,49 @@ test('主题选择保留原内置偏好，停用、移除或损坏时恢复并�
   assert.equal(env.saved.theme, 'pink');
   assert.equal(env.styles.get('--bg'), '#111c18');
   assert.equal(env.theme.pluginThemes('fixture-theme').length, 2);
+
+  // 功能中心里把开关关掉：界面回退到内置配色，但「我想用哪套」要留着
   env.theme.registerPlugins([{ ...sample, enabled: false }]);
   assert.equal(env.theme.current().pluginTheme, null);
   assert.equal(env.context.document.documentElement.dataset.theme, 'pink');
   assert.equal(env.styles.has('--bg'), false);
   assert.equal(env.styles.get('--writer-size'), '21px');
+  assert.deepEqual(plain(env.saved.pluginTheme), { pluginId: 'fixture-theme', themeId: 'fixture-dark' },
+    '停用不能把用户的选择抹掉');
+  assert.equal(env.cache.has(Spec.CACHE_KEY), false, '停用后不再拿它的配方铺首帧');
+
+  // 再打开：自动回到原来那套，不用重新选
+  env.theme.registerPlugins([sample]);
+  assert.deepEqual(plain(env.theme.current().pluginTheme), { pluginId: 'fixture-theme', themeId: 'fixture-dark' });
+  assert.equal(env.styles.get('--bg'), '#111c18');
+  assert.equal(env.context.document.documentElement.dataset.theme, 'dark');
+  assert.equal(env.theme.builtinLocked(), true);
+
+  // 停用状态下重启：显示内置配色，但选择仍在偏好里
+  env.theme.registerPlugins([{ ...sample, enabled: false }]);
+  const rebooted = environment(env.saved);
+  await rebooted.theme.boot();
+  rebooted.theme.registerPlugins([{ ...sample, enabled: false }]);
+  assert.equal(rebooted.theme.current().pluginTheme, null);
+  assert.equal(rebooted.styles.has('--bg'), false);
+  assert.deepEqual(plain(rebooted.saved.pluginTheme), { pluginId: 'fixture-theme', themeId: 'fixture-dark' });
+  rebooted.theme.registerPlugins([sample]);
+  assert.deepEqual(plain(rebooted.theme.current().pluginTheme), { pluginId: 'fixture-theme', themeId: 'fixture-dark' },
+    '重启后重新启用同样要能恢复');
+  assert.equal(rebooted.styles.get('--bg'), '#111c18');
+
+  // 扩展还在，但主题从包里删掉了：选择作废
+  env.theme.registerPlugins([{ ...sample, contributes: { themes: [] } }]);
+  assert.equal(env.theme.current().pluginTheme, null);
   assert.equal(env.saved.pluginTheme, null);
-  assert.equal(env.cache.has(Spec.CACHE_KEY), false);
+
+  // 删除扩展：选择同样清干净
   env.theme.registerPlugins([sample]);
   env.theme.applyPlugin('fixture-theme', 'fixture-light');
   env.theme.registerPlugins([]);
   assert.equal(env.theme.current().pluginTheme, null);
+  assert.equal(env.saved.pluginTheme, null);
+  assert.equal(env.cache.has(Spec.CACHE_KEY), false);
 });
 
 test('主题在重启首帧和偏好恢复后保持一致，缓存丢失也能从数据目录恢复', async () => {
@@ -160,10 +211,61 @@ test('主题在重启首帧和偏好恢复后保持一致，缓存丢失也能�
   await withoutCache.theme.boot();
   withoutCache.theme.registerPlugins([sample]);
   assert.equal(withoutCache.styles.get('--bg'), '#edf4ed');
-  withoutCache.theme.set('dark');
+  assert.equal(withoutCache.theme.set('dark'), false, '扩展主题生效时不能切走');
+  assert.deepEqual(plain(withoutCache.theme.current().pluginTheme), { pluginId: 'fixture-theme', themeId: 'fixture-light' });
+  assert.equal(withoutCache.context.document.documentElement.dataset.theme, 'light');
+  assert.equal(withoutCache.styles.get('--bg'), '#edf4ed');
+  withoutCache.theme.resetPlugin();
+  assert.equal(withoutCache.theme.set('dark'), true, '恢复内置主题后深浅切换应重新生效');
   assert.equal(withoutCache.theme.current().pluginTheme, null);
   assert.equal(withoutCache.context.document.documentElement.dataset.theme, 'dark');
   assert.equal(withoutCache.styles.has('--bg'), false);
+});
+
+test('扩展主题生效时禁用深浅切换按钮与配色入口，切回内置主题后自动恢复', async () => {
+  const btnTheme = fakeElement();
+  const themeSegButtons = ['light', 'pink', 'dark', 'auto'].map(mode => fakeElement({ dataset: { themeMode: mode } }));
+  const themeSeg = fakeElement({ children: themeSegButtons });
+  const btnWriterDark = fakeElement();
+  const btnWriterDarkTone = fakeElement();
+  const darkToneButtons = ['amber', 'blue'].map(tone => fakeElement({ dataset: { darkTone: tone } }));
+  const darkToneSeg = fakeElement({ children: darkToneButtons });
+  const pluginThemeHint = fakeElement();
+  const env = environment({ theme: 'light' }, {}, {
+    btnTheme, themeSeg, btnWriterDark, btnWriterDarkTone, darkToneSeg, pluginThemeHint,
+  });
+  await env.theme.boot();
+  env.theme.registerPlugins([sample]);
+  assert.equal(btnTheme.disabled, false, '默认状态下深浅切换可用');
+
+  env.theme.applyPlugin('fixture-theme', 'fixture-dark');
+  assert.equal(env.theme.builtinLocked(), true);
+  assert.equal(btnTheme.disabled, true);
+  assert.equal(btnWriterDark.disabled, true);
+  assert.equal(btnWriterDarkTone.disabled, true);
+  assert.ok(themeSegButtons.every(item => item.disabled), '主题档位全部禁用');
+  assert.ok(darkToneButtons.every(item => item.disabled), '深色配色档位也禁用');
+  assert.match(btnTheme.title, /深浅切换已锁定/);
+  assert.match(pluginThemeHint.textContent, /已暂时锁定/);
+  assert.equal(themeSegButtons[2].classList.contains('is-active'), false, '禁用时不再高亮内置档位');
+
+  // 即使绕过按钮直接调用，也不能把美化包撤掉
+  assert.equal(env.theme.toggle(), false);
+  assert.deepEqual(plain(env.theme.current().pluginTheme), { pluginId: 'fixture-theme', themeId: 'fixture-dark' });
+  const lockedTone = env.theme.darkTone();
+  assert.equal(env.theme.setDarkTone(lockedTone === 'amber' ? 'blue' : 'amber'), lockedTone);
+  assert.equal(env.theme.darkTone(), lockedTone);
+
+  env.theme.resetPlugin();
+  assert.equal(env.theme.builtinLocked(), false);
+  assert.equal(btnTheme.disabled, false);
+  assert.equal(btnWriterDark.disabled, false);
+  assert.equal(btnWriterDarkTone.disabled, false);
+  assert.ok(themeSegButtons.every(item => !item.disabled));
+  assert.ok(darkToneButtons.every(item => !item.disabled));
+  assert.equal(themeSegButtons[0].classList.contains('is-active'), true, '恢复后重新高亮当前内置档位');
+  assert.equal(env.theme.set('dark'), true);
+  assert.equal(env.context.document.documentElement.dataset.theme, 'dark');
 });
 
 test('其他数据目录及损坏的主题缓存会回退，不能继续使用失效主题', async () => {

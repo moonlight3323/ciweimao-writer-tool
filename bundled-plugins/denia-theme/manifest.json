@@ -1,0 +1,385 @@
+{
+  "id": "denia-theme",
+  "name": "达妮娅 · 虚无之泡",
+  "version": "1.0.1",
+  "author": "Ewnscat · 作家助手适配示例",
+  "description": "DSH 达妮娅主题适配：明暗背景、玻璃面板、双侧立绘、Q版动态装饰与可保存的调色板。",
+  "permissions": [
+    "ui.theme"
+  ],
+  "contributes": {
+    "navigation": {
+      "title": "达妮娅主题"
+    },
+    "themes": [
+      {
+        "id": "denia-light",
+        "name": "布景之形",
+        "base": "light",
+        "variables": {
+          "--bg": "#f4eff9",
+          "--surface": "#fffbffd4",
+          "--surface-2": "#fffbffc4",
+          "--surface-3": "#eee1f5",
+          "--surface-4": "#fffbff",
+          "--border": "#d7c5e6",
+          "--border-strong": "#bfa3d7",
+          "--text": "#45365b",
+          "--text-2": "#7a658c",
+          "--text-3": "#a08ab0",
+          "--accent": "#9b6bd8",
+          "--accent-hover": "#b089e3",
+          "--accent-weak": "#eadcf5",
+          "--accent-ink": "#5e3a7d",
+          "--accent-line": "#b08acb",
+          "--chip-bg": "#e9e0f1",
+          "--chip-ink": "#45365b",
+          "--track": "#e5d9f0",
+          "--scroll": "#ccbadf",
+          "--scroll-hover": "#b29acb",
+          "--chevron": "#9b6bd8",
+          "--radius": "18px"
+        },
+        "background": {
+          "image": "assets/palace-light.webp",
+          "opacity": 0.32,
+          "blur": 0,
+          "fit": "cover",
+          "position": "center"
+        },
+        "styles": {
+          "sidebar": {
+            "background": "#fffbffac",
+            "backdropBlur": 10,
+            "borderColor": "#d7c5e6"
+          },
+          "topbar": {
+            "background": "#fffbffba",
+            "backdropBlur": 16,
+            "borderColor": "#d7c5e6"
+          },
+          "panel": {
+            "background": "#fffbffb8",
+            "borderColor": "#d7c5e6",
+            "borderRadius": 20,
+            "backdropBlur": 14,
+            "shadow": {
+              "x": 0,
+              "y": 8,
+              "blur": 28,
+              "color": "#73549412"
+            }
+          },
+          "button": {
+            "background": "#fffbffa8",
+            "borderColor": "#d7c5e6",
+            "borderRadius": 12
+          },
+          "primaryButton": {
+            "background": "#9b6bd8",
+            "color": "#ffffff",
+            "borderColor": "#9b6bd8",
+            "borderRadius": 12,
+            "gradient": {
+              "from": "#bd91cb",
+              "to": "#9cb6df",
+              "angle": 125
+            },
+            "shadow": {
+              "x": 0,
+              "y": 4,
+              "blur": 14,
+              "color": "#9c70bb26"
+            }
+          },
+          "navItem": {
+            "borderRadius": 12,
+            "color": "#45365b"
+          },
+          "navActive": {
+            "background": "#d7c3ecaa",
+            "color": "#45365b",
+            "borderRadius": 12
+          },
+          "input": {
+            "background": "#fffbffc9",
+            "borderColor": "#d7c5e6",
+            "borderRadius": 10
+          },
+          "writerWorkspace": {
+            "background": "#00000000"
+          },
+          "writerPaper": {
+            "background": "#fffbfff0",
+            "borderColor": "#d7c5e6",
+            "borderRadius": 20,
+            "shadow": {
+              "x": 0,
+              "y": 10,
+              "blur": 32,
+              "color": "#64487d16"
+            }
+          },
+          "writerDirectory": {
+            "background": "#fffbffb8",
+            "backdropBlur": 12,
+            "borderColor": "#d7c5e6"
+          },
+          "writerStats": {
+            "background": "#fffbffb8",
+            "backdropBlur": 12,
+            "borderColor": "#d7c5e6"
+          },
+          "toolbar": {
+            "background": "#fffbffcc",
+            "backdropBlur": 12
+          },
+          "dialog": {
+            "background": "#fffbfff5",
+            "borderColor": "#d7c5e6",
+            "borderRadius": 22,
+            "shadow": {
+              "x": 0,
+              "y": 12,
+              "blur": 40,
+              "color": "#291a4438"
+            }
+          },
+          "title": {
+            "color": "#9b6bd8",
+            "fontWeight": 700
+          }
+        },
+        "decorations": [
+          {
+            "id": "left-art",
+            "image": "assets/left-light.webp",
+            "anchor": "bottom-left",
+            "width": 250,
+            "height": 62,
+            "offsetX": 225,
+            "offsetY": 0,
+            "opacity": 0.85,
+            "layer": "background"
+          },
+          {
+            "id": "right-art",
+            "image": "assets/right-light.webp",
+            "anchor": "bottom-right",
+            "width": 275,
+            "height": 65,
+            "offsetX": 6,
+            "offsetY": 0,
+            "opacity": 0.9,
+            "layer": "background"
+          },
+          {
+            "id": "chibi-art",
+            "image": "assets/chibi-light.gif",
+            "anchor": "sidebar-bottom",
+            "width": 100,
+            "height": 22,
+            "offsetX": 0,
+            "offsetY": 0,
+            "opacity": 1,
+            "layer": "foreground"
+          }
+        ],
+        "effects": {
+          "bubbles": true,
+          "bubbleCount": 14,
+          "bubbleSpeed": 0.8,
+          "trim": true,
+          "stars": true
+        },
+        "branding": {
+          "icon": "assets/chibi-light.gif"
+        }
+      },
+      {
+        "id": "denia-dark",
+        "name": "幻灭之形",
+        "base": "dark",
+        "variables": {
+          "--bg": "#171326",
+          "--surface": "#211c35d4",
+          "--surface-2": "#211c35c4",
+          "--surface-3": "#3a2e50",
+          "--surface-4": "#211c35",
+          "--border": "#66517b",
+          "--border-strong": "#8b70a4",
+          "--text": "#e8def8",
+          "--text-2": "#c1aecc",
+          "--text-3": "#9e8ab4",
+          "--accent": "#ba9bea",
+          "--accent-hover": "#d0b5f7",
+          "--accent-weak": "#44325c",
+          "--accent-ink": "#eadbff",
+          "--accent-line": "#b699d2",
+          "--chip-bg": "#372b48",
+          "--chip-ink": "#e8def8",
+          "--track": "#332b47",
+          "--scroll": "#6d5983",
+          "--scroll-hover": "#9376ae",
+          "--chevron": "#ba9bea",
+          "--radius": "18px"
+        },
+        "background": {
+          "image": "assets/palace-dark.webp",
+          "opacity": 0.48,
+          "blur": 0,
+          "fit": "cover",
+          "position": "center"
+        },
+        "styles": {
+          "sidebar": {
+            "background": "#211c35ac",
+            "backdropBlur": 10,
+            "borderColor": "#66517b"
+          },
+          "topbar": {
+            "background": "#211c35ba",
+            "backdropBlur": 16,
+            "borderColor": "#66517b"
+          },
+          "panel": {
+            "background": "#211c35c4",
+            "borderColor": "#66517b",
+            "borderRadius": 20,
+            "backdropBlur": 14,
+            "shadow": {
+              "x": 0,
+              "y": 8,
+              "blur": 28,
+              "color": "#00000026"
+            }
+          },
+          "button": {
+            "background": "#211c35a8",
+            "borderColor": "#66517b",
+            "borderRadius": 12
+          },
+          "primaryButton": {
+            "background": "#ba9bea",
+            "color": "#241b36",
+            "borderColor": "#ba9bea",
+            "borderRadius": 12,
+            "gradient": {
+              "from": "#8d76bd",
+              "to": "#819acb",
+              "angle": 125
+            },
+            "shadow": {
+              "x": 0,
+              "y": 4,
+              "blur": 14,
+              "color": "#9c70bb26"
+            }
+          },
+          "navItem": {
+            "borderRadius": 12,
+            "color": "#e8def8"
+          },
+          "navActive": {
+            "background": "#6e548c70",
+            "color": "#e8def8",
+            "borderRadius": 12
+          },
+          "input": {
+            "background": "#211c35c9",
+            "borderColor": "#66517b",
+            "borderRadius": 10
+          },
+          "writerWorkspace": {
+            "background": "#00000000"
+          },
+          "writerPaper": {
+            "background": "#211c35f0",
+            "borderColor": "#66517b",
+            "borderRadius": 20,
+            "shadow": {
+              "x": 0,
+              "y": 10,
+              "blur": 32,
+              "color": "#64487d16"
+            }
+          },
+          "writerDirectory": {
+            "background": "#211c35b8",
+            "backdropBlur": 12,
+            "borderColor": "#66517b"
+          },
+          "writerStats": {
+            "background": "#211c35b8",
+            "backdropBlur": 12,
+            "borderColor": "#66517b"
+          },
+          "toolbar": {
+            "background": "#211c35cc",
+            "backdropBlur": 12
+          },
+          "dialog": {
+            "background": "#211c35f5",
+            "borderColor": "#66517b",
+            "borderRadius": 22,
+            "shadow": {
+              "x": 0,
+              "y": 12,
+              "blur": 40,
+              "color": "#291a4438"
+            }
+          },
+          "title": {
+            "color": "#ba9bea",
+            "fontWeight": 700
+          }
+        },
+        "decorations": [
+          {
+            "id": "left-art",
+            "image": "assets/left-dark.webp",
+            "anchor": "bottom-left",
+            "width": 250,
+            "height": 62,
+            "offsetX": 225,
+            "offsetY": 0,
+            "opacity": 0.85,
+            "layer": "background"
+          },
+          {
+            "id": "right-art",
+            "image": "assets/right-dark.webp",
+            "anchor": "bottom-right",
+            "width": 275,
+            "height": 65,
+            "offsetX": 6,
+            "offsetY": 0,
+            "opacity": 0.9,
+            "layer": "background"
+          },
+          {
+            "id": "chibi-art",
+            "image": "assets/chibi-dark.gif",
+            "anchor": "sidebar-bottom",
+            "width": 100,
+            "height": 22,
+            "offsetX": 0,
+            "offsetY": 0,
+            "opacity": 1,
+            "layer": "foreground"
+          }
+        ],
+        "effects": {
+          "bubbles": true,
+          "bubbleCount": 14,
+          "bubbleSpeed": 0.8,
+          "trim": true,
+          "stars": true
+        },
+        "branding": {
+          "icon": "assets/chibi-dark.gif"
+        }
+      }
+    ]
+  }
+}

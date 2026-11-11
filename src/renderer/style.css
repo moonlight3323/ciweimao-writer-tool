@@ -436,7 +436,17 @@ body {
   transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
 
-.theme-switch:hover { background: var(--surface-3); color: var(--text); border-color: var(--border-strong); }
+.theme-switch:hover:not(:disabled) { background: var(--surface-3); color: var(--text); border-color: var(--border-strong); }
+
+/* 扩展主题（美化包）生效时会锁住这枚按钮：灰掉、不可点，鼠标提示说明原因 */
+.theme-switch:disabled,
+.theme-switch.is-locked {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--surface);
+  color: var(--text-2);
+  border-color: var(--border);
+}
 
 .theme-switch-icon {
   font-size: 12px;
@@ -951,6 +961,9 @@ body {
   font-weight: 500;
   box-shadow: var(--seg-shadow);
 }
+
+/* 扩展主题生效时，主题档位与深色配色档位一并禁用 */
+.segmented button:disabled { opacity: 0.42; cursor: not-allowed; }
 
 .input {
   font: inherit;
@@ -3031,7 +3044,8 @@ body.is-locked { overflow: hidden; }
   font-size: 12px;
   cursor: pointer;
 }
-.writer-tool:hover { background: var(--surface-3); color: var(--text); }
+.writer-tool:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
+.writer-tool:disabled { opacity: 0.45; cursor: not-allowed; }
 .writer-tool.is-active { color: var(--accent-ink); border-color: var(--accent-line); background: var(--accent-weak); }
 .writer-divider { width: 1px; height: 22px; background: var(--border); }
 .writer-toolbar-space, .writer-status-space { flex: 1; }
