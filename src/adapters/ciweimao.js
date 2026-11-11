@@ -1011,16 +1011,31 @@
       return true;
     }
 
-    // 1) 切到对应登录方式
-    var tabs = document.querySelectorAll('.J_ChangeLoginType li[data-type]');
-    for (var i = 0; i < tabs.length; i += 1) {
-      if (tabs[i].getAttribute('data-type') !== mode) continue;
-      var clickable = tabs[i].querySelector('a') || tabs[i];
-      try { clickable.click(); } catch (e) { /* ignore */ }
-      break;
-    }
-    // 页签切换是 jQuery 直接 show/hide，等一拍再取元素
-    await new Promise(function (r) { setTimeout(r, 120); });
+    /*
+     * 1) 切到对应登录方式：直接改 class，不调用站点页签的 click()。
+     *
+     * 实测（2026-11）点页签会阻塞页面 JS：click() 里的站点逻辑一执行，
+     * executeJavaScript 就再也不 resolve，界面一直停在「填入中」直到超时。
+     * 两个页签本来就是同一张表单，靠 .type-account / .type-email 的 hide 类
+     * 切换；这里按同样结构直接切，效果一致且不会触发站点那段逻辑。
+     */
+    var wantEmail = mode === 'email';
+    /*
+     * 注意页面上 .type-account / .type-email 各有多个节点（账号、密码是
+     * 两个独立的 form-group），只改第一个会把密码那一组留在 hide 里，
+     * 结果账号填上了、密码框还是空的。这里必须全部一起切。
+     */
+    var accountPanes = document.querySelectorAll('.type-account');
+    var emailPanes = document.querySelectorAll('.type-email');
+    var i;
+    for (i = 0; i < accountPanes.length; i += 1) accountPanes[i].classList.toggle('hide', wantEmail);
+    for (i = 0; i < emailPanes.length; i += 1) emailPanes[i].classList.toggle('hide', !wantEmail);
+    var accountTab = document.querySelector('.J_ChangeLoginType li[data-type="account"]');
+    var emailTab = document.querySelector('.J_ChangeLoginType li[data-type="email"]');
+    if (accountTab) accountTab.classList.toggle('active', !wantEmail);
+    if (emailTab) emailTab.classList.toggle('active', wantEmail);
+    var typeInput = document.getElementById('author_login_type');
+    if (typeInput) typeInput.value = wantEmail ? 'email' : 'account';
 
     // 2) 定位输入框：已知 id → name → 当前可见的第一个同类输入框
     function pick(ids, names, type) {

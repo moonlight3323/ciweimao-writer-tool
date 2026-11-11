@@ -14,46 +14,80 @@ const $$ = (sel, scope) => Array.from((scope || document).querySelectorAll(sel))
 window.askText = askText;
 
 function askText({ title = '请输入', hint = '', value = '', okText = '确定', cancelText = '取消' } = {}) {
-  return new Promise((resolve) => {
-    const overlay = $('#textPrompt');
-    const input = $('#textPromptInput');
-    const hintEl = $('#textPromptHint');
-    if (!overlay || !input) { resolve(null); return; }
+  const overlay = $('#textPrompt');
+  const input = $('#textPromptInput');
+  const hintEl = $('#textPromptHint');
+  const okBtn = $('#textPromptOk');
+  const cancelBtn = $('#textPromptCancel');
+  if (!overlay || !input || !hintEl || !okBtn || !cancelBtn) return Promise.resolve(null);
+  const wasLocked = document.body.classList.contains('is-locked');
+  /*
+   * 内嵌作者后台是原生 WebContentsView，压在 DOM 之上。输入弹窗如果不先
+   * 把页面摘下来，遮罩会被页面盖住，用户看到的就是「网页突然跳出来」。
+   * 复用更新弹窗那套摘取/恢复逻辑：页面不销毁，关掉弹窗后原样挂回去。
+   */
+  const guideOpen = !!(document.getElementById('guideDialog')
+    && !document.getElementById('guideDialog').hidden);
+  let overlayState = null;
+  const prepare = !guideOpen && typeof window.prepareUpdateOverlay === 'function'
+    ? window.prepareUpdateOverlay : null;
 
-    const okBtn = $('#textPromptOk');
-    const cancelBtn = $('#textPromptCancel');
-    $('#textPromptTitle').textContent = title;
-    okBtn.textContent = okText;
-    cancelBtn.textContent = cancelText;
-    hintEl.textContent = hint || '';
-    hintEl.hidden = !hint;
-    input.value = value == null ? '' : String(value);
-    overlay.hidden = false;
-    document.body.classList.add('is-locked');
-
-    function onOk() { finish(input.value); }
-    function onCancel() { finish(null); }
-    function onKey(event) {
-      if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); onOk(); }
-      else if (event.key === 'Escape') { event.preventDefault(); onCancel(); }
+  const open = async () => {
+    if (prepare) {
+      try { overlayState = await prepare(); } catch (_) { overlayState = null; }
     }
-    function onBackdrop(event) { if (event.target === overlay) onCancel(); }
-    function finish(result) {
-      overlay.hidden = true;
-      document.body.classList.remove('is-locked');
-      okBtn.removeEventListener('click', onOk);
-      cancelBtn.removeEventListener('click', onCancel);
-      input.removeEventListener('keydown', onKey);
-      overlay.removeEventListener('mousedown', onBackdrop);
-      resolve(result);
-    }
+    return new Promise((resolve) => {
+      let finished = false;
+      $('#textPromptTitle').textContent = title;
+      okBtn.textContent = okText;
+      cancelBtn.textContent = cancelText;
+      hintEl.textContent = hint || '';
+      hintEl.hidden = !hint;
+      input.value = value == null ? '' : String(value);
+      overlay.hidden = false;
+      document.body.classList.add('is-locked');
 
-    okBtn.addEventListener('click', onOk);
-    cancelBtn.addEventListener('click', onCancel);
-    input.addEventListener('keydown', onKey);
-    overlay.addEventListener('mousedown', onBackdrop);
-    setTimeout(() => { input.focus(); input.select(); }, 0);
-  });
+      function onOk() { finish(input.value); }
+      function onCancel() { finish(null); }
+      function onKey(event) {
+        if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); onOk(); }
+        else if (event.key === 'Escape') { event.preventDefault(); onCancel(); }
+      }
+      function onBackdrop(event) { if (event.target === overlay) onCancel(); }
+      function finish(result) {
+        if (finished) return;
+        finished = true;
+        overlay.hidden = true;
+        if (!wasLocked) document.body.classList.remove('is-locked');
+        okBtn.removeEventListener('click', onOk);
+        cancelBtn.removeEventListener('click', onCancel);
+        input.removeEventListener('keydown', onKey);
+        overlay.removeEventListener('mousedown', onBackdrop);
+        // 等遮罩真正消失、界面重绘完成，再把原生页面挂回来；
+        // 否则页面会在弹窗还亮着的时候盖上去。
+        if (overlayState && typeof window.restoreUpdateOverlay === 'function') {
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            // A caller may open the next prompt immediately after this promise resolves.
+            // Its owner will restore the shared native view when the last dialog closes.
+            if (['textPrompt', 'guideDialog', 'updateDialog', 'updateCompleteDialog'].some(id => {
+              const dialog = document.getElementById(id);
+              return dialog && !dialog.hidden;
+            })) return;
+            Promise.resolve(window.restoreUpdateOverlay()).catch(() => {});
+          }));
+        }
+        resolve(result);
+      }
+
+      okBtn.addEventListener('click', onOk);
+      cancelBtn.addEventListener('click', onCancel);
+      input.addEventListener('keydown', onKey);
+      overlay.addEventListener('mousedown', onBackdrop);
+      setTimeout(() => { if (!overlay.hidden) { input.focus(); input.select(); } }, 0);
+    });
+  };
+
+  return open();
 }
 
 const HOST = $('#content');
@@ -654,8 +688,12 @@ async function openBrowser(url) {
     const state = url ? null : await window.api.browser.state().catch(() => null);
     if (state && state.ready && state.url) {
       await window.api.browser.show(currentRect());
+      // show 不导航，不会触发 browser-state；主动同步一次，密码本工具条才会出现
+      applyBrowserState(state);
     } else {
       await window.api.browser.open(currentRect(), url);
+      const now = await window.api.browser.state().catch(() => null);
+      if (now) applyBrowserState(now);
     }
   } catch (err) {
     console.error('打开平台页面失败', err);
@@ -676,6 +714,9 @@ async function showBrowserKeepPage() {
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   setBrowserChrome(true);
   await window.api.browser.show(currentRect());
+  // 弹窗收起后重新挂载：同样没有导航事件，主动同步一次状态
+  const state = await window.api.browser.state().catch(() => null);
+  if (state) applyBrowserState(state);
 }
 
 window.showBrowserKeepPage = showBrowserKeepPage;
@@ -1178,6 +1219,21 @@ function updateVaultBar(state) {
     $('#vaultIntro').hidden = true;
   }
   syncBounds();
+}
+
+/**
+ * 把一份浏览器状态同步到界面。
+ *
+ * `browser-state` 事件只会在导航/加载时来。重新「挂回」一个已经加载好的
+ * 后台页面（show）不产生任何导航，靠事件就永远等不到 —— 表现就是刚点
+ * 「作者后台」时密码本工具条不出现，点一次刷新才出来。所以 open/show
+ * 完成后主动取一次 state 走这里。
+ */
+function applyBrowserState(state) {
+  if (!state || typeof state !== 'object') return;
+  lastState = state;
+  renderConn(state);
+  updateVaultBar(state);
 }
 
 // ------------------------------------------------------------ 密码本首次说明
