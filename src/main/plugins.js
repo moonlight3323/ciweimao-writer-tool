@@ -3,10 +3,13 @@
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const ThemeSpec = require('../shared/theme-spec');
+const themeAssets = require('./theme-assets');
 
 const ID_RE = /^[a-z0-9][a-z0-9_-]{1,63}$/;
 const MAX_FILE = 512 * 1024;
-const ALLOWED_FILES = new Set(['manifest.json', 'page.html', 'main.js', 'background.js', 'style.css', 'README.md']);
+const MAX_TOTAL = 32 * 1024 * 1024;
+const ALLOWED_FILES = new Set(['manifest.json', 'page.html', 'main.js', 'background.js', 'style.css', 'README.md', 'LICENSE', 'NOTICE']);
 
 function pluginsDir(dataDir) {
   const dir = path.join(dataDir, 'plugins');
@@ -60,10 +63,11 @@ function readManifest(folder) {
     description: String(manifest.description || '').slice(0, 240),
     permissions: Array.isArray(manifest.permissions)
       ? [...new Set(manifest.permissions.map(String).filter((p) => [
-        'editor.read', 'editor.write', 'stats.read', 'stats.author', 'ui.editorStat',
+        'editor.read', 'editor.write', 'stats.read', 'stats.author', 'ui.editorStat', 'ui.theme',
       ].includes(p)))]
       : [],
     contributes: {
+      themes: ThemeSpec.themes(manifest.contributes?.themes),
       navigation: manifest.contributes && manifest.contributes.navigation
         ? { title: String(manifest.contributes.navigation.title || manifest.name || id).slice(0, 20) }
         : null,
@@ -116,6 +120,8 @@ function list(dataDir) {
       }
       result.push({
         ...manifest,
+        contributes: { ...manifest.contributes,
+          themes: themeAssets.hydrate(folder, manifest.contributes.themes, themeAssets.settings(dataDir, manifest.id)) },
         enabled: state.enabled[manifest.id] !== false,
         invalid: false,
         builtin: Object.prototype.hasOwnProperty.call(bundled, manifest.id),
@@ -153,7 +159,8 @@ function get(dataDir, id) {
   const state = readState(dataDir);
   if (state.enabled[pluginId] === false) throw new Error('插件已停用');
   return {
-    manifest,
+    manifest: { ...manifest, contributes: { ...manifest.contributes,
+      themes: themeAssets.hydrate(folder, manifest.contributes.themes, themeAssets.settings(dataDir, pluginId)) } },
     page: readText(path.join(folder, 'page.html'), '<div id="app"></div>'),
     script: readText(path.join(folder, 'main.js'), ''),
     background: readText(path.join(folder, 'background.js'), ''),
@@ -171,16 +178,26 @@ function setEnabled(dataDir, id, enabled) {
 }
 
 function copyPluginFolder(source, target) {
-  const entries = fs.readdirSync(source, { withFileTypes: true });
   fs.mkdirSync(target, { recursive: true });
   let total = 0;
-  for (const entry of entries) {
-    if (!entry.isFile() || !ALLOWED_FILES.has(entry.name)) continue;
-    const from = path.join(source, entry.name);
+  let textTotal = 0;
+  const files = fs.readdirSync(source, { withFileTypes: true }).filter(entry => entry.isFile() && ALLOWED_FILES.has(entry.name))
+    .map(entry => entry.name);
+  const assetFolder = path.join(source, 'assets');
+  if (fs.existsSync(assetFolder) && fs.lstatSync(assetFolder).isDirectory()) {
+    files.push(...fs.readdirSync(assetFolder, { withFileTypes: true }).filter(entry => entry.isFile()
+      && themeAssets.ASSET.test('assets/' + entry.name)).map(entry => 'assets/' + entry.name));
+  }
+  for (const relative of files) {
+    const from = path.join(source, relative);
     const stat = fs.statSync(from);
+    const asset = themeAssets.ASSET.test(relative);
     total += stat.size;
-    if (stat.size > MAX_FILE || total > 2 * 1024 * 1024) throw new Error('插件文件过大');
-    fs.copyFileSync(from, path.join(target, entry.name));
+    if (!asset) textTotal += stat.size;
+    if (stat.size > (asset ? ThemeSpec.IMAGE_LIMIT : MAX_FILE) || total > MAX_TOTAL || textTotal > 2 * 1024 * 1024) throw new Error('插件文件过大');
+    if (asset) themeAssets.resolveImage(source, relative);
+    fs.mkdirSync(path.dirname(path.join(target, relative)), { recursive: true });
+    fs.copyFileSync(from, path.join(target, relative));
   }
 }
 
@@ -252,7 +269,7 @@ function importFolder(dataDir, source) {
   if (fs.existsSync(target)) throw new Error(`插件 ${manifest.id} 已存在，请先删除旧版本`);
   try {
     copyPluginFolder(source, target);
-    readManifest(target);
+    themeAssets.hydrate(target, readManifest(target).contributes.themes);
   } catch (err) {
     try { fs.rmSync(target, { recursive: true, force: true }); } catch (_) { /* ignore */ }
     throw err;
@@ -272,7 +289,7 @@ function findZipEnd(buffer) {
 
 function readZipEntries(file) {
   const stat = fs.statSync(file);
-  if (stat.size > 10 * 1024 * 1024) throw new Error('插件压缩包不能超过 10MB');
+  if (stat.size > MAX_TOTAL) throw new Error('插件压缩包不能超过 32MB');
   const buffer = fs.readFileSync(file);
   const end = findZipEnd(buffer);
   const count = buffer.readUInt16LE(end + 10);
@@ -304,7 +321,7 @@ function readZipEntries(file) {
   return { buffer, entries };
 }
 
-function inflateZipEntry(buffer, entry) {
+function inflateZipEntry(buffer, entry, limit = MAX_FILE) {
   const offset = entry.localOffset;
   if (offset + 30 > buffer.length || buffer.readUInt32LE(offset) !== 0x04034b50) {
     throw new Error(`ZIP 条目损坏：${entry.name}`);
@@ -313,11 +330,11 @@ function inflateZipEntry(buffer, entry) {
   const extraLength = buffer.readUInt16LE(offset + 28);
   const start = offset + 30 + nameLength + extraLength;
   const end = start + entry.compressedSize;
-  if (end > buffer.length || entry.uncompressedSize > MAX_FILE) throw new Error(`插件文件过大：${entry.name}`);
+  if (end > buffer.length || entry.uncompressedSize > limit) throw new Error(`插件文件过大：${entry.name}`);
   const compressed = buffer.subarray(start, end);
   let output;
   if (entry.method === 0) output = Buffer.from(compressed);
-  else if (entry.method === 8) output = zlib.inflateRawSync(compressed, { maxOutputLength: MAX_FILE });
+  else if (entry.method === 8) output = zlib.inflateRawSync(compressed, { maxOutputLength: limit });
   else throw new Error(`不支持的 ZIP 压缩方式：${entry.method}`);
   if (output.length !== entry.uncompressedSize) throw new Error(`ZIP 条目长度不一致：${entry.name}`);
   return output;
@@ -334,25 +351,36 @@ function importZip(dataDir, file) {
   const selected = entries.filter((entry) => {
     if (entry.name.endsWith('/') || !entry.name.startsWith(prefix)) return false;
     const relative = entry.name.slice(prefix.length);
-    return !relative.includes('/') && ALLOWED_FILES.has(relative);
+    return (!relative.includes('/') && ALLOWED_FILES.has(relative)) || themeAssets.ASSET.test(relative);
   });
   if (!selected.some((entry) => entry.name.slice(prefix.length) === 'manifest.json')) {
     throw new Error('压缩包内没有可读取的 manifest.json');
   }
+  if (new Set(selected.map(entry => entry.name.toLowerCase())).size !== selected.length) throw new Error('ZIP 中有重复的插件文件');
   const temp = fs.mkdtempSync(path.join(pluginsDir(dataDir), '.import-'));
   try {
     let total = 0;
     for (const entry of selected) {
       const relative = entry.name.slice(prefix.length);
-      const content = inflateZipEntry(buffer, entry);
+      const content = inflateZipEntry(buffer, entry, themeAssets.ASSET.test(relative) ? ThemeSpec.IMAGE_LIMIT : MAX_FILE);
       total += content.length;
-      if (total > 2 * 1024 * 1024) throw new Error('插件解压后不能超过 2MB');
+      if (total > MAX_TOTAL) throw new Error('插件解压后不能超过 32MB');
+      fs.mkdirSync(path.dirname(path.join(temp, relative)), { recursive: true });
       fs.writeFileSync(path.join(temp, relative), content);
     }
     return importFolder(dataDir, temp);
   } finally {
     try { fs.rmSync(temp, { recursive: true, force: true }); } catch (_) { /* ignore */ }
   }
+}
+
+function configureTheme(dataDir, id, themeId, options) {
+  const pluginId = safeId(id);
+  const folder = path.join(pluginsDir(dataDir), pluginId);
+  const manifest = readManifest(folder);
+  if (readState(dataDir).enabled[pluginId] === false) throw new Error('主题插件已停用');
+  if (!manifest.permissions.includes('ui.theme')) throw new Error('插件没有 ui.theme 权限');
+  return themeAssets.configure(dataDir, folder, manifest, String(themeId || ''), options);
 }
 
 /**
@@ -456,4 +484,5 @@ module.exports = {
   createTemplate,
   storageGet,
   storageSet,
+  configureTheme,
 };

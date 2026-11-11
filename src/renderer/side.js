@@ -191,6 +191,10 @@
     if (!payload) return;
     if (payload.theme) document.documentElement.dataset.theme = payload.theme;
     if (payload.darkTone) document.documentElement.dataset.darkTone = payload.darkTone;
+    if (window.ThemeSpec) {
+      try { window.ThemeSpec.applyVariables(document.documentElement, payload.themeVariables); }
+      catch (_) { window.ThemeSpec.applyVariables(document.documentElement, {}); }
+    }
     if (payload.version) document.title = `敏感词侧栏 · v${payload.version}`;
 
     if (payload.mode === 'bad') {

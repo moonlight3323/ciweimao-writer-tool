@@ -12,6 +12,7 @@
   let cache = {};
   let loading = null;
   let timer = null;
+  let saving = Promise.resolve();
 
   function load() {
     if (!loading) {
@@ -30,12 +31,23 @@
   function flush() {
     clearTimeout(timer);
     timer = setTimeout(() => {
-      window.api.data.write(FILE, cache).catch(() => {});
+      flushNow().catch(() => {});
     }, 250);
+  }
+
+  /** Serialize snapshots so a delayed older write cannot replace a newer choice. */
+  function flushNow() {
+    clearTimeout(timer);
+    const snapshot = JSON.parse(JSON.stringify(cache));
+    const write = () => window.api.data.write(FILE, snapshot);
+    const pending = saving.then(write, write);
+    saving = pending.catch(() => {});
+    return pending;
   }
 
   const api = {
     ready: load,
+    flushNow,
     get(key, dflt) {
       return cache[key] === undefined ? dflt : cache[key];
     },
