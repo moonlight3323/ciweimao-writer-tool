@@ -39,4 +39,18 @@
   el.dataset.theme = theme;
   el.dataset.themeMode = mode;
   el.dataset.darkTone = tone;
+  // Only cached, validated recipe values are used for the first frame.
+  try {
+    var cached = JSON.parse(localStorage.getItem(ThemeSpec.CACHE_KEY) || 'null');
+    var selected = ThemeSpec.selection(cached);
+    if (selected) {
+      var recipe = ThemeSpec.theme(cached.recipe);
+      if (recipe.id !== selected.themeId) throw new Error('主题缓存不一致');
+      ThemeSpec.applyVariables(el, recipe.variables);
+      el.dataset.theme = recipe.base;
+      el.dataset.themePlugin = selected.pluginId;
+      el.dataset.themeId = selected.themeId;
+      if (window.ThemeSkin) window.ThemeSkin.apply(document, recipe);
+    }
+  } catch (_) { /* 缓存损坏时使用内置主题 */ }
 })();

@@ -201,6 +201,7 @@
       {
         theme: currentTheme(),
         darkTone: currentDarkTone(),
+        themeVariables: window.Theme ? window.Theme.variables() : {},
         version: versionText(),
         // 收集开关与一次性提示统一在这里补，避免每个 pushSide 调用点各写一遍
         wordCollectOn: collectEnabled(),
@@ -938,6 +939,7 @@
       pushSide(Object.assign({}, state.lastPayload, {
         theme: currentTheme(),
         darkTone: currentDarkTone(),
+        themeVariables: window.Theme ? window.Theme.variables() : {},
       }));
     });
 

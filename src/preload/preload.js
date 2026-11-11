@@ -118,6 +118,7 @@ contextBridge.exposeInMainWorld('api', {
     reset: () => ipcRenderer.invoke('storage:reset'),
   },
   plugins: {
+    configureTheme: (id, themeId, options) => ipcRenderer.invoke('plugins:theme-configure', id, themeId, options),
     list: () => ipcRenderer.invoke('plugins:list'),
     get: (id) => ipcRenderer.invoke('plugins:get', id),
     enable: (id, enabled) => ipcRenderer.invoke('plugins:enable', id, enabled),

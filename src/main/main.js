@@ -208,6 +208,13 @@ function bootBackground() {
   try {
     const p = path.join(dataDir(), 'ui-prefs.json');
     const pref = JSON.parse(fs.readFileSync(p, 'utf8'));
+    if (pref && pref.pluginTheme) {
+      const owner = plugins.list(dataDir()).find(item => item.enabled && !item.invalid
+        && item.id === pref.pluginTheme.pluginId);
+      const recipe = owner && owner.contributes.themes.find(item => item.id === pref.pluginTheme.themeId);
+      if (recipe) return recipe.variables['--bg']
+        || (recipe.base === 'dark' ? BG_DARK : (recipe.base === 'pink' ? '#fff4f8' : BG_LIGHT));
+    }
     if (pref && pref.theme === 'dark') return BG_DARK;
     if (pref && pref.theme === 'light') return BG_LIGHT;
     if (pref && pref.theme === 'auto') {
@@ -849,6 +856,7 @@ ipcMain.handle('writer:import', async () => {
 // ---- 功能中心：内置功能与自装扩展都只读入沙箱页面，通过白名单 API 与应用通信 ----
 
 ipcMain.handle('plugins:list', () => ({ plugins: plugins.list(dataDir()) }));
+ipcMain.handle('plugins:theme-configure', (_e, id, themeId, options) => plugins.configureTheme(dataDir(), id, themeId, options));
 /**
  * 补装/修复内置功能。
  *

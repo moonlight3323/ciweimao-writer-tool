@@ -7,6 +7,8 @@
         content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'nonce-ciweimao-plugin'; img-src 'self' data: https:; frame-src data:;" />
   <title>刺猬猫作家助手</title>
   <!-- 先定主题再上色，避免深色模式下闪一下白底 -->
+  <script src="../shared/theme-spec.js"></script>
+  <script src="../shared/theme-skin.js"></script>
   <script src="theme-init.js"></script>
   <link rel="stylesheet" href="style.css?v=20261110-v111-3" />
 </head>
@@ -1171,6 +1173,14 @@
               </div>
             </div>
             <p class="hint-line">只影响深色模式。深黄黑保留原来的暖夜观感；深蓝黑整体偏冷蓝，主色从品牌金换成青蓝。切换时不用退出设置，直接生效。</p>
+            <div class="scope-bar">
+              <label class="scope-label" for="pluginThemeSelect">扩展主题</label>
+              <select class="input" id="pluginThemeSelect" aria-label="扩展主题">
+                <option value="">使用内置主题</option>
+              </select>
+              <button class="btn ghost" id="btnPluginThemeReset" type="button">恢复内置主题</button>
+            </div>
+            <p class="hint-line" id="pluginThemeHint">在功能中心导入主题插件后，可以在这里选择。</p>
           </div>
 
           <div class="panel">

@@ -254,6 +254,9 @@
 /* hidden 属性必须压过组件自身的 display 设置，否则切视图会露出不该显示的内容 */
 [hidden] { display: none !important; }
 
+.plugin-theme-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+#pluginThemeSelect { width: auto; max-width: 400px; }
+
 html, body {
   margin: 0;
   padding: 0;

@@ -16,6 +16,102 @@
 
   // 深色配色模块（dark-tone.js 必须在本文件之前加载，见 index.html 的脚本顺序）
   const Tone = root.DarkTone;
+  const Spec = root.ThemeSpec;
+  let catalog = [];
+  let catalogReady = false;
+  let selectedPluginTheme = null;
+  let activeRecipe = null;
+  let savingSelection = Promise.resolve();
+  try {
+    const cached = JSON.parse(localStorage.getItem(Spec.CACHE_KEY) || 'null');
+    selectedPluginTheme = Spec.selection(cached);
+    if (selectedPluginTheme) {
+      activeRecipe = Spec.theme(cached.recipe);
+      if (activeRecipe.id !== selectedPluginTheme.themeId) throw new Error('主题缓存不一致');
+    }
+  } catch (_) {
+    selectedPluginTheme = null;
+    activeRecipe = null;
+  }
+
+  function variables() {
+    return activeRecipe ? { ...activeRecipe.variables } : {};
+  }
+
+  function current() {
+    return {
+      mode: mode(), effective: effective(mode()), darkTone: darkTone(),
+      pluginTheme: selectedPluginTheme ? { ...selectedPluginTheme } : null,
+    };
+  }
+
+  function pluginThemes(pluginId) {
+    return catalog.filter(item => !pluginId || item.pluginId === pluginId)
+      .map(item => ({ ...item, variables: { ...item.variables } }));
+  }
+
+  function rememberPluginTheme() {
+    try {
+      if (selectedPluginTheme && activeRecipe) {
+        // Keep large images in the data directory; cache only cheap first-frame colors and component styles.
+        const recipe = { id: activeRecipe.id, name: activeRecipe.name, base: activeRecipe.base,
+          variables: activeRecipe.variables, styles: activeRecipe.styles };
+        localStorage.setItem(Spec.CACHE_KEY, JSON.stringify({ ...selectedPluginTheme, recipe }));
+      } else {
+        localStorage.removeItem(Spec.CACHE_KEY);
+      }
+    } catch (_) { /* 磁盘偏好仍会保留 */ }
+    if (window.Prefs) {
+      window.Prefs.set('pluginTheme', selectedPluginTheme ? { ...selectedPluginTheme } : null);
+      savingSelection = window.Prefs.flushNow ? window.Prefs.flushNow() : Promise.resolve();
+      savingSelection.catch(() => {
+        document.dispatchEvent(new CustomEvent('theme-save-failed', {}));
+      });
+    }
+  }
+
+  function whenSaved() { return savingSelection; }
+
+  function reconcilePluginTheme() {
+    activeRecipe = selectedPluginTheme
+      ? catalog.find(item => item.pluginId === selectedPluginTheme.pluginId && item.id === selectedPluginTheme.themeId) || null
+      : null;
+    if (!activeRecipe) selectedPluginTheme = null;
+    rememberPluginTheme();
+    paint(mode());
+  }
+
+  function registerPlugins(plugins) {
+    catalog = [];
+    for (const plugin of plugins) {
+      if (!plugin.enabled || plugin.invalid) continue;
+      try {
+        for (const recipe of Spec.themes(plugin.contributes && plugin.contributes.themes)) {
+          catalog.push({ ...recipe, pluginId: plugin.id, pluginName: plugin.name });
+        }
+      } catch (_) { /* 单个插件配置损坏时恢复可用的主题 */ }
+    }
+    catalogReady = true;
+    reconcilePluginTheme();
+  }
+
+  function applyPlugin(pluginId, themeId) {
+    const recipe = catalog.find(item => item.pluginId === pluginId && item.id === themeId);
+    if (!recipe) throw new Error('主题未安装或插件已停用');
+    activeRecipe = recipe;
+    selectedPluginTheme = { pluginId, themeId };
+    rememberPluginTheme();
+    paint(mode());
+    return current();
+  }
+
+  function resetPlugin() {
+    selectedPluginTheme = null;
+    activeRecipe = null;
+    rememberPluginTheme();
+    paint(mode());
+    return current();
+  }
 
   function mode() {
     const m = document.documentElement.dataset.themeMode;
@@ -23,6 +119,7 @@
   }
 
   function effective(m) {
+    if (activeRecipe) return activeRecipe.base;
     if (m === 'auto') return mq.matches ? 'dark' : 'light';
     if (m === 'dark') return 'dark';
     if (m === 'pink') return 'pink';
@@ -66,13 +163,22 @@
     const release = holdTransitions();
     el.dataset.theme = eff;
     el.dataset.themeMode = m;
+    Spec.applyVariables(el, variables());
+    if (selectedPluginTheme) {
+      el.dataset.themePlugin = selectedPluginTheme.pluginId;
+      el.dataset.themeId = selectedPluginTheme.themeId;
+    } else {
+      delete el.dataset.themePlugin;
+      delete el.dataset.themeId;
+    }
+    if (root.ThemeSkin) root.ThemeSkin.apply(document, activeRecipe);
     // 深色两套配色：切明暗时把已选的配色重新打一次。
     // 只在 dark 下有意义，但一直挂着没有副作用（浅色块不读这个属性）。
     Tone.apply(darkTone());
     try { localStorage.setItem(KEY, m); } catch (_) { /* ignore */ }
     syncNativeBackground();
     document.dispatchEvent(new CustomEvent('theme-changed', {
-      detail: { mode: m, effective: eff, darkTone: darkTone() },
+      detail: { mode: m, effective: eff, darkTone: darkTone(), pluginTheme: current().pluginTheme },
     }));
     release();
   }
@@ -88,6 +194,7 @@
    * 突然变黑会让人以为点错了按钮。
    */
   function setDarkTone(v) {
+    if (selectedPluginTheme) resetPlugin();
     const release = holdTransitions();
     const tone = Tone.apply(v);
     try { localStorage.setItem(Tone.KEY, tone); } catch (_) { /* ignore */ }
@@ -106,8 +213,11 @@
 
   function set(m) {
     const next = MODES.indexOf(m) >= 0 ? m : 'light';
+    selectedPluginTheme = null;
+    activeRecipe = null;
     paint(next);
     if (window.Prefs) window.Prefs.set('theme', next);
+    rememberPluginTheme();
   }
 
   /** 侧栏按钮：在明暗之间直接切，auto 时按当前实际显示切到反面 */
@@ -133,13 +243,15 @@
       const text = btn.querySelector('.theme-switch-text');
       if (icon) icon.textContent = eff === 'dark' ? '☀' : '☾';
       if (text) text.textContent = eff === 'dark' ? '浅色模式' : '深色模式';
-      btn.title = `当前：${LABEL[m]}${m === 'auto' ? `（实际${eff === 'dark' ? '深色' : '浅色'}）` : ''}　点击切换`;
+      btn.title = '当前：' + (activeRecipe ? activeRecipe.name : LABEL[m])
+        + (m === 'auto' && !activeRecipe ? '（实际' + (eff === 'dark' ? '深色' : '浅色') + '）' : '')
+        + '　点击切换';
     }
 
     const seg = document.getElementById('themeSeg');
     if (seg) {
       Array.prototype.forEach.call(seg.children, (b) => {
-        b.classList.toggle('is-active', b.dataset.themeMode === m);
+        b.classList.toggle('is-active', !selectedPluginTheme && b.dataset.themeMode === m);
       });
     }
 
@@ -169,8 +281,31 @@
     const toneSeg = document.getElementById('darkToneSeg');
     if (toneSeg) {
       Array.prototype.forEach.call(toneSeg.children, (b) => {
-        b.classList.toggle('is-active', b.dataset.darkTone === darkTone());
+        b.classList.toggle('is-active', !selectedPluginTheme && b.dataset.darkTone === darkTone());
       });
+    }
+    const select = document.getElementById('pluginThemeSelect');
+    if (select) {
+      select.replaceChildren();
+      const builtin = document.createElement('option');
+      builtin.value = '';
+      builtin.textContent = '使用内置主题';
+      select.appendChild(builtin);
+      for (const item of catalog) {
+        const option = document.createElement('option');
+        option.value = item.pluginId + '/' + item.id;
+        option.textContent = item.pluginName + ' · ' + item.name;
+        select.appendChild(option);
+      }
+      select.value = selectedPluginTheme ? selectedPluginTheme.pluginId + '/' + selectedPluginTheme.themeId : '';
+    }
+    const reset = document.getElementById('btnPluginThemeReset');
+    if (reset) reset.disabled = !selectedPluginTheme;
+    const hint = document.getElementById('pluginThemeHint');
+    if (hint) {
+      hint.textContent = activeRecipe
+        ? '当前使用 ' + activeRecipe.name + '，停用或删除对应插件后会恢复内置主题。'
+        : '在功能中心导入主题插件后，可以在这里选择。';
     }
   }
 
@@ -182,21 +317,32 @@
     if (!window.Prefs) return;
     await window.Prefs.ready();
     const saved = window.Prefs.get('theme', null);
-    let local = null;
-    try { local = localStorage.getItem(KEY); } catch (_) { /* ignore */ }
-    if (MODES.indexOf(saved) >= 0 && !local) set(saved);
-    else if (MODES.indexOf(saved) >= 0 && saved !== local) paint(saved);
-    else window.Prefs.set('theme', mode());
+    const chosenMode = MODES.indexOf(saved) >= 0 ? saved : mode();
+    if (MODES.indexOf(saved) < 0) window.Prefs.set('theme', chosenMode);
 
     // 配色的权威值在 ui-prefs.json；localStorage 只是为了首帧不闪
     const savedTone = window.Prefs.get('darkTone', null);
-    if (Tone.TONES.indexOf(savedTone) >= 0) setDarkTone(savedTone);
+    if (Tone.TONES.indexOf(savedTone) >= 0) Tone.apply(savedTone);
     else window.Prefs.set('darkTone', darkTone());
 
-    syncUi();
+    const savedSelection = Spec.selection(window.Prefs.get('pluginTheme', null));
+    if (!savedSelection || !selectedPluginTheme
+        || savedSelection.pluginId !== selectedPluginTheme.pluginId || savedSelection.themeId !== selectedPluginTheme.themeId) {
+      activeRecipe = null;
+    }
+    selectedPluginTheme = savedSelection;
+    document.documentElement.dataset.themeMode = chosenMode;
+    if (catalogReady) reconcilePluginTheme();
+    else paint(chosenMode);
+    // LocalStorage only accelerates the first frame. The data directory is authoritative.
+    if (!selectedPluginTheme) rememberPluginTheme();
   }
 
-  const api = { set, toggle, mode, effective, boot, LABEL, MODES, darkTone, setDarkTone, toggleDarkTone };
+  const api = {
+    set, toggle, mode, effective, boot, LABEL, MODES, darkTone, setDarkTone, toggleDarkTone,
+    current, variables, pluginThemes, registerPlugins, applyPlugin, resetPlugin, whenSaved,
+    skinCss: () => root.ThemeSkin ? root.ThemeSkin.css(activeRecipe, true) : '',
+  };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.Theme = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

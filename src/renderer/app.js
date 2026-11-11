@@ -6770,6 +6770,7 @@ function pluginPermissionLabel(permission) {
     'stats.read': '读取码字统计',
     'stats.author': '刷新作者后台统计',
     'ui.editorStat': '显示编辑器指标',
+    'ui.theme': '切换软件主题',
   }[permission] || permission;
 }
 
@@ -6805,6 +6806,7 @@ async function loadPlugins(opts) {
     }
 
     pluginItems = list;
+    window.Theme.registerPlugins(pluginItems);
     if (activePlugin && !pluginItems.some((item) => item.id === activePlugin.id && item.enabled && !item.invalid)) {
       closePlugin();
     }
@@ -6865,6 +6867,15 @@ async function refreshBuiltInIncomeEditorStat() {
  */
 function renderPluginCard(plugin) {
   const builtin = !!plugin.builtin;
+  const selected = window.Theme.current().pluginTheme;
+  const themes = (plugin.contributes && plugin.contributes.themes) || [];
+  const themeButtons = themes.map((theme) => {
+    const active = selected && selected.pluginId === plugin.id && selected.themeId === theme.id;
+    return '<button class="btn ghost btn-sm" type="button" data-plugin-theme="' + escapeHtml(theme.id)
+      + '" data-theme-plugin="' + escapeHtml(plugin.id) + '" '
+      + ((!plugin.enabled || plugin.invalid || active) ? 'disabled' : '') + '>'
+      + escapeHtml(theme.name) + (active ? ' · 使用中' : ' · 应用') + '</button>';
+  }).join('');
   return `
     <article class="plugin-card ${plugin.enabled ? '' : 'is-disabled'} ${plugin.invalid ? 'is-invalid' : ''}">
       <div class="plugin-card-top">
@@ -6893,6 +6904,7 @@ function renderPluginCard(plugin) {
           ? '<span class="plugin-builtin-note" title="内置功能不能删除，只能停用">随软件提供</span>'
           : `<button class="link-btn" data-plugin-remove="${escapeHtml(plugin.id)}" type="button">删除</button>`}
       </div>
+      ${themeButtons ? '<div class="plugin-theme-actions">' + themeButtons + '</div>' : ''}
     </article>
   `;
 }
@@ -7163,7 +7175,7 @@ function pluginBridgeSource(token) {
       else item.reject(new Error(data.error || '插件请求失败'));
     });
     const api = {
-      version: '1.1.0',
+      version: '1.3.0',
       ready,
       on,
       app: { info: () => request('app.info'), notify: (message) => request('app.notify', { message }) },
@@ -7177,6 +7189,13 @@ function pluginBridgeSource(token) {
         refreshAuthorSubscriptions: () => request('stats.refreshAuthorSubscriptions', null, 300000),
       },
       ui: { setEditorStat: (item) => request('ui.setEditorStat', item) },
+      theme: {
+        list: () => request('theme.list'),
+        get: () => request('theme.get'),
+        apply: (themeId) => request('theme.apply', { themeId }),
+        reset: () => request('theme.reset'),
+        configure: (themeId, options) => request('theme.configure', { themeId, options }),
+      },
       floating: {
         configure: (options) => request('floating.configure', options),
         setExpanded: (expanded) => request('floating.setExpanded', { expanded: !!expanded }),
@@ -7189,7 +7208,7 @@ function pluginBridgeSource(token) {
         set: (key, value) => request('storage.set', { key, value }),
       },
     };
-    for (const name of ['app', 'editor', 'stats', 'ui', 'floating', 'storage']) Object.freeze(api[name]);
+    for (const name of ['app', 'editor', 'stats', 'ui', 'theme', 'floating', 'storage']) Object.freeze(api[name]);
     Object.defineProperty(window, 'PluginAPI', { value: Object.freeze(api), writable: false });
     addEventListener('pagehide', dispose, { once: true });
     setTimeout(() => hostEvent('ready', {}), 0);
@@ -7267,7 +7286,7 @@ function pluginThemeCss() {
       padding: 0 !important;
       background: transparent !important;
     }
-  `;
+  ` + (window.Theme && window.Theme.skinCss ? window.Theme.skinCss() : '');
 }
 
 function buildPluginDocument(bundle, token) {
@@ -7355,8 +7374,8 @@ async function handlePluginRequest(runtime, method, payload) {
   const plugin = runtime && runtime.plugin;
   if (!plugin) throw new Error('插件未打开');
   if (method === 'app.info') {
-    return { plugin: plugin.id, version: plugin.version, apiVersion: '1.1.0',
-      capabilities: ['events', 'lifecycle', 'floating'],
+    return { plugin: plugin.id, version: plugin.version, apiVersion: '1.3.0',
+      capabilities: ['events', 'lifecycle', 'floating', 'themes', 'themeImages', 'themeStyles', 'themeBranding'],
       theme: document.documentElement.dataset.theme || 'light' };
   }
   if (method.startsWith('floating.')) {
@@ -7368,6 +7387,36 @@ async function handlePluginRequest(runtime, method, payload) {
     const message = String((payload && payload.message) || '').slice(0, 160);
     if (runtime.kind === 'page') $('#pluginHostStatus').textContent = message;
     return true;
+  }
+  if (method === 'theme.get') return window.Theme.current();
+  if (method === 'theme.list') return window.Theme.pluginThemes(plugin.id);
+  if (method === 'theme.apply' || method === 'theme.reset' || method === 'theme.configure') {
+    requirePluginPermission(plugin, 'ui.theme');
+    if (runtime.kind !== 'page') throw new Error('请在插件页面主动切换主题');
+    if (!pluginItems.some(item => item.id === plugin.id && item.enabled && !item.invalid)) {
+      throw new Error('主题插件已停用');
+    }
+    if (method === 'theme.configure') {
+      const id = String(payload.themeId || '');
+      if (!window.Theme.pluginThemes(plugin.id).some(item => item.id === id)) throw new Error('只能设置本插件声明的主题');
+      await window.api.plugins.configureTheme(plugin.id, id, payload.options);
+      const result = await window.api.plugins.list();
+      pluginItems = result.plugins || [];
+      window.Theme.registerPlugins(pluginItems);
+      renderPlugins();
+      await window.Theme.whenSaved();
+      return window.Theme.pluginThemes(plugin.id).find(item => item.id === id);
+    }
+    if (method === 'theme.apply') {
+      const result = window.Theme.applyPlugin(plugin.id, String(payload.themeId || ''));
+      await window.Theme.whenSaved();
+      return result;
+    }
+    const selected = window.Theme.current().pluginTheme;
+    if (selected && selected.pluginId !== plugin.id) throw new Error('只能恢复本插件应用的主题');
+    const result = window.Theme.resetPlugin();
+    await window.Theme.whenSaved();
+    return result;
   }
   if (method === 'storage.get') return window.api.plugins.storageGet(plugin.id, payload && payload.key);
   if (method === 'storage.set') {
@@ -7533,6 +7582,17 @@ $('#pluginGrid').addEventListener('change', async (e) => {
 });
 
 $('#pluginGrid').addEventListener('click', async (e) => {
+  const theme = e.target.closest('[data-plugin-theme]');
+  if (theme) {
+    try {
+      window.Theme.applyPlugin(theme.dataset.themePlugin, theme.dataset.pluginTheme);
+      await window.Theme.whenSaved();
+      pluginNotice('已应用主题，选择已自动保存');
+    } catch (err) {
+      pluginNotice(err.message || String(err), true);
+    }
+    return;
+  }
   const open = e.target.closest('[data-plugin-open]');
   if (open) { await openPlugin(open.dataset.pluginOpen); return; }
   const remove = e.target.closest('[data-plugin-remove]');
@@ -7917,7 +7977,7 @@ $('#btnWriterDarkTone').addEventListener('click', () => {
   const t = window.Theme;
   // 浅色下点这枚按钮，多半是想看深蓝黑长什么样：先切深色再换配色，
   // 否则点了没有任何视觉变化，看着像没反应
-  if (t.effective(t.mode()) !== 'dark') t.set('dark');
+  if (t.current().pluginTheme || t.effective(t.mode()) !== 'dark') t.set('dark');
   t.toggleDarkTone();
 });
 
@@ -7926,6 +7986,22 @@ $('#darkToneSeg').addEventListener('click', (e) => {
   if (!btn) return;
   window.Theme.setDarkTone(btn.dataset.darkTone);
 });
+
+$('#pluginThemeSelect').addEventListener('change', async (event) => {
+  const value = event.target.value;
+  try {
+    if (!value) window.Theme.resetPlugin();
+    else {
+      const [pluginId, themeId] = value.split('/');
+      window.Theme.applyPlugin(pluginId, themeId);
+    }
+    await window.Theme.whenSaved();
+  }
+  catch (err) { pluginNotice(err.message || String(err), true); }
+});
+$('#btnPluginThemeReset').addEventListener('click', () => window.Theme.resetPlugin());
+document.addEventListener('theme-changed', () => renderPlugins());
+document.addEventListener('theme-save-failed', () => pluginNotice('主题已显示，但保存失败，请检查数据目录后重新选择主题。', true));
 
 // 折线图的颜色取自 CSS 变量，换主题后得重画一次
 document.addEventListener('theme-changed', () => {
@@ -8199,7 +8275,7 @@ function maybeShowAfterLoginGuide(state) {
     );
     reviewStrict = !!(window.Prefs && window.Prefs.get('reviewStrict', false));
     renderReviewStrict();
-    window.Theme.boot();
+    await window.Theme.boot();
     // 侧边栏顺序依赖已加载的偏好，必须在 Prefs.ready() 之后应用，
     // 否则首屏会先按 HTML 里的默认顺序闪一下再跳到用户排好的顺序
     initNavCustom();
