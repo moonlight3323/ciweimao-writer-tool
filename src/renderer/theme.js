@@ -27,6 +27,13 @@
   let knownThemes = new Set();
   let activeRecipe = null;
   let savingSelection = Promise.resolve();
+  // 用户有没有对「用哪套主题」表过态：挑过某套扩展主题，或主动选回内置主题。
+  // 没表过态时，内置美化包要在首次启动自动套上——否则功能中心里开关是开的、
+  // 界面却还是内置配色，用户必须自己去下拉里挑一次才看得到效果。
+  const DECIDED_KEY = 'pluginThemeDecided';
+  let decided = false;
+  // 偏好还没读盘时不能判断「用户没选过」，否则会拿空缓存误判成全新用户
+  let prefLoaded = false;
   try {
     const cached = JSON.parse(localStorage.getItem(Spec.CACHE_KEY) || 'null');
     selectedPluginTheme = Spec.selection(cached);
@@ -80,14 +87,33 @@
 
   function whenSaved() { return savingSelection; }
 
+  /** 记下「用户已经自己决定了用哪套」，之后不再自动套用内置主题 */
+  function markDecided() {
+    if (decided) return;
+    decided = true;
+    if (window.Prefs) window.Prefs.set(DECIDED_KEY, true);
+  }
+
+  /**
+   * 内置美化包的「开箱默认主题」。
+   * 按当前明暗挑同 base 的那套：深色下直接上深色版，免得先亮一下再变黑。
+   */
+  function defaultPluginTheme() {
+    const bundled = catalog.filter(item => item.builtin);
+    if (!bundled.length) return null;
+    const wantBase = effective(mode()) === 'dark' ? 'dark' : 'light';
+    return bundled.find(item => item.base === wantBase) || bundled[0];
+  }
+
   /**
    * 把「用户想要的主题」与「当前可用的主题」对齐。
    *
-   * 三种结局：
+   * 四种结局：
    * 1. 插件启用了、主题还在 → 生效；
    * 2. 插件被停用（主题仍在清单里声明）→ 先回退内置配色，但把选择暂存到
    *    pendingSelection，偏好照旧保留，重新启用时自动恢复；
-   * 3. 插件或主题已被删除 → 选择是真失效了，清干净。
+   * 3. 插件或主题已被删除 → 选择是真失效了，清干净；
+   * 4. 从来没有选择过、而随包自带的美化包是启用状态 → 自动套上它自带的那套。
    *
    * 之前少了第 2 种，停用插件会把选择写成 null，再打开就什么都没了。
    */
@@ -102,6 +128,15 @@
     selectedPluginTheme = found ? { pluginId: wanted.pluginId, themeId: wanted.themeId } : null;
     if (!found && key && knownThemes.has(key)) {
       pendingSelection = { pluginId: wanted.pluginId, themeId: wanted.themeId };
+    }
+    // 第 4 种：内置包默认启用却没人选过，界面上就是「装了、开着、没效果」。
+    // 只在用户从没表过态时补这一手，主动选回「使用内置主题」之后不再打扰。
+    if (!found && !pendingSelection && !decided && prefLoaded) {
+      const preset = defaultPluginTheme();
+      if (preset) {
+        activeRecipe = preset;
+        selectedPluginTheme = { pluginId: preset.pluginId, themeId: preset.id };
+      }
     }
     rememberPluginTheme();
     paint(mode());
@@ -118,7 +153,9 @@
       catch (_) { continue; }
       for (const recipe of themes) {
         known.add(plugin.id + '/' + recipe.id);
-        if (plugin.enabled) catalog.push({ ...recipe, pluginId: plugin.id, pluginName: plugin.name });
+        if (plugin.enabled) {
+          catalog.push({ ...recipe, pluginId: plugin.id, pluginName: plugin.name, builtin: !!plugin.builtin });
+        }
       }
     }
     knownThemes = known;
@@ -129,6 +166,7 @@
   function applyPlugin(pluginId, themeId) {
     const recipe = catalog.find(item => item.pluginId === pluginId && item.id === themeId);
     if (!recipe) throw new Error('主题未安装或插件已停用');
+    markDecided();
     activeRecipe = recipe;
     selectedPluginTheme = { pluginId, themeId };
     pendingSelection = null;
@@ -138,6 +176,7 @@
   }
 
   function resetPlugin() {
+    markDecided();
     selectedPluginTheme = null;
     pendingSelection = null;
     activeRecipe = null;
@@ -413,6 +452,10 @@
     else window.Prefs.set('darkTone', darkTone());
 
     const savedSelection = Spec.selection(window.Prefs.get('pluginTheme', null));
+    // 有明确的选择记录，或用户之前亲手选过内置主题，都算「已经表过态」：
+    // 内置美化包不再自动接管，避免用户选回内置配色后一重启又变回去。
+    decided = window.Prefs.get(DECIDED_KEY, false) === true || !!savedSelection;
+    prefLoaded = true;
     const cachedMatches = savedSelection && selectedPluginTheme
       && savedSelection.pluginId === selectedPluginTheme.pluginId
       && savedSelection.themeId === selectedPluginTheme.themeId;

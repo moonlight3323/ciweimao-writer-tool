@@ -284,6 +284,61 @@ test('其他数据目录及损坏的主题缓存会回退，不能继续使用�
   assert.equal(corrupt.firstFrame.styles.size, 0);
 });
 
+test('内置美化包默认启用时首次启动自动套用，跟随明暗且重建后保持', async () => {
+  const bundled = { ...sample, builtin: true };
+
+  const light = environment({ theme: 'light' });
+  await light.theme.boot();
+  light.theme.registerPlugins([bundled]);
+  assert.deepEqual(plain(light.theme.current().pluginTheme), { pluginId: 'fixture-theme', themeId: 'fixture-light' },
+    '装了、开着就应该直接显示');
+  assert.equal(light.styles.get('--bg'), '#edf4ed');
+  assert.equal(light.theme.builtinLocked(), true, '自动套用同样要锁内置明暗');
+
+  const dark = environment({ theme: 'dark' });
+  await dark.theme.boot();
+  dark.theme.registerPlugins([bundled]);
+  assert.equal(dark.theme.current().pluginTheme.themeId, 'fixture-dark', '深色下自动挑深色那套');
+
+  // 自动套用后重启：选择已经在偏好里，照旧生效
+  const rebooted = environment(light.saved);
+  await rebooted.theme.boot();
+  rebooted.theme.registerPlugins([bundled]);
+  assert.equal(rebooted.theme.current().pluginTheme.themeId, 'fixture-light');
+
+  // 用户主动选回内置主题：之后不再自动接管
+  light.theme.resetPlugin();
+  assert.equal(light.saved.pluginThemeDecided, true);
+  const optedOut = environment(light.saved);
+  await optedOut.theme.boot();
+  optedOut.theme.registerPlugins([bundled]);
+  assert.equal(optedOut.theme.current().pluginTheme, null, '表过态就不再自动套');
+  assert.equal(optedOut.styles.has('--bg'), false);
+  assert.equal(optedOut.theme.builtinLocked(), false);
+
+  // 手动挑过别的主题也算表过态
+  const picked = environment({ theme: 'light' });
+  await picked.theme.boot();
+  picked.theme.registerPlugins([bundled]);
+  picked.theme.applyPlugin('fixture-theme', 'fixture-dark');
+  picked.theme.resetPlugin();
+  const afterPick = environment(picked.saved);
+  await afterPick.theme.boot();
+  afterPick.theme.registerPlugins([bundled]);
+  assert.equal(afterPick.theme.current().pluginTheme, null);
+
+  // 非内置插件、以及被停用的内置插件都不该自动套用
+  const third = environment({ theme: 'light' });
+  await third.theme.boot();
+  third.theme.registerPlugins([sample]);
+  assert.equal(third.theme.current().pluginTheme, null);
+
+  const disabled = environment({ theme: 'light' });
+  await disabled.theme.boot();
+  disabled.theme.registerPlugins([{ ...bundled, enabled: false }]);
+  assert.equal(disabled.theme.current().pluginTheme, null);
+});
+
 test('插件 API 只允许前台且有权限的插件应用自身声明的主题', async () => {
   const env = environment({ theme: 'light' });
   await env.theme.boot();
