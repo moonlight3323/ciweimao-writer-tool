@@ -2,8 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-// 只依赖 shared：miaoyu.js 顶部要 require('electron')，而 CI 的 check 任务不装依赖
-const { themeSource } = require('../src/shared/miaoyu-skin');
+const { themeSource } = require('../src/main/miaoyu');
 
 test('深色主题生成暗色覆盖样式，颜色取自传入的主题变量', () => {
   const src = themeSource({
