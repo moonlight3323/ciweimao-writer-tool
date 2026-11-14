@@ -56,7 +56,6 @@ contextBridge.exposeInMainWorld('api', {
     back: () => ipcRenderer.invoke('miaoyu:back'),
     forward: () => ipcRenderer.invoke('miaoyu:forward'),
     external: () => ipcRenderer.invoke('miaoyu:external'),
-    theme: (payload) => ipcRenderer.invoke('miaoyu:theme', payload),
     state: () => ipcRenderer.invoke('miaoyu:state'),
   },
   /**
