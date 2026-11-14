@@ -4146,29 +4146,30 @@ select,
   user-select: none;
 }
 
-/* 下划线只能画在高亮层上：textarea 自身不接受 text-decoration，
-   而透明文字的 text-decoration 也不会被渲染（实测不出来）。
-   这里按行高在每行基线下画一条线，视觉上就是「每行都有下划线」，
-   与正文共用同一套字号/行距变量，调字号不会错位。 */
+/* 下划线：交给浏览器按真实基线画。
+   高亮层原来用 color: transparent，Chrome 不给完全透明的文字画装饰线，
+   所以给它 1% 的黑 —— 肉眼看不出来，但足以让下划线落在基线上；
+   行距、字号、换字体都不会再错层（之前按行高比例算背景线，一调行距就偏）。 */
 body.is-writer-underline .writer-highlight {
-  --writer-rule-color: rgba(128, 128, 128, .42);
-  background-image: repeating-linear-gradient(
-    to bottom,
-    var(--writer-rule-color) 0,
-    var(--writer-rule-color) 1px,
-    transparent 1px,
-    transparent calc(var(--writer-size, 16px) * var(--writer-line, 2.05))
-  );
-  background-position: 0 calc(22px + var(--writer-size, 16px) * var(--writer-line, 2.05) * 0.72);
+  --writer-rule-color: rgba(128, 128, 128, .5);
+  color: rgba(0, 0, 0, .012);
+  text-decoration: underline;
+  text-decoration-color: var(--writer-rule-color);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  text-decoration-skip-ink: none;
 }
 
 :root[data-theme="dark"] body.is-writer-underline .writer-highlight {
-  --writer-rule-color: rgba(198, 198, 198, .28);
+  --writer-rule-color: rgba(198, 198, 198, .38);
+  color: rgba(255, 255, 255, .012);
 }
 
 .writer-highlight mark {
   background: rgba(255, 120, 120, .32);
-  color: transparent;
+  /* inherit 而不是 transparent：开了下划线时高亮层文字带 1% 黑，
+     标记区跟着继承，下划线才不会在敏感词那里断掉 */
+  color: inherit;
   border-radius: 3px;
   box-shadow: inset 0 -1px 0 rgba(226, 76, 76, .55);
 }
