@@ -4165,6 +4165,12 @@ body.is-writer-underline .writer-highlight {
   color: rgba(255, 255, 255, .012);
 }
 
+/* 段首自动空开的两格不画线。
+   用 visibility 而不是 display:none：宽度必须留着，否则高亮层与正文的换行位置会错开。 */
+body.is-writer-underline .writer-highlight .w-indent {
+  visibility: hidden;
+}
+
 .writer-highlight mark {
   background: rgba(255, 120, 120, .32);
   /* inherit 而不是 transparent：开了下划线时高亮层文字带 1% 黑，

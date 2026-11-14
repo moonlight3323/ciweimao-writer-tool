@@ -5324,17 +5324,52 @@ function renderWriterHighlight(text, words, typoHits) {
     if (previous && mark.start < previous.end) return;
     visible.push(mark);
   });
-  if (!visible.length) layer.innerHTML = window.BadWords.escapeHtml(text);
-  else {
+
+  // 行首缩进单独包一层：开了下划线时把这两个全角空格藏掉（宽度还在），
+  // 否则「自动空开的两格」下面也会有一条线，看着像正文没对齐。
+  const escapeHtml = window.BadWords.escapeHtml;
+  let atLineStart = true;
+  function plain(segment) {
+    let html = '';
+    let i = 0;
+    while (i < segment.length) {
+      if (atLineStart) {
+        const indent = /^[\u3000 \t]+/.exec(segment.slice(i));
+        if (indent) {
+          html += `<span class="w-indent">${escapeHtml(indent[0])}</span>`;
+          i += indent[0].length;
+          atLineStart = false;
+          continue;
+        }
+        atLineStart = false;
+      }
+      const nl = segment.indexOf('\n', i);
+      if (nl < 0) {
+        html += escapeHtml(segment.slice(i));
+        break;
+      }
+      html += escapeHtml(segment.slice(i, nl + 1));
+      i = nl + 1;
+      atLineStart = true;
+    }
+    return html;
+  }
+
+  if (!visible.length) {
+    layer.innerHTML = plain(text);
+  } else {
     let html = '';
     let cursor = 0;
     visible.forEach((mark) => {
-      html += window.BadWords.escapeHtml(text.slice(cursor, mark.start));
+      html += plain(text.slice(cursor, mark.start));
       const cls = mark.type === 'typo' ? ' class="is-typo"' : '';
-      html += `<mark${cls}>${window.BadWords.escapeHtml(text.slice(mark.start, mark.end))}</mark>`;
+      const body = text.slice(mark.start, mark.end);
+      html += `<mark${cls}>${escapeHtml(body)}</mark>`;
+      // 命中词不含换行；万一下次改成整段标记，这里按实际内容重算
+      atLineStart = body.endsWith('\n');
       cursor = mark.end;
     });
-    html += window.BadWords.escapeHtml(text.slice(cursor));
+    html += plain(text.slice(cursor));
     layer.innerHTML = html;
   }
   layer.scrollTop = writerContent.scrollTop;
