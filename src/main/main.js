@@ -576,6 +576,7 @@ ipcMain.handle('miaoyu:reload', () => miaoyuApi.reload());
 ipcMain.handle('miaoyu:back', () => miaoyuApi.back());
 ipcMain.handle('miaoyu:forward', () => miaoyuApi.forward());
 ipcMain.handle('miaoyu:external', () => miaoyuApi.external());
+ipcMain.handle('miaoyu:theme', (_e, payload) => miaoyuApi.setTheme(payload));
 ipcMain.handle('miaoyu:state', () => miaoyuApi.state());
 
 // ---------------------------------------------------------------- 摸鱼码字（透明浮层）

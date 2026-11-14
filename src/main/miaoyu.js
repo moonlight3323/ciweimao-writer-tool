@@ -87,6 +87,66 @@ const TIDY = `(function () {
 })()`;
 
 /**
+ * 站点暗色皮肤。
+ *
+ * 喵语全站只有浅色。深色主题下按主界面的配色（达妮娅那套）覆盖一层，
+ * 浅色主题时把这份样式移除，恢复站点原样。
+ *
+ * 颜色全部来自渲染层传来的 CSS 变量，换主题/换皮肤时自动跟着变；
+ * 站点用 Naive UI，运行时注入的 `n-*` 类优先级不低，所以统一用 `#app` 前缀 + !important。
+ */
+function themeSource(theme) {
+  const t = theme || {};
+  if (!t.dark) {
+    return `(function () {
+      var st = document.getElementById('wb-dark-style');
+      if (st && st.parentNode) st.parentNode.removeChild(st);
+      return 'light';
+    })()`;
+  }
+  const c = t.colors || {};
+  const pick = (value, fallback) => String(value || fallback);
+  const css = [
+    ':root{',
+    `--wb-bg:${pick(c.bg, '#171326')};`,
+    `--wb-card:${pick(c.card, '#211a33')};`,
+    `--wb-card-2:${pick(c.card2, '#2b2242')};`,
+    `--wb-text:${pick(c.text, '#e9e3f4')};`,
+    `--wb-muted:${pick(c.muted, '#a091bb')};`,
+    `--wb-line:${pick(c.line, 'rgba(186,155,234,.22)')};`,
+    `--wb-accent:${pick(c.accent, '#c3a6f0')};`,
+    '}',
+    'html,body{background:var(--wb-bg)!important;color:var(--wb-text)!important}',
+    '#app,#app .main-page,#app .main-content,#app .main-content>div{background:transparent!important}',
+    '#app .rank-card,#app .n-card,#app .n-input,#app .n-input__wrapper,#app .n-base-selection,'
+      + '#app .n-base-selection-label,#app .n-button,#app .n-collapse,#app .n-collapse-item__header,'
+      + '#app .n-collapse-item__content-inner,#app .n-menu,#app .n-thing,#app .n-empty{'
+      + 'background-color:var(--wb-card)!important;border-color:var(--wb-line)!important;'
+      + 'color:var(--wb-text)!important}',
+    '#app .rank-badge{background-color:var(--wb-card-2)!important;color:var(--wb-muted)!important}',
+    '#app .stat-label,#app .book-author,#app .n-base-clear__placeholder,'
+      + '#app .n-input__placeholder,#app .n-menu-item-content-header{color:var(--wb-muted)!important}',
+    '#app .book-name,#app .stat-value,#app .page-head,#app .rank-title{color:var(--wb-text)!important}',
+    '#app .stat-active,#app .stat-active .stat-value{color:var(--wb-accent)!important}',
+    '#app .n-button:hover{background-color:var(--wb-card-2)!important}',
+    '#app input,#app textarea{color:var(--wb-text)!important;background-color:transparent!important}',
+    '::-webkit-scrollbar{width:10px;height:10px}',
+    '::-webkit-scrollbar-track{background:var(--wb-bg)}',
+    '::-webkit-scrollbar-thumb{background:#3a2f52;border-radius:5px}',
+  ].join('');
+  return `(function () {
+    var st = document.getElementById('wb-dark-style');
+    if (!st) {
+      st = document.createElement('style');
+      st.id = 'wb-dark-style';
+      (document.head || document.documentElement).appendChild(st);
+    }
+    st.textContent = ${JSON.stringify(css)};
+    return 'dark';
+  })()`;
+}
+
+/**
  * @param {Object} opts
  * @param {Function} opts.getWindow     返回宿主 BrowserWindow
  * @param {Function} opts.broadcast     向渲染进程发事件
@@ -111,6 +171,13 @@ function createMiaoyu(opts) {
   let guardHits = [];
   /** 判定循环后锁住自动拨回，等用户手动导航/刷新再解除 */
   let guardStopped = false;
+  /** 主界面当前主题：{ dark, colors }。默认浅色，等渲染层推过来 */
+  let theme = { dark: false, colors: {} };
+
+  function applyThemeOn(wc) {
+    if (!wc || wc.isDestroyed()) return;
+    wc.executeJavaScript(themeSource(theme), true).catch(() => {});
+  }
 
   function ensure() {
     if (view && !view.webContents.isDestroyed()) return view;
@@ -170,6 +237,8 @@ function createMiaoyu(opts) {
 
     wc.on('dom-ready', () => {
       wc.executeJavaScript(TIDY, true).catch(() => {});
+      // 页面重建（刷新/切页签）时样式会丢，这里补一次；浅色主题下是空操作
+      applyThemeOn(wc);
     });
     // 首屏数据是异步拉的，等表格渲染出来再量宽度
     wc.on('did-finish-load', () => {
@@ -368,6 +437,15 @@ function createMiaoyu(opts) {
       shell.openExternal(url || HOME);
       return true;
     },
+    /** 渲染层每次切主题都会推一份；深色时覆盖站点配色，浅色时恢复原样 */
+    setTheme: (next) => {
+      theme = {
+        dark: !!(next && next.dark),
+        colors: (next && next.colors) || {},
+      };
+      if (view && !view.webContents.isDestroyed()) applyThemeOn(view.webContents);
+      return { ok: true, dark: theme.dark };
+    },
     state,
     destroy,
     // 便于测试
@@ -381,5 +459,6 @@ function createMiaoyu(opts) {
 
 module.exports = {
   createMiaoyu, routeOf, isAllowed, isHost, ORIGIN, HOME, ROUTES, PARTITION, TIDY,
+  themeSource,
   MIN_AUTO_REFRESH_MS, SAME_ROUTE_REUSE_MS, MANUAL_REFRESH_COOLDOWN_MS,
 };

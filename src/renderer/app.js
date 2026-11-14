@@ -928,6 +928,36 @@ function showMiaoyuFallback(msg) {
   $('#miaoyuFallback').hidden = false;
 }
 
+/**
+ * 喵语是第三方页面，不会自己跟随主题。
+ * 把当前主题的关键颜色整理一份推给主进程，由它在页面里注入 / 移除暗色样式。
+ */
+function miaoyuThemePayload() {
+  const el = document.documentElement;
+  const css = getComputedStyle(el);
+  const read = (name, fallback) => {
+    const value = String(css.getPropertyValue(name) || '').trim();
+    return value || fallback;
+  };
+  return {
+    dark: el.dataset.theme === 'dark',
+    colors: {
+      bg: read('--bg', '#fbf7ef'),
+      card: read('--surface', '#ffffff'),
+      card2: read('--surface-2', '#f4eef8'),
+      text: read('--text', '#2b2338'),
+      muted: read('--text-3', '#8b8098'),
+      line: read('--border', 'rgba(120,100,150,.18)'),
+      accent: read('--accent', '#b491e0'),
+    },
+  };
+}
+
+async function pushMiaoyuTheme() {
+  if (!window.api || !window.api.miaoyu || typeof window.api.miaoyu.theme !== 'function') return;
+  try { await window.api.miaoyu.theme(miaoyuThemePayload()); } catch (_) { /* 主题推送失败不影响浏览 */ }
+}
+
 async function openMiaoyu() {
   HOST.classList.add('is-ext');
   // 加完 class 布局才会铺满，等两帧再取矩形，否则拿到的还是带边距的旧尺寸
@@ -938,6 +968,8 @@ async function openMiaoyu() {
     await window.api.miaoyu.open(miaoyuRect());
     miaoyuMounted = true;
     $('#miaoyuFallback').hidden = true;
+    // 视图可能是上次留在内存里的，样式要按当前主题重新上一次
+    await pushMiaoyuTheme();
   } catch (err) {
     miaoyuMounted = false;
     miaoyuStatus('打开失败');
@@ -952,6 +984,11 @@ async function closeMiaoyu() {
   HOST.classList.remove('is-ext');
   try { await window.api.miaoyu.close(); } catch (_) { /* ignore */ }
 }
+
+// 正停在喵语页时切主题，立刻重上一遍配色（页面留在内存里，下次进来也会补）
+document.addEventListener('theme-changed', () => {
+  if (miaoyuOpen) pushMiaoyuTheme();
+});
 
 $('#miaoyuTabs').addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-route]');
