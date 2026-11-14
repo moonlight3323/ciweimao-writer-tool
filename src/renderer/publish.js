@@ -846,10 +846,45 @@
     toastHide();
   }
 
+  /**
+   * 「这些词都是误报，仍然发布」。
+   *
+   * 站点自己的确认框在作者选「继续发布」时，就是带上提交标记再 POST 一次
+   * （pageForceSubmit 做的正是这件事）。这里复用它，不再自己拼参数。
+   *
+   * 刻意**不**在提交后把本地章节标成已发布：这一下可能被站点后端继续拦下。
+   * 是否真的发出去，等下一次同步按标题/序号和后台对上再认定。
+   */
+  async function forcePublish() {
+    let r = null;
+    try {
+      r = await evalPage('pageForceSubmit');
+    } catch (err) {
+      r = { ok: false, error: String((err && err.message) || err) };
+    }
+    if (!r || !r.ok) {
+      await notice('error', '仍然发布没有提交成功：' + escapeHtml((r && r.error) || '页面没有响应')
+        + '<br>可以回到后台页面，用站点自己的「发布章节」再试一次。');
+      return;
+    }
+    await hideSide();
+    setStatus('已提交 · 页面跳走就说明发出去了', 'info');
+    toast('已按「仍然发布」提交',
+      '页面若自动跳到章节管理，说明这一章已经发出去了；'
+      + '如果站点又弹回新建页面，就按它的提示再改。');
+  }
+
   // ---------------------------------------------------------------- 绑定
 
   function handleCommand(cmd) {
     const c = cmd || {};
+    if (c.type === 'force-publish') {
+      if (state.busy) return;
+      state.busy = true;
+      forcePublish().finally(() => { state.busy = false; });
+      return;
+    }
+
     if (c.type === 'apply') {
       if (state.busy) return;
       state.busy = true;

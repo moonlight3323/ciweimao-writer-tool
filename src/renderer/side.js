@@ -172,6 +172,11 @@
   /** 处理中：按钮压住，避免连点两次把正文改两遍 */
   function setBusy(on) {
     state.busy = !!on;
+    const force = $('#btnBwForce');
+    if (force) {
+      force.disabled = !!on;
+      force.textContent = on ? '正在提交…' : '这些词是误报，仍然发布 →';
+    }
     const btn = $('#btnBwApply');
     if (!btn) return;
     if (on) {
@@ -253,6 +258,13 @@
     if (state.busy || $('#btnBwApply').disabled) return;
     setBusy(true);
     api.command({ type: 'apply', plan: sendPlan(), lastMode: state.lastMode });
+  });
+
+  // 站点报的词在正文里根本找不到（误报），作者想直接发出去时走这条
+  $('#btnBwForce').addEventListener('click', () => {
+    if (state.busy) return;
+    setBusy(true);
+    api.command({ type: 'force-publish' });
   });
 
   $('#bwMode').querySelectorAll('button').forEach((b) => {

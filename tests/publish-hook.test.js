@@ -273,10 +273,14 @@ test('发布结果必须有「顶栏」这条通道（内嵌网页盖不到的�
   assert.ok(/setStatus\(/.test(notice), 'notice 要写顶栏（错误结果）');
 });
 
-test('侧栏不再提供发布入口，只走网页上的「发布章节」', () => {
+test('侧栏不代发章节，只保留「交回站点」的兜底入口', () => {
   // 用户明确要求：把敏感词侧栏的发布功能去掉，只留网页按钮。
   // 侧栏代发时站点的确认弹窗 / 报错 / 跳转全被绕开，作者在页面上看不到任何变化；
   // 两套入口并存还容易重复提交。
+  //
+  // 但站点报的词在正文里根本找不到（误报）时，作者会被卡死：改不了、也发不出。
+  // 所以只留一条兜底：把这一下交回站点自己的「继续发布」路径（pageForceSubmit），
+  // 不做侧栏代发、不自己拼 add_chapter 参数。
   const fs = require('node:fs');
   const root = path.join(__dirname, '..');
   const sideHtml = fs.readFileSync(path.join(root, 'src/renderer/side.html'), 'utf8');
@@ -284,11 +288,13 @@ test('侧栏不再提供发布入口，只走网页上的「发布章节」', ()
   const pub = fs.readFileSync(path.join(root, 'src/renderer/publish.js'), 'utf8');
 
   assert.equal(/id="btnPsPublish"/.test(sideHtml), false, '侧栏不该再有「发布这一章」');
-  assert.equal(/id="btnBwForce"/.test(sideHtml), false, '侧栏不该再有「直接提交」');
-  assert.equal(/btnPsPublish/.test(sideJs), false, 'side.js 不该再绑「发布这一章」');
-  assert.equal(/btnBwForce/.test(sideJs), false, 'side.js 不该再绑「直接提交」');
   assert.equal(/c\.type === 'publish'/.test(pub), false, 'publish.js 不该再处理 publish 命令');
-  assert.equal(/c\.type === 'force'/.test(pub), false, 'publish.js 不该再处理 force 命令');
+  assert.equal(/c\.type === 'force'/.test(pub), false, '不要恢复旧的 force 命令');
+
+  assert.match(sideHtml, /id="btnBwForce"/, '误报时的兜底入口要在');
+  assert.match(sideJs, /btnBwForce/, 'side.js 要绑这个入口');
+  assert.match(pub, /c\.type === 'force-publish'/, 'publish.js 要处理 force-publish');
+  assert.match(pub, /pageForceSubmit/, '兜底必须走站点自己的提交路径，不能自己发请求');
 });
 
 test('页面求值必须带超时，否则轮询会被一次挂起的调用拖死', () => {

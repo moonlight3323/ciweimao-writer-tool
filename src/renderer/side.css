@@ -327,6 +327,22 @@ html, body {
 
 .ps-note b { color: var(--ok-ink); font-weight: 600; }
 
+/* 「仍然发布」：刻意做成弱化链接，别和「一键处理」抢注意力 */
+.bw-force {
+  margin-top: 9px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--text-3);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.bw-force:hover:not(:disabled) { color: var(--text); }
+.bw-force:disabled { opacity: .55; cursor: default; }
+
 /* ---------------------------------------------------------- 通用控件 */
 
 .btn {

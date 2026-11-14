@@ -377,6 +377,30 @@
                 </div>
               </div>
               <div class="wdp-row">
+                <label>字距</label>
+                <div class="wdp-step" data-wdp="letter">
+                  <button type="button" data-wdp-dir="-1" aria-label="减小字距">−</button>
+                  <span class="wdp-val" id="wdpLetterVal">0.2 px</span>
+                  <button type="button" data-wdp-dir="1" aria-label="增大字距">＋</button>
+                </div>
+              </div>
+              <div class="wdp-row">
+                <label>样式</label>
+                <div class="segmented segmented-sm" id="wdpStyle">
+                  <button type="button" data-wdp-style="bold">加粗</button>
+                  <button type="button" data-wdp-style="underline">下划线</button>
+                </div>
+              </div>
+              <div class="wdp-row">
+                <label>段间距</label>
+                <div class="segmented segmented-sm" id="wdpParaGap">
+                  <button type="button" data-wdp-gap="0">紧凑</button>
+                  <button type="button" data-wdp-gap="1">空一行</button>
+                  <button type="button" data-wdp-gap="2">空两行</button>
+                </div>
+              </div>
+              <p class="wdp-hint">加粗与下划线只改编辑器里的显示，发布到站点仍是纯文本；段间距会直接整理正文里的空行。</p>
+              <div class="wdp-row">
                 <label>页面宽度</label>
                 <div class="wdp-step" data-wdp="width">
                   <button type="button" data-wdp-dir="-1" aria-label="减小页面宽度">−</button>
@@ -1371,6 +1395,7 @@
   <script src="chapter-order.js"></script>
   <script src="writer-sync.js?v=20261106-2"></script>
   <script src="writer-indent.js"></script>
+  <script src="writer-paragraph.js"></script>
   <script src="plugin-floating.js"></script>
   <script src="app.js?v=20261111-v112"></script>
   <script src="update-ui.js"></script>

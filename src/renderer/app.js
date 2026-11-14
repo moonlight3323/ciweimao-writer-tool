@@ -5012,6 +5012,14 @@ async function pullWriterBookNewChapters(localEntry, remoteBook, onStep) {
   const remoteChapters = listed && listed.chapters || [];
   if (!remoteChapters.length) return { added: 0, failed: 0, total: 0 };
 
+  // 发布成功但站点没给 url 时，本地只记了「已发布」、没有后台章节号。
+  // 先按标题/序号把这些章认领回来，否则下面会把它当成「后台新增」再拉一份，
+  // 列表里出现两条同名章节，其中一条还标着「已发布 · 冲突」。
+  const linked = window.WriterSync.linkPublishedChapters(localBook.chapters, remoteChapters);
+  if (linked) {
+    await window.api.writer.save({ ...localBook, chapters: localBook.chapters });
+  }
+
   const missing = window.WriterSync.missingRemoteChapters(localBook.chapters, remoteChapters);
   if (!missing.length) return { added: 0, failed: 0, total: remoteChapters.length };
 
@@ -5531,7 +5539,10 @@ const WRITER_FONTS = {
   yuanti: 'YouYuan, "Yuanti SC", "Microsoft YaHei", sans-serif',
   system: 'system-ui, "Segoe UI", "Microsoft YaHei", sans-serif',
 };
-const WRITER_DISPLAY_DEFAULT = { font: 'yahei', size: 16, line: 2.05, width: 760 };
+const WRITER_DISPLAY_DEFAULT = {
+  font: 'yahei', size: 16, line: 2.05, width: 760,
+  letter: 0.2, bold: false, underline: false,
+};
 
 function writerDisplayPrefs() {
   const saved = (window.Prefs && window.Prefs.get('writerDisplay', null)) || {};
@@ -5545,26 +5556,82 @@ function applyWriterDisplay(patch) {
   const v = Object.assign(writerDisplayPrefs(), patch || {});
   const host = $('#writerWorkspace');
   if (host) {
-    // 四个变量挂在工作区上：纸张读 --writer-paper-width，正文与高亮层共用另外三个
+    // 这些变量挂在工作区上：纸张读 --writer-paper-width，正文与高亮层共用其余几个
     host.style.setProperty('--writer-font', WRITER_FONTS[v.font] || WRITER_FONTS.yahei);
     host.style.setProperty('--writer-size', `${v.size}px`);
     host.style.setProperty('--writer-line', String(v.line));
+    host.style.setProperty('--writer-letter', `${v.letter}px`);
+    host.style.setProperty('--writer-weight', v.bold ? '600' : '400');
     host.style.setProperty('--writer-paper-width', `${v.width}px`);
   }
+  // 下划线画在高亮层上（textarea 自己不接受 text-decoration），用 body 类开关
+  document.body.classList.toggle('is-writer-underline', !!v.underline);
   $('#wdpFont').value = v.font;
   $('#wdpSizeVal').textContent = `${v.size} px`;
   $('#wdpLineVal').textContent = Number(v.line).toFixed(2);
+  $('#wdpLetterVal').textContent = `${Number(v.letter).toFixed(1)} px`;
   $('#wdpWidthVal').textContent = `${v.width} px`;
+  const styleBox = $('#wdpStyle');
+  if (styleBox) {
+    Array.prototype.forEach.call(styleBox.children, (b) => {
+      b.classList.toggle('is-active', !!v[b.dataset.wdpStyle]);
+    });
+  }
+  syncWdpGap(detectWriterGap());
   // 换字号/行距后行高变了，高亮层要跟着重新对齐滚动位置
   const layer = $('#writerHighlight');
   if (layer) layer.scrollTop = writerContent.scrollTop;
   return v;
 }
 
+/** 当前正文里段落之间实际空了几行（最多算 2 档） */
+function detectWriterGap() {
+  return window.WriterParagraph
+    ? window.WriterParagraph.detectGap(writerContent.value)
+    : 0;
+}
+
+function syncWdpGap(gap) {
+  const box = $('#wdpParaGap');
+  if (!box) return;
+  Array.prototype.forEach.call(box.children, (b) => {
+    b.classList.toggle('is-active', Number(b.dataset.wdpGap) === gap);
+  });
+}
+
+/**
+ * 段间距：把正文里的空行统一成「段与段之间空 N 行」。
+ *
+ * 纯文本编辑器没有 CSS 段间距（textarea 只认 line-height），要做到「段距比行距大」
+ * 只能真的插空行。这是会写进正文的操作，发布到站点后同样是空行，和作者手动敲空行一致。
+ */
+function applyWriterParagraphGap(gap) {
+  const wanted = Math.max(0, Math.min(2, Number(gap) || 0));
+  const before = String(writerContent.value || '').replace(/\r\n?/g, '\n');
+  const text = window.WriterParagraph
+    ? window.WriterParagraph.applyGap(before, wanted)
+    : before;
+  syncWdpGap(wanted);
+  if (text === before) {
+    $('#writerBottomState').textContent = wanted ? `段落之间已经是空 ${wanted} 行` : '段落之间已经是紧凑的';
+    return;
+  }
+  const caret = Math.min(writerContent.selectionStart, text.length);
+  writerContent.value = text;
+  writerTypedMask = text.split('').map(() => 0);
+  writerContent.setSelectionRange(caret, caret);
+  syncWriterChapterFromForm();
+  updateWriterWordCount();
+  markWriterDirty();
+  scanWriterBadwords();
+  $('#writerBottomState').textContent = wanted ? `段落之间已空 ${wanted} 行` : '已收紧段落间距';
+}
+
 /** 加减号的步长与上下限；页面宽度上限放到 1600，专注模式下才拉得开 */
 const WDP_LIMITS = {
   size: { min: 12, max: 32, step: 1 },
   line: { min: 1.2, max: 3.0, step: 0.05 },
+  letter: { min: 0, max: 4, step: 0.2 },
   width: { min: 620, max: 1600, step: 20 },
 };
 
@@ -6037,10 +6104,35 @@ writerContent.addEventListener('keydown', (e) => {
  * 新章第一段：正文还空着时开始输入，先补上段首缩进。
  * 不加这段的话整篇只有第一段顶格，得点一次「一键排版」才对齐。
  * 只认手工输入的 insertText（粘贴、输入法上屏都不插），空文本以外的内容一律不碰。
+ *
+ * 注意不能「改完 value 再交给浏览器继续插入」：DOM 值被脚本换掉之后，
+ * 浏览器先前算好的插入点会失效，字被插到缩进前面、光标停在第一个字之前。
+ * 所以这里拦住默认插入，自己写入「缩进 + 这个字符」，光标明确落在末尾。
  */
 writerContent.addEventListener('beforeinput', (e) => {
   if (writerContent.value !== '') return;
   if (e.inputType !== 'insertText' || !e.data || e.data === '\n') return;
+  e.preventDefault();
+  writerBeforeText = '';
+  writerBeforeMask = [];
+  writerInputType = 'insertText';
+  writerExcludeInput = false;
+  writerSuppressInput = false;
+  writerContent.setRangeText(WRITER_INDENT + e.data, 0, 0, 'end');
+  writerContent.dispatchEvent(new Event('input', { bubbles: true }));
+});
+
+/**
+ * 输入法在 beforeinput 里的类型是 insertCompositionText，上面那条接不到。
+ * 中文写作基本都走这条路，所以在第一个按键（输入法起始时 key 是 Process）先把缩进补上，
+ * 组合输入随后从缩进之后开始。
+ */
+writerContent.addEventListener('keydown', (e) => {
+  if (writerContent.value !== '') return;
+  if (e.isComposing || writerComposing) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const printable = e.key.length === 1 || e.key === 'Process' || e.keyCode === 229;
+  if (!printable) return;
   writerContent.value = WRITER_INDENT;
   writerContent.setSelectionRange(WRITER_INDENT.length, WRITER_INDENT.length);
 });
@@ -6135,8 +6227,19 @@ $('#wdpFont').addEventListener('change', () => {
   scanWriterBadwords();
 });
 
-// 加减号：一次一格，改完即时生效
+// 加减号与样式开关：一次一格，改完即时生效
 $('#writerDisplayPanel').addEventListener('click', (e) => {
+  const styleBtn = e.target.closest('[data-wdp-style]');
+  if (styleBtn) {
+    const key = styleBtn.dataset.wdpStyle;
+    saveWriterDisplay({ [key]: !writerDisplayPrefs()[key] });
+    return;
+  }
+  const gapBtn = e.target.closest('[data-wdp-gap]');
+  if (gapBtn) {
+    applyWriterParagraphGap(Number(gapBtn.dataset.wdpGap));
+    return;
+  }
   const btn = e.target.closest('[data-wdp-dir]');
   if (!btn) return;
   const key = btn.closest('[data-wdp]').dataset.wdp;
