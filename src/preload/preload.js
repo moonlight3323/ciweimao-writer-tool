@@ -45,6 +45,12 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.on('pubside:command', handler);
       return () => ipcRenderer.removeListener('pubside:command', handler);
     },
+    /** 侧栏窗口自身的故障（页面没加载起来等），界面据此在顶栏报错 */
+    onFault: (cb) => {
+      const handler = (_e, info) => cb(info);
+      ipcRenderer.on('pubside:fault', handler);
+      return () => ipcRenderer.removeListener('pubside:fault', handler);
+    },
   },
   /**
    * 喵语数据站（第三方）。只放行站点里 /ciweimao 下的页面，

@@ -34,11 +34,22 @@ function createPubSide(deps) {
   /** 上一次由 place() 写入的位置：用来识别「自己造成的 move」 */
   let lastPlaced = null;
   let lastState = null;
+  /** 侧栏页面自身的加载错误（有值就说明窗口是白板，界面要据此报错） */
+  let loadError = '';
 
   function send(channel, payload) {
     if (sideWin && !sideWin.isDestroyed()) {
       try { sideWin.webContents.send(channel, payload); } catch (_) { /* ignore */ }
     }
+  }
+
+  /** 把主进程这边的故障转给主窗口，走它那条盖不住的顶栏状态条 */
+  function reportToMain(text) {
+    const main = getWindow();
+    if (!main || main.isDestroyed()) return;
+    try {
+      main.webContents.send('pubside:fault', { text: String(text || '') });
+    } catch (_) { /* ignore */ }
   }
 
   /** 贴主窗口右缘摆放：优先放到窗口右侧外面，屏幕不够就压在窗口右缘上 */
@@ -106,7 +117,19 @@ function createPubSide(deps) {
     sideWin.webContents.on('did-finish-load', () => {
       if (lastState) send('pubside:state', lastState);
     });
-    sideWin.on('closed', () => { sideWin = null; wanted = false; manual = false; lastPlaced = null; });
+    /*
+     * 侧栏自己的页面没加载起来（side.html 缺失、被杀软拦住、磁盘读错）时，
+     * 窗口会挂在全白状态 —— 从作者角度这就是「打不开」。把原因写进主窗口顶栏，
+     * 别让人对着一块白板猜。
+     */
+    sideWin.webContents.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
+      if (!isMainFrame || code === -3) return; // -3 = 主动中断（切换/关闭），不算失败
+      loadError = `侧栏页面加载失败（${code} ${desc || ''}）`.trim();
+      reportToMain(loadError);
+    });
+    sideWin.on('closed', () => {
+      sideWin = null; wanted = false; manual = false; lastPlaced = null; loadError = '';
+    });
     /*
      * 作者自己拖过就记为「手动定位」，之后不再被主窗口移动拽回来。
      * 不能只靠 placing 的 160ms 窗口：系统卡顿时 setBounds 的 move 可能晚到，
@@ -171,7 +194,7 @@ function createPubSide(deps) {
       }
     }, 320);
     if (lastState) send('pubside:state', lastState);
-    return { ok: true, visible };
+    return { ok: true, visible, error: loadError };
   }
 
   /**
@@ -204,6 +227,7 @@ function createPubSide(deps) {
 
   function destroy() {
     wanted = false;
+    loadError = '';
     if (sideWin && !sideWin.isDestroyed()) {
       try { sideWin.destroy(); } catch (_) { /* ignore */ }
     }

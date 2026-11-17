@@ -999,6 +999,13 @@
 
     const api = sideApi();
     if (api && api.onCommand) api.onCommand(handleCommand);
+    // 侧栏窗口自己出了故障（页面没加载起来 = 全白），顶栏是唯一看得见的地方
+    if (api && api.onFault) {
+      api.onFault((info) => {
+        state.sideOpen = false;
+        setStatus((info && info.text) || '侧栏窗口出错，点顶栏可以重开', 'error');
+      });
+    }
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
