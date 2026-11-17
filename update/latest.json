@@ -1,15 +1,33 @@
 {
-  "version": "1.1.3",
+  "version": "1.1.4",
   "type": "app",
-  "size": 3399501,
-  "sha256": "d0e99e670ffb1b5ace8f147930ea739ceba57d05f8724d3e8320d1d582dc73df",
+  "size": 3406247,
+  "sha256": "103f73b61b5d26df748295ecdb55c725155f814e4e45e0307f1f9eb09d5bc2e3",
   "url": [
-    "https://cdn.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.3-app.zip",
-    "https://fastly.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.3-app.zip",
-    "https://gcore.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.3-app.zip",
-    "https://raw.githubusercontent.com/moonlight3323/ciweimao-writer-tool/main/update/assets/ciweimao-writer-tool-v1.1.3-app.zip"
+    "https://cdn.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.4-app.zip",
+    "https://fastly.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.4-app.zip",
+    "https://gcore.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.4-app.zip",
+    "https://raw.githubusercontent.com/moonlight3323/ciweimao-writer-tool/main/update/assets/ciweimao-writer-tool-v1.1.4-app.zip"
   ],
   "changes": [
+    {
+      "version": "1.1.4",
+      "date": "2026-11-14",
+      "items": [
+        "显示设置新增「字距」：0 到 4 px 可调，字挤在一起时先调它，不用只靠行距硬撑。",
+        "显示设置新增「加粗」与「下划线」：只影响编辑器里的显示，发布到站点仍是纯文本，夜里或长时间校对时看得更清。",
+        "显示设置新增「段间距」：紧凑 / 空一行 / 空两行，直接整理正文里的空行，发布后的段落间隔与编辑器里一致。",
+        "修复调大行距后下划线穿过行间、和文字错层的问题：下划线现在跟着文字基线走，改字号、调行距、换字体都不会偏。",
+        "段首自动空开的两格不再画下划线，线从第一个字开始。",
+        "修复空白章节第一次打字时光标跳到字前面的问题，中文输入法的第一个字同样正常。",
+        "下划线在敏感词标记处保持连续，不再断开一截。",
+        "敏感词侧栏新增「这些词是误报，仍然发布」：站点报的词在正文里根本找不到、怎么改都发不出去时，可以交回站点自己的确认流程提交一次，不再被误报卡死。",
+        "修复发布后再同步，章节列表里多出一条同名「已发布 · 冲突」的问题：发布时站点没返回章节号的章节，同步会按标题与序号认领回来，不再当成后台新增重复下载。",
+        "判断「后台新增章节」时同时比对章节号与标题，本地已有同名同序号的章节就不再重复拉取。",
+        "自带的美化包「达妮娅 · 虚无之泡」首次打开软件时自动套用：浅色下用「布景之形」，深色下用「幻灭之形」，不用再自己进设置挑一次。",
+        "主动选回「使用内置主题」之后不会再自动接管，重启也保持你的选择。"
+      ]
+    },
     {
       "version": "1.1.3",
       "date": "2026-11-11",
