@@ -1,15 +1,26 @@
 {
-  "version": "1.1.4",
+  "version": "1.1.5",
   "type": "app",
-  "size": 3406247,
-  "sha256": "103f73b61b5d26df748295ecdb55c725155f814e4e45e0307f1f9eb09d5bc2e3",
+  "size": 3408130,
+  "sha256": "3abcd5150f4d01a419c93313d0328f6f680fe24720c02e3effef9b6248f25aa6",
   "url": [
-    "https://cdn.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.4-app.zip",
-    "https://fastly.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.4-app.zip",
-    "https://gcore.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.4-app.zip",
-    "https://raw.githubusercontent.com/moonlight3323/ciweimao-writer-tool/main/update/assets/ciweimao-writer-tool-v1.1.4-app.zip"
+    "https://cdn.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.5-app.zip",
+    "https://fastly.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.5-app.zip",
+    "https://gcore.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.5-app.zip",
+    "https://raw.githubusercontent.com/moonlight3323/ciweimao-writer-tool/main/update/assets/ciweimao-writer-tool-v1.1.5-app.zip"
   ],
   "changes": [
+    {
+      "version": "1.1.5",
+      "date": "2026-11-17",
+      "items": [
+        "侧栏窗口改为始终浮在应用窗口之上。以前窗口贴在主窗口右缘时会和主窗口重叠十几个像素，被压在下面，看起来就是「点了按钮没反应」，再点一次反而把它收掉。",
+        "打开侧栏时会核实窗口是否真的显示出来了。以前只要调用没报错就当成功，即使窗口因页面尚未加载完而停在隐藏状态也一样；现在显示不出来会直接在顶栏写「侧栏窗口没能显示，点顶栏「敏感词侧栏」再试一次」，不会让你对着空白等。",
+        "侧栏开在另一块屏幕上时会自动移回主窗口旁边。多显示器、或者你以前拖过侧栏窗口，它可能一直待在副屏；以前主屏上看不到任何变化，再点顶栏按钮还会把它当成「已打开」收起来。现在顶栏会提示「侧栏在另一块屏幕上，已移回主窗口旁边」。",
+        "侧栏页面本身没能加载起来（文件缺失、被杀毒软件拦住）时，顶栏会直接写出失败原因，不再是全白窗口。",
+        "侧栏打不开时不再静默失败，顶栏那条状态栏是唯一不会被后台页面盖住的地方，现在所有失败都会说到这里。"
+      ]
+    },
     {
       "version": "1.1.4",
       "date": "2026-11-14",
