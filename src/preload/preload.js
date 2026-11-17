@@ -37,6 +37,9 @@ contextBridge.exposeInMainWorld('api', {
     close: () => ipcRenderer.invoke('pubside:close'),
     setState: (state) => ipcRenderer.invoke('pubside:set-state', state),
     isOpen: () => ipcRenderer.invoke('pubside:is-open'),
+    /** 窗口在哪块屏幕：副屏上的侧栏用户会找不到，界面据此把它移回来 */
+    locate: () => ipcRenderer.invoke('pubside:locate'),
+    reflow: () => ipcRenderer.invoke('pubside:reflow'),
     onCommand: (cb) => {
       const handler = (_e, cmd) => cb(cmd);
       ipcRenderer.on('pubside:command', handler);

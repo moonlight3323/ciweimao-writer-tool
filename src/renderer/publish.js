@@ -224,15 +224,21 @@
         if (st) visible = !!st.visible;
       } catch (_) { /* 拿不到就按本地状态 */ }
       if (o.open || !visible) {
-        await api.open(full);
+        const opened = await api.open(full);
         state.sideOpen = true;
         state.sideParked = false;
+        // 窗口没显示出来就别装作成功：顶栏那条是唯一盖不住的通道
+        if (opened && opened.ok && opened.visible === false && !opened.deferred) {
+          state.sideOpen = false; // 下次推送重新 open，而不是往看不见的窗口里塞内容
+          setStatus('侧栏窗口没能显示，点顶栏「敏感词侧栏」再试一次', 'error');
+        }
       } else {
         await api.setState(full);
         state.sideOpen = true;
       }
       return true;
-    } catch (_) {
+    } catch (err) {
+      setStatus('侧栏打开失败：' + String((err && err.message) || err || '未知原因'), 'error');
       return false;
     }
   }
@@ -263,11 +269,24 @@
       return;
     }
     let open = state.sideOpen;
+    let loc = null;
     try {
-      const st = await api.isOpen();
-      open = !!(st && st.visible);
+      loc = typeof api.locate === 'function' ? await api.locate() : null;
+      if (loc) open = !!loc.visible;
+      else {
+        const st = await api.isOpen();
+        open = !!(st && st.visible);
+      }
     } catch (_) { /* 拿不到就按本地状态 */ }
     if (open) {
+      // 窗口确实开着，但在另一块屏幕上：主屏看不到任何变化，再点一次反而会把它收掉。
+      // 这种情况移回主窗口旁边，而不是当成「已打开要收起」。
+      if (loc && loc.ready && loc.sameDisplay === false) {
+        try { await api.reflow(); } catch (_) { /* 移不回去也别卡住 */ }
+        setStatus('侧栏在另一块屏幕上，已移回主窗口旁边', 'info');
+        toast('侧栏已移回主窗口旁边', '刚才它开在另一块屏幕上，主屏上看不到。');
+        return;
+      }
       await hideSide();
       toast('侧栏已收起', '后台页面宽度没有任何变化。点顶栏「敏感词侧栏」可以再打开。');
     } else {

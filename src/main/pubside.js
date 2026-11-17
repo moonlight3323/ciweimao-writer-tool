@@ -97,6 +97,10 @@ function createPubSide(deps) {
     });
 
     try { sideWin.setMenuBarVisibility(false); } catch (_) { /* ignore */ }
+    // 贴在主窗口右缘时必然和主窗口重叠十几像素；无边框窗口若压在普通窗口下面，
+    // 用户看到的就是「点了按钮但侧栏没出来」，再点一次反而把它收起来。
+    // 置顶到 floating 层级，保证它总在应用窗口之上（不抢焦点，hide 后立刻消失）。
+    try { sideWin.setAlwaysOnTop(true, 'floating'); } catch (_) { /* 老版本不支持就退回普通窗口 */ }
     sideWin.loadFile(path.join(__dirname, '..', 'renderer', 'side.html'));
     // 页面还没加载完就 send 会丢消息（第一次打开必然是这种情况），加载完补发一次
     sideWin.webContents.on('did-finish-load', () => {
@@ -150,15 +154,46 @@ function createPubSide(deps) {
     // 主窗口最小化时不把侧栏单独亮出来，等还原时 attach 里的 restore 处理
     const main = getWindow();
     if (main && main.isMinimized()) return { ok: true, visible: false, deferred: true };
-    if (!w.isVisible()) w.showInactive();
-    // showInactive 在页面还没加载完时偶尔不生效（窗口停在 show:false），兜一次
+    if (!w.isVisible()) {
+      try { w.showInactive(); } catch (_) { /* 某些 Windows 环境下会抛，交给下面兜底 */ }
+    }
+    // showInactive 在页面还没加载完时偶尔不生效（窗口停在 show:false）。
+    // 以前只靠 320ms 后的一次补 show，冷启动时页面更慢，补的时候可能已经错过；
+    // 这里先同步补一次并回读真实可见性，让调用方知道「到底有没有显示出来」。
+    let visible = false;
+    try { visible = w.isVisible(); } catch (_) { visible = false; }
+    if (!visible) {
+      try { w.show(); visible = w.isVisible(); } catch (_) { /* ignore */ }
+    }
     setTimeout(() => {
       if (wanted && w && !w.isDestroyed() && !w.isVisible()) {
         try { w.show(); } catch (_) { /* ignore */ }
       }
     }, 320);
     if (lastState) send('pubside:state', lastState);
-    return { ok: true, visible: true };
+    return { ok: true, visible };
+  }
+
+  /**
+   * 侧栏是否和主窗口在同一块屏幕上。
+   *
+   * 多显示器 + 作者手动拖过窗口时，侧栏可能开在另一块屏上：主屏上看不到任何变化，
+   * 再点顶栏按钮反而把它收起来。界面据此把它移回主窗口旁边，而不是当成「已打开」。
+   */
+  function locate() {
+    if (!sideWin || sideWin.isDestroyed()) {
+      return { ready: false, visible: false, sameDisplay: false, bounds: null };
+    }
+    const b = sideWin.getBounds();
+    const main = getWindow();
+    const mb = main && !main.isDestroyed() ? main.getContentBounds() : null;
+    let sameDisplay = true;
+    try {
+      const disp = screen.getDisplayMatching(b);
+      const mainDisp = mb ? screen.getDisplayMatching(mb) : null;
+      sameDisplay = !!(disp && mainDisp && disp.id === mainDisp.id);
+    } catch (_) { sameDisplay = true; }
+    return { ready: true, visible: sideWin.isVisible(), sameDisplay, bounds: b };
   }
 
   function hideSide() {
@@ -189,6 +224,8 @@ function createPubSide(deps) {
   ipcMain.handle('pubside:is-open', () => ({
     visible: !!(sideWin && !sideWin.isDestroyed() && sideWin.isVisible()),
   }));
+  ipcMain.handle('pubside:locate', () => locate());
+  ipcMain.handle('pubside:reflow', () => { manual = false; place(); return locate(); });
 
   // 侧栏窗口自己的动作：× 收起
   ipcMain.on('pubside:hide', () => hideSide());
@@ -211,6 +248,7 @@ function createPubSide(deps) {
     destroy,
     attach,
     setState,
+    locate,
     /** 侧栏窗口是否已创建（测试用） */
     window() { return sideWin; },
   };
