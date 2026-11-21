@@ -351,13 +351,18 @@
       await W.saveNow();
 
       toast('正在打开后台…', `作品：<b>${escapeHtml(book.name)}</b>　平台作品号 ${escapeHtml(book.platformBookId)}`);
-      await gotoDraft(book.platformBookId);
+      setStatus('正在打开后台章节页…', 'busy');
 
-      toast('等待新建章节页就绪…', '第一次打开会慢一点，页面初始化完就会自动填表。');
-      const ready = await waitForm(32000);
+      const ready = await gotoDraft(book.platformBookId);
+      if (ready.needLogin) {
+        const hint = '请在作者后台完成登录，返回码字台后，再点「跳转后台并发布」。';
+        setStatus(hint, 'info');
+        toast('请先登录作者后台', hint);
+        return;
+      }
       if (!ready.ok) {
-        toast('页面没准备好', escapeHtml(ready.error) + '<br>可以点「回到后台页面」看一眼是不是被弹回登录页了。');
-        state.busy = false;
+        setStatus(escapeHtml(ready.error), 'error');
+        toast('页面没准备好', escapeHtml(ready.error));
         return;
       }
 
@@ -376,12 +381,14 @@
       const div = pickDivision(ps, chapter.vol);
       const filled = await doFill(chapter, state.baseText, div);
       if (!filled.ok) {
-        toast('填充失败', escapeHtml(filled.error || '未知原因'));
-        state.busy = false;
+        const error = escapeHtml(filled.error || '未知原因');
+        setStatus('填充失败：' + error, 'error');
+        toast('填充失败', error);
         return;
       }
 
       // 投递完就停在这一页，让作者自己确认、插图、改字；侧栏待命
+      setStatus('');
       toastHide();
       await showReadySide({
         bookName: book.name,
@@ -396,7 +403,9 @@
           : '',
       });
     } catch (err) {
-      toast('投递中断', escapeHtml(String((err && err.message) || err)));
+      const error = escapeHtml(String((err && err.message) || err));
+      setStatus('投递中断：' + error, 'error');
+      toast('投递中断', error);
     } finally {
       state.busy = false;
     }
@@ -414,45 +423,50 @@
     return { ok: true, wordCount: res.wordCount, htmlLen: res.htmlLen };
   }
 
-  /** 等页面出现章节表单与 KindEditor 实例 */
-  async function waitForm(maxMs) {
-    const limit = maxMs || 30000;
-    const step = 500;
-    for (let waited = 0; waited < limit; waited += step) {
-      let st = null;
-      try { st = await evalPage('pageChapterState'); } catch (_) { st = null; }
-      if (st && st.hasForm && st.hasEditor) return { ok: true, state: st };
-      await sleep(step);
-    }
-    const st = await window.api.browser.state().catch(() => null);
-    return {
-      ok: false,
-      error: '后台页面 30 秒内没准备好'
-        + (st && st.url ? '（现在停在 ' + st.url + '）' : '')
-        + '，可能是登录失效或站点很慢',
-    };
+  function isDraftPage(url, platformBookId) {
+    if (!url) return false;
+    const page = new URL(url);
+    return page.origin === ORIGIN && page.pathname === '/book_manage/draft'
+      && page.searchParams.get('book_id') === String(platformBookId);
   }
 
-  /** 打开指定作品的新建章节页 */
+  /** 打开指定作品的新建章节页，等表单就绪或站点要求登录 */
   async function gotoDraft(platformBookId) {
     const url = `${ORIGIN}/book_manage/draft?book_id=${encodeURIComponent(platformBookId)}`;
-    const want = `book_id=${platformBookId}`;
+    const browser = window.api.browser;
 
     // 不能直接用 openBrowser(url)：主进程的 browser:open 在「当前停在后台首页」时
     // 视为「用户只是要回后台」，不会 loadURL，于是会停在首页不动（v0.9.2 的坑）。
     // 所以先把它挂上来，再自己导航过去。
     if (typeof root.showBrowserKeepPage === 'function') await root.showBrowserKeepPage();
-    else await window.api.browser.open({ x: 0, y: 0, width: 900, height: 700 }, url);
+    else await browser.open({ x: 0, y: 0, width: 900, height: 700 }, url);
 
-    const cur = await window.api.browser.state().catch(() => null);
-    const already = cur && cur.ready && String(cur.url || '').indexOf(want) >= 0
-      && /\/book_manage\/draft/.test(cur.url || '');
-    if (!already) {
-      await window.api.browser.navigate(url);
-      await window.api.browser.waitIdle(25000);
+    let current = await browser.state();
+    if (current.url && current.isLoginPage) return { needLogin: true };
+
+    let navigationError;
+    if (!isDraftPage(current.url, platformBookId)) {
+      // 登录页可能已经出现，但 loadURL 还在等待资源，或被站点重定向中止。
+      // 同时观察实际页面，发现登录页就让本次投递退出。
+      browser.navigate(url).catch((err) => { navigationError = err; });
+    }
+
+    const deadline = Date.now() + 32000;
+    while (Date.now() < deadline) {
+      current = await browser.state();
+      if (current.url && current.isLoginPage) return { needLogin: true };
+      if (isDraftPage(current.url, platformBookId)) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        const form = await evalPage('pageChapterState', undefined, Math.min(remaining, 3000)).catch(() => null);
+        if (form && form.hasForm && form.hasEditor && isDraftPage(form.url, platformBookId)) {
+          return { ok: true, state: form };
+        }
+      }
+      if (navigationError && !current.isLoading) throw navigationError;
       await sleep(500);
     }
-    return { url, reused: !!already };
+    return { ok: false, error: '后台页面 32 秒内没准备好' + (current.url ? '（当前：' + current.url + '）' : '') };
   }
 
   /** 卷名对齐：本地卷名 → 页面上的 division_id */
