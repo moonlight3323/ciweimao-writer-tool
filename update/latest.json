@@ -1,15 +1,22 @@
 {
-  "version": "1.1.5",
+  "version": "1.1.6",
   "type": "app",
-  "size": 3408130,
-  "sha256": "3abcd5150f4d01a419c93313d0328f6f680fe24720c02e3effef9b6248f25aa6",
+  "size": 3408383,
+  "sha256": "4caddd41d6289405079b861f1af86b5ec19cf87ae720ea368e9abb917114c700",
   "url": [
-    "https://cdn.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.5-app.zip",
-    "https://fastly.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.5-app.zip",
-    "https://gcore.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.5-app.zip",
-    "https://raw.githubusercontent.com/moonlight3323/ciweimao-writer-tool/main/update/assets/ciweimao-writer-tool-v1.1.5-app.zip"
+    "https://cdn.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.6-app.zip",
+    "https://fastly.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.6-app.zip",
+    "https://gcore.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.6-app.zip",
+    "https://raw.githubusercontent.com/moonlight3323/ciweimao-writer-tool/main/update/assets/ciweimao-writer-tool-v1.1.6-app.zip"
   ],
   "changes": [
+    {
+      "version": "1.1.6",
+      "date": "2026-11-21",
+      "items": [
+        "未登录时点击「跳转后台并发布」，软件会在顶栏提示先完成登录。登录后回到码字台，再点一次即可打开新建章节页并填入章节，无需重启软件。"
+      ]
+    },
     {
       "version": "1.1.5",
       "date": "2026-11-17",
