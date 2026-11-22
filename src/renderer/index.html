@@ -795,6 +795,13 @@
             <div class="export-bar">
               <div class="export-hint" id="exportHint">已选 <strong>0</strong> 章</div>
               <div class="actions">
+                <label class="export-order" title="只影响导出的 TXT 顺序，面板里的章节列表始终按正序显示">
+                  <span>导出顺序</span>
+                  <select class="select select-sm" id="exportOrderSel">
+                    <option value="asc">第一章在前</option>
+                    <option value="desc">最新一章在前</option>
+                  </select>
+                </label>
                 <button class="btn ghost" id="btnExportSelected" disabled>导出所选</button>
                 <button class="btn primary" id="btnExportAll">一键全部导出</button>
               </div>
@@ -813,6 +820,7 @@
               </p>
               <p class="muted">
                 章节顺序按后台列表的顺序还原：如果后台是倒序排列（最新在前），工具会自动翻转成从第一章开始。
+                导出栏右侧可以改成「最新一章在前」，只影响写进 TXT 的先后，面板里的列表仍是正序。
                 正文里的空行、分段会原样保留；「作者的话」如有会附在每章末尾。
               </p>
               <p class="muted">

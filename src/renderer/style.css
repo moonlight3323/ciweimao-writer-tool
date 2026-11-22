@@ -1918,6 +1918,18 @@ input[type="checkbox"] { accent-color: var(--accent-line); cursor: pointer; }
 
 .export-hint strong { color: var(--accent-ink); font-weight: 500; }
 
+/* 导出顺序：和按钮同排，别抢「一键全部导出」的注意力 */
+.export-order {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.export-order .select-sm { min-width: 108px; }
+
 .export-result {
   margin-top: 12px;
   padding: 11px 13px;

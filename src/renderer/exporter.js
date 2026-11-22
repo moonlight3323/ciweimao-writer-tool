@@ -167,9 +167,32 @@
    */
   function orderChapters(list) {
     const co = root.ChapterOrder;
-    if (co && typeof co.displayChapters === 'function') {
-      return co.displayChapters({ chapters: list });
-    }
+    const sorted = co && typeof co.displayChapters === 'function'
+      ? co.displayChapters({ chapters: list })
+      : fallbackOrder(list);
+
+    /*
+     * 整本没有一个能读出来的章号（作者直接用「雪线」「归途」这种纯标题命名）时，
+     * displayChapters 只能原样保留数组顺序，而数组顺序是「后台第 1 页 = 最新的一批」，
+     * 导出就会变成最新一章在最前 —— 这正是分页导出上线后出现「顺序反了」的原因。
+     * 这类书按 chapterId 升序兜底：站点 ID 自增，等同于创作顺序。
+     */
+    const seqOf = co && typeof co.chapterSeq === 'function'
+      ? (c) => co.chapterSeq(c && c.title)
+      : (c) => (c && c.seq != null ? c.seq : null);
+    const hasSeq = sorted.some((c) => seqOf(c) != null);
+    if (hasSeq) return sorted;
+
+    return sorted.slice().sort((a, b) => {
+      const ai = Number(a && a.chapterId);
+      const bi = Number(b && b.chapterId);
+      if (Number.isFinite(ai) && Number.isFinite(bi) && ai !== bi) return ai - bi;
+      return 0;
+    });
+  }
+
+  /** ChapterOrder 没加载时的兜底：只按标题里的章号排 */
+  function fallbackOrder(list) {
     const noOf = (c) => {
       try { return window.CiweimaoAdapter.chapterNo(c.title); } catch (_) { return null; }
     };

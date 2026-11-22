@@ -3732,6 +3732,24 @@ let lastExport = null;
 /** 最近一次正文归档的结果，用于界面提示 */
 let archiveState = null;
 
+/**
+ * 导出顺序：'asc' 第一章在前（默认），'desc' 最新一章在前。
+ *
+ * 只影响写进 TXT 的顺序；面板里的章节列表始终按正序显示，
+ * 免得勾选时跟着一起翻，选到哪一章都看不清。
+ */
+const EXPORT_ORDER_KEY = 'exportChapterOrder';
+
+function exportOrderValue() {
+  const saved = window.Prefs ? window.Prefs.get(EXPORT_ORDER_KEY, 'asc') : 'asc';
+  return saved === 'desc' ? 'desc' : 'asc';
+}
+
+function applyExportOrder(list) {
+  const arr = Array.isArray(list) ? list.slice() : [];
+  return exportOrderValue() === 'desc' ? arr.reverse() : arr;
+}
+
 function showExportNotice(html, isError) {
   const n = $('#exportNotice');
   n.hidden = false;
@@ -4001,6 +4019,9 @@ function renderExportResult(saved, result, cancelled) {
 async function runExport(list) {
   if (exportBusy || !list.length || !exportBookMeta) return;
 
+  // 只改写入 TXT 的先后：面板列表与勾选状态保持正序
+  const orderedList = applyExportOrder(list);
+
   exportBusy = true;
   updateExportBar();
   $('#exportResult').hidden = true;
@@ -4009,7 +4030,7 @@ async function runExport(list) {
   setExportProgress(0, '准备读取正文…');
 
   try {
-    const result = await window.Exporter.readContents(exportBookMeta, list, {
+    const result = await window.Exporter.readContents(exportBookMeta, orderedList, {
       onProgress: (p) => {
         if (p.phase === 'probe') {
           setExportProgress(0, '正在检测读取方式…');
@@ -4027,7 +4048,9 @@ async function runExport(list) {
 
     // 归档一份正文到 data/library：AI 读剧情、接口按章取都靠它。
     // 不阻塞导出：失败只提示，不影响 TXT 保存。
-    archiveChapterText(result.chapters, list);
+    // 归档始终按正序存，AI 顺着读才连贯（导出选了倒序也不影响这里）。
+    const forArchive = exportOrderValue() === 'desc' ? result.chapters.slice().reverse() : result.chapters;
+    archiveChapterText(forArchive, list);
 
     const content = window.Exporter.buildTxt(exportBookMeta, result.chapters);
     const suffix = list.length === exportChapters.length ? '全本' : `节选${result.chapters.length}章`;
@@ -4049,6 +4072,16 @@ async function runExport(list) {
 }
 
 $('#btnExportBooks').addEventListener('click', () => loadExportBooks(false));
+
+// 导出顺序：默认「第一章在前」，选过就记住，下次打开还是这个
+(function initExportOrder() {
+  const sel = $('#exportOrderSel');
+  if (!sel) return;
+  sel.value = exportOrderValue();
+  sel.addEventListener('change', () => {
+    if (window.Prefs) window.Prefs.set(EXPORT_ORDER_KEY, sel.value === 'desc' ? 'desc' : 'asc');
+  });
+})();
 $('#btnExportChapters').addEventListener('click', loadExportChapters);
 
 $('#exportBook').addEventListener('change', () => {

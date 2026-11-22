@@ -82,13 +82,26 @@
       });
       // 整卷都没有编号时用 Infinity，这类卷排在带编号的卷前面
       const minSeq = decorated.reduce((min, x) => (x.seq == null ? min : Math.min(min, x.seq)), Infinity);
-      return { volume, list: decorated.map((x) => x.chapter), minSeq, uploadOrder };
+      /*
+       * 卷内最早那一章的创建号（站点自增 ID，随创作时间递增）。
+       *
+       * 多卷本里作者常常每卷重新从「第1章」编号，卷间只比 minSeq 会全部打平，
+       * 于是退化成「谁先出现在数组里谁在前」—— 而后台目录是「最新的一卷在最前」，
+       * 整本书的顺序就翻过来了（新卷在前、第一卷在最后）。
+       * 打平时用它定先后：先开的那一卷 chapterId 更小。
+       */
+      const beginId = list.reduce((min, chapter) => {
+        const n = Number(chapter && chapter.chapterId);
+        return Number.isFinite(n) && n < min ? n : min;
+      }, Infinity);
+      return { volume, list: decorated.map((x) => x.chapter), minSeq, beginId, uploadOrder };
     });
 
     entries.sort((a, b) => {
       const left = a.minSeq === Infinity ? -1 : a.minSeq;
       const right = b.minSeq === Infinity ? -1 : b.minSeq;
       if (left !== right) return left - right;
+      if (a.beginId !== b.beginId) return a.beginId - b.beginId;
       return a.uploadOrder - b.uploadOrder;
     });
 
