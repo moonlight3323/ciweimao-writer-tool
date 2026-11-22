@@ -1,15 +1,25 @@
 {
-  "version": "1.1.6",
+  "version": "1.1.7",
   "type": "app",
-  "size": 3408383,
-  "sha256": "4caddd41d6289405079b861f1af86b5ec19cf87ae720ea368e9abb917114c700",
+  "size": 3409870,
+  "sha256": "04a85b3e18943a90dae2e52fa3d2ae411ef129a3eda3020fe2bfacbed37f0abc",
   "url": [
-    "https://cdn.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.6-app.zip",
-    "https://fastly.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.6-app.zip",
-    "https://gcore.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.6-app.zip",
-    "https://raw.githubusercontent.com/moonlight3323/ciweimao-writer-tool/main/update/assets/ciweimao-writer-tool-v1.1.6-app.zip"
+    "https://cdn.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.7-app.zip",
+    "https://fastly.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.7-app.zip",
+    "https://gcore.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.7-app.zip",
+    "https://raw.githubusercontent.com/moonlight3323/ciweimao-writer-tool/main/update/assets/ciweimao-writer-tool-v1.1.7-app.zip"
   ],
   "changes": [
+    {
+      "version": "1.1.7",
+      "date": "2026-11-22",
+      "items": [
+        "修复一键全部导出后顺序反转：多卷本每卷重新从「第1章」编号时，卷与卷之间的章号全一样，工具原先分不出先后，只能按后台分页的先后摆，于是最新一卷排到了最前面。现在按每卷第一章的创建顺序定先后，第一卷始终在最前。",
+        "修复整本没有章号时顺序反转：章节标题如果是「雪线」「归途」这种纯标题、不带「第几章」，工具原先排不动，直接按后台分页顺序输出，最新一章在最前。现在按章节创建顺序排。",
+        "导出栏新增「导出顺序」：可选「第一章在前」（默认）或「最新一章在前」，选择会记住。只影响写进 TXT 的先后，面板里的章节列表始终按正序显示，勾选时不会跟着翻。",
+        "导出时归档给 AI 的正文始终按正序保存，不受「最新一章在前」影响，读剧情时顺序是连贯的。"
+      ]
+    },
     {
       "version": "1.1.6",
       "date": "2026-11-21",
