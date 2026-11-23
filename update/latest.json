@@ -1,15 +1,25 @@
 {
-  "version": "1.1.7",
+  "version": "1.2.0",
   "type": "app",
-  "size": 3409870,
-  "sha256": "04a85b3e18943a90dae2e52fa3d2ae411ef129a3eda3020fe2bfacbed37f0abc",
+  "size": 3410867,
+  "sha256": "b221705de41ad896386e97d958fa7eca458c1f1d50266f883b202f2f95e452b1",
   "url": [
-    "https://cdn.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.7-app.zip",
-    "https://fastly.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.7-app.zip",
-    "https://gcore.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.1.7-app.zip",
-    "https://raw.githubusercontent.com/moonlight3323/ciweimao-writer-tool/main/update/assets/ciweimao-writer-tool-v1.1.7-app.zip"
+    "https://cdn.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.2.0-app.zip",
+    "https://fastly.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.2.0-app.zip",
+    "https://gcore.jsdelivr.net/gh/moonlight3323/ciweimao-writer-tool@main/update/assets/ciweimao-writer-tool-v1.2.0-app.zip",
+    "https://raw.githubusercontent.com/moonlight3323/ciweimao-writer-tool/main/update/assets/ciweimao-writer-tool-v1.2.0-app.zip"
   ],
   "changes": [
+    {
+      "version": "1.2.0",
+      "date": "2026-11-23",
+      "items": [
+        "修复开着作者后台（或喵语数据）时点窗口关闭，询问卡片被后台页面盖住、按钮点不到的问题。这是唯一漏掉的场景，只在「页面开着 + 点关闭」同时成立时出现，所以表现为偶发。",
+        "新增统一保护：任何弹窗出现时都会先把内嵌页面收起来，关掉弹窗再按各自流程决定是否挂回。以后新增的弹窗不需要各自记得处理，不会再出现「网页浮在最前、其余部分变暗模糊、点什么都没反应」。",
+        "选择「最小化到托盘」时，刚才收起的后台页面会原样回到原来的位置与状态（不重新加载，填了一半的章节表单还在）；选择「直接退出」则不再挂回。",
+        "弹窗全部关闭后，界面滚动锁定会一并解除，不会因为某个弹窗收尾异常留下「能看见但滚不动」的残留状态。"
+      ]
+    },
     {
       "version": "1.1.7",
       "date": "2026-11-22",
