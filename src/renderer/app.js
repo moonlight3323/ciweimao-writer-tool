@@ -106,6 +106,13 @@ const VIEW_TITLES = {
 };
 
 let browserOpen = false;
+/**
+ * 「因为有 DOM 遮罩而把内嵌页摘下来了」。
+ *
+ * 声明提到这里是为了避开 TDZ：openBrowser / openMiaoyu 在文件靠前的位置，
+ * 它们的收尾会读这个标志。守卫本身（观察器）在文件末尾才装。
+ */
+let nativeOverlayGuard = false;
 /** 进入平台页面之前停留的本地视图，退出后台时回到这里 */
 let lastView = 'overview';
 /** 进后台之前所在的界面：「回到…」按钮的落点 */
@@ -8140,6 +8147,10 @@ function initCloseAskDialog() {
   const answer = (value) => {
     if (box.hidden) return;
     box.hidden = true;
+    // 选「最小化到托盘」时把刚才摘下的页面原样挂回去；选退出就不用再挂了
+    if (value !== 'quit' && typeof window.restoreUpdateOverlay === 'function') {
+      void window.restoreUpdateOverlay();
+    }
     window.api.app.answerCloseBehavior(value);
   };
 
@@ -8153,7 +8164,16 @@ function initCloseAskDialog() {
     }
   });
 
-  window.api.app.onAskCloseBehavior(() => {
+  window.api.app.onAskCloseBehavior(async () => {
+    /*
+     * 关窗询问同样是 DOM 弹窗，而作者后台 / 喵语数据是原生 WebContentsView，
+     * 画在渲染页面之上。不先把它摘下来，用户看到的就是「网页浮在最前、
+     * 其余部分变暗模糊、点什么都没反应」—— 两个按钮都在页面底下。
+     * 这是 v1.1.8 修的偶发问题：只有「页面开着 + 点关闭」同时成立才会遇到。
+     */
+    if (typeof window.prepareUpdateOverlay === 'function') {
+      try { await window.prepareUpdateOverlay(); } catch (_) { /* 摘不下来也得让弹窗出来 */ }
+    }
     box.hidden = false;
     setTimeout(() => {
       const btn = $('#btnCloseAskMin');
@@ -8163,6 +8183,45 @@ function initCloseAskDialog() {
 }
 
 initCloseAskDialog();
+
+// ------------------------------------------------------------ 原生视图遮挡守卫
+//
+// 作者后台与喵语数据都是 WebContentsView，画在渲染页面**之上**。任何
+// .notice-overlay 弹窗（引导、声明、输入、更新、继承数据、关窗询问）只要在
+// 页面还挂着的时候显示，卡片就会躲在页面底下：用户看到的是「网页浮在最前、
+// 其余部分变暗模糊、点什么都没反应」。
+//
+// 以前靠每个弹窗各自记得调 prepareUpdateOverlay，漏一个就复现一次（关窗询问
+// 就是漏的那个）。这里改成不依赖调用方：只要有任何遮罩从隐藏变成显示，就把
+// 内嵌页摘下来。恢复仍交给各弹窗自己决定 —— 有的关掉后本来就该停在本地界面
+// （比如首次声明），统一自动挂回会把人拽回后台页面。
+
+function blockingOverlayVisible() {
+  return $$('.notice-overlay').some((el) => !el.hidden);
+}
+
+function syncNativeOverlayGuard() {
+  if (!blockingOverlayVisible()) {
+    nativeOverlayGuard = false;
+    // 遮罩都收干净了还锁着滚动，说明某个弹窗的收尾漏了，这里兜底解开
+    document.body.classList.remove('is-locked');
+    return;
+  }
+  if (nativeOverlayGuard) return;
+  if (!browserOpen && !miaoyuOpen) return;
+  nativeOverlayGuard = true;
+  prepareUpdateOverlay().catch(() => { /* 摘不下来也不能把弹窗憋回去 */ });
+}
+
+function initNativeOverlayGuard() {
+  const observer = new MutationObserver(() => syncNativeOverlayGuard());
+  $$('.notice-overlay').forEach((el) => {
+    observer.observe(el, { attributes: true, attributeFilter: ['hidden'] });
+  });
+  syncNativeOverlayGuard();
+}
+
+initNativeOverlayGuard();
 
 $('#btnStorageChoose').addEventListener('click', async () => {
   if (!(await writerFlushBeforeAction())) return;
